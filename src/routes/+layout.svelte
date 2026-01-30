@@ -1,14 +1,21 @@
 <script lang="ts">
 	import '../app.css';
 	import favicon from '$lib/assets/favicon.svg';
+	import { page } from '$app/stores';
 
 	let { children } = $props();
+	const isEmbed = $derived($page.url.pathname.startsWith('/embed'));
 </script>
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
+{#if isEmbed}
+	<div class="min-h-screen bg-transparent">
+		{@render children()}
+	</div>
+{:else}
 <div class="flex min-h-screen bg-gray-50">
 	<!-- Sidebar -->
 	<aside class="w-16 flex flex-col items-center py-4 bg-gray-900 text-gray-400 shrink-0">
@@ -56,3 +63,4 @@
 		</main>
 	</div>
 </div>
+{/if}
