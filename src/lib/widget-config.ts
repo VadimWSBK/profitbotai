@@ -1,0 +1,140 @@
+/**
+ * Widget customization config – matches n8n chat widget options.
+ * Used for live preview and embed code generation.
+ */
+
+export type BubbleBorderRadius = 'circle' | 'rounded' | 'none';
+export type WindowBorderRadius = 'rounded' | 'none';
+
+export interface BubbleConfig {
+	borderRadiusStyle: BubbleBorderRadius;
+	backgroundColor: string;
+	customIconUrl: string;
+	customIconSize: number; // 0–100 %
+	customIconBorderRadius: number;
+	colorOfInternalIcons: string;
+	bubbleSizePx: number;
+	rightPositionPx: number;
+	bottomPositionPx: number;
+	autoOpenBotWindow: boolean;
+}
+
+export interface TooltipConfig {
+	displayTooltip: boolean;
+	hideTooltipOnMobile: boolean;
+	message: string;
+	backgroundColor: string;
+	textColor: string;
+	fontSizePx: number;
+}
+
+export interface BotMessageSettings {
+	backgroundColor: string;
+	textColor: string;
+	showAvatar: boolean;
+	avatarUrl: string;
+	showCopyToClipboardIcon: boolean;
+}
+
+export interface WindowConfig {
+	borderRadiusStyle: WindowBorderRadius;
+	avatarSize: number;
+	avatarBorderRadius: number;
+	messageBorderRadius: number;
+	backgroundColor: string;
+	showTitleSection: boolean;
+	title: string;
+	titleAvatarUrl: string;
+	// Content & behavior
+	welcomeMessage: string;
+	customErrorMessage: string;
+	starterPrompts: string[];
+	starterPromptFontSizePx: number;
+	renderHtmlInBotResponses: boolean;
+	clearChatOnReload: boolean;
+	showScrollbar: boolean;
+	heightPx: number;
+	widthPx: number;
+	fontSizePx: number;
+	botMessageSettings: BotMessageSettings;
+	// Header bar color (for title area)
+	headerBackgroundColor: string;
+	headerTextColor: string;
+	footerText: string;
+	inputPlaceholder: string;
+}
+
+export interface WidgetConfig {
+	name: string;
+	displayMode: 'popup' | 'standalone' | 'embedded';
+	bubble: BubbleConfig;
+	tooltip: TooltipConfig;
+	window: WindowConfig;
+	n8nWebhookUrl: string;
+	n8nWorkflowId?: string;
+}
+
+export const defaultBubbleConfig: BubbleConfig = {
+	borderRadiusStyle: 'rounded',
+	backgroundColor: '#ffc8b8',
+	customIconUrl: 'https://www.svgrepo.com/show/362552/chat-centered-dots-bold.svg',
+	customIconSize: 60,
+	customIconBorderRadius: 15,
+	colorOfInternalIcons: '#373434',
+	bubbleSizePx: 50,
+	rightPositionPx: 20,
+	bottomPositionPx: 20,
+	autoOpenBotWindow: false
+};
+
+export const defaultTooltipConfig: TooltipConfig = {
+	displayTooltip: true,
+	hideTooltipOnMobile: false,
+	message: 'Hello 👋 customize & connect me to n8n',
+	backgroundColor: '#fff9f6',
+	textColor: '#1c1c1c',
+	fontSizePx: 15
+};
+
+export const defaultBotMessageSettings: BotMessageSettings = {
+	backgroundColor: '#f36539',
+	textColor: '#fafafa',
+	showAvatar: true,
+	avatarUrl: 'https://www.svgrepo.com/show/334455/bot.svg',
+	showCopyToClipboardIcon: false
+};
+
+export const defaultWindowConfig: WindowConfig = {
+	borderRadiusStyle: 'rounded',
+	avatarSize: 40,
+	avatarBorderRadius: 25,
+	messageBorderRadius: 6,
+	backgroundColor: '#ffffff',
+	showTitleSection: true,
+	title: 'N8N Chat UI Bot',
+	titleAvatarUrl: 'https://www.svgrepo.com/show/362552/chat-centered-dots-bold.svg',
+	welcomeMessage: 'Hello! This is the default welcome message.',
+	customErrorMessage: 'Please connect me to n8n first',
+	starterPrompts: ['Who are you?', 'What do you do?'],
+	starterPromptFontSizePx: 15,
+	renderHtmlInBotResponses: false,
+	clearChatOnReload: false,
+	showScrollbar: false,
+	heightPx: 600,
+	widthPx: 400,
+	fontSizePx: 16,
+	botMessageSettings: defaultBotMessageSettings,
+	headerBackgroundColor: '#ffc8b8',
+	headerTextColor: '#1c1c1c',
+	footerText: 'Free customizable chat widget for n8n | n8nchatui.com',
+	inputPlaceholder: 'Type your query'
+};
+
+export const defaultWidgetConfig: WidgetConfig = {
+	name: 'My Chat Widget',
+	displayMode: 'popup',
+	bubble: defaultBubbleConfig,
+	tooltip: defaultTooltipConfig,
+	window: defaultWindowConfig,
+	n8nWebhookUrl: ''
+};

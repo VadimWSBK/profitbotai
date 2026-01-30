@@ -1,0 +1,101 @@
+<script lang="ts">
+	import type { WidgetConfig } from '$lib/widget-config';
+	import ChatWindow from './ChatWindow.svelte';
+
+	let { config } = $props<{ config: WidgetConfig }>();
+	let iconError = $state(false);
+	let open = $state(false);
+
+	const bubble = $derived(config.bubble);
+	const tooltip = $derived(config.tooltip);
+	const showCustomIcon = $derived(bubble.customIconUrl && !iconError);
+
+	// Auto-open if configured
+	$effect(() => {
+		if (config.bubble.autoOpenBotWindow) open = true;
+	});
+
+	$effect(() => {
+		void config.bubble.customIconUrl;
+		iconError = false;
+	});
+
+	const bubbleRadius = $derived(
+		bubble.borderRadiusStyle === 'circle'
+			? '50%'
+			: bubble.borderRadiusStyle === 'rounded'
+				? '16px'
+				: '0'
+	);
+
+</script>
+
+<div
+	class="widget-preview-wrapper fixed z-[9999] flex flex-col items-end"
+	style="right: {bubble.rightPositionPx}px; bottom: {bubble.bottomPositionPx}px;"
+>
+	{#if open}
+		<div
+			class="absolute flex flex-col items-end gap-2"
+			style="right: 0; bottom: {bubble.bubbleSizePx + 12}px;"
+		>
+			<ChatWindow config={config} onClose={() => (open = false)} />
+		</div>
+	{/if}
+
+	<!-- Tooltip left, bubble right -->
+	<div class="flex flex-row items-end gap-2">
+		{#if tooltip.displayTooltip && !open}
+			<div
+				class="tooltip-preview px-3 py-2 shadow-lg max-w-[220px] whitespace-normal cursor-pointer order-first"
+				style="
+					background-color: {tooltip.backgroundColor};
+					color: {tooltip.textColor};
+					font-size: {tooltip.fontSizePx}px;
+					border-radius: 10px;
+				"
+				role="button"
+				tabindex="0"
+				onclick={() => (open = true)}
+				onkeydown={(e) => e.key === 'Enter' && (open = true)}
+			>
+				{tooltip.message}
+			</div>
+		{/if}
+		<button
+		type="button"
+		class="bubble-preview flex items-center justify-center flex-shrink-0 cursor-pointer hover:opacity-90 transition-opacity border-0 rounded-none"
+		style="
+			width: {bubble.bubbleSizePx}px;
+			height: {bubble.bubbleSizePx}px;
+			background-color: {bubble.backgroundColor};
+			border-radius: {bubbleRadius};
+		"
+		onclick={() => (open = !open)}
+		aria-label="Open chat"
+	>
+		{#if showCustomIcon}
+			<img
+				src={bubble.customIconUrl}
+				alt="Chat"
+				class="object-contain pointer-events-none"
+				style="
+					width: {bubble.customIconSize}%;
+					height: {bubble.customIconSize}%;
+					border-radius: {bubble.customIconBorderRadius}px;
+				"
+				onerror={() => (iconError = true)}
+			/>
+		{:else}
+			<svg
+				class="w-1/2 h-1/2 pointer-events-none"
+				style="color: {bubble.colorOfInternalIcons}"
+				fill="currentColor"
+				viewBox="0 0 24 24"
+			>
+				<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/>
+			</svg>
+		{/if}
+	</button>
+	</div>
+</div>

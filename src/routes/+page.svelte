@@ -45,13 +45,20 @@
 	);
 
 	function editWidget(id: string) {
-		console.log('Edit widget', id);
+		window.location.href = `/widgets/${id}`;
 	}
 	function viewStats(id: string) {
-		console.log('View stats', id);
+		window.location.href = `/analytics?widget_id=${id}`;
 	}
-	function deleteWidget(id: string) {
-		console.log('Delete widget', id);
+	async function deleteWidget(id: string) {
+		if (!confirm('Delete this widget? This cannot be undone.')) return;
+		try {
+			const res = await fetch(`/api/widgets/${id}`, { method: 'DELETE' });
+			if (!res.ok) throw new Error('Failed to delete');
+			widgets = widgets.filter((w) => w.id !== id);
+		} catch (e) {
+			alert(e instanceof Error ? e.message : 'Failed to delete');
+		}
 	}
 </script>
 
