@@ -1,21 +1,20 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getSupabaseClient, getSupabaseAdmin } from '$lib/supabase.server';
+import { getSupabase, getSupabaseClient } from '$lib/supabase.server';
 
 /**
  * GET /api/widgets/[id] – fetch one widget (full config for editor).
- * Anonymous GET allowed for embed (Shopify, etc.); uses service role to bypass RLS.
+ * Anonymous GET allowed for embed (Shopify, etc.); uses anon client + RLS policy.
  */
 export const GET: RequestHandler = async (event) => {
 	const id = event.params.id;
 	if (!id) return json({ error: 'Missing id' }, { status: 400 });
 	// Allow anonymous GET for embed (visitors on Shopify etc. fetch widget config)
-	// PATCH/DELETE still require auth below
 	const isAnonymousGet = !event.locals.user && event.request.method === 'GET';
 
 	try {
-		// Anonymous embed: use admin client to bypass RLS (widget config is public anyway)
-		const supabase = isAnonymousGet ? getSupabaseAdmin() : getSupabaseClient(event);
+		// Anonymous: anon client (RLS "Public can read widgets" allows it)
+		const supabase = isAnonymousGet ? getSupabase() : getSupabaseClient(event);
 		const { data, error } = await supabase
 			.from('widgets')
 			.select('*')
