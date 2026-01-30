@@ -2,8 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSupabase } from '$lib/supabase.server';
 import { chatWithLlm } from '$lib/chat-llm.server';
-
-const MAX_HISTORY_MESSAGES = 30;
+import { getConversationContextForLlm } from '$lib/conversation-context.server';
 
 /**
  * POST /api/widgets/[id]/chat – Direct LLM chat (no n8n).
@@ -61,7 +60,7 @@ export const POST: RequestHandler = async (event) => {
 			conv = inserted;
 		}
 
-		// Persist user message
+		// Persist user message first so it is included when we load history
 		const { error: userMsgErr } = await supabase
 			.from('widget_conversation_messages')
 			.insert({ conversation_id: conv.id, role: 'user', content: message });
@@ -88,20 +87,11 @@ export const POST: RequestHandler = async (event) => {
 		});
 		if (keyError || !apiKey) return json({ error: 'Owner has no API key for this provider' }, { status: 400 });
 
-		// Load conversation history for context (user, assistant, human_agent -> assistant for LLM)
-		const { data: historyRows } = await supabase
-			.from('widget_conversation_messages')
-			.select('role, content')
-			.eq('conversation_id', conv.id)
-			.order('created_at', { ascending: true });
-		const history = (historyRows ?? []) as { role: string; content: string }[];
-		const llmHistory = history
-			.filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'human_agent')
-			.slice(-MAX_HISTORY_MESSAGES)
-			.map((m) => ({
-				role: (m.role === 'human_agent' ? 'assistant' : m.role) as 'user' | 'assistant',
-				content: m.content
-			}));
+		// Use stored chat from Supabase as the only source of context (includes the message we just saved)
+		const llmHistory = await getConversationContextForLlm(supabase, conv.id, {
+			maxMessages: 30,
+			maxChars: 24_000
+		});
 
 		const bot = (config.bot as Record<string, string> | undefined) ?? {};
 		const parts: string[] = [];

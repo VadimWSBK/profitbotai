@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
 
 	let { data } = $props();
 
@@ -32,8 +32,13 @@
 	let humanReply = $state('');
 	let loading = $state(false);
 	let sending = $state(false);
+	let hasMoreMessages = $state(false);
+	let loadingMore = $state(false);
+	let messagesContainerEl = $state<HTMLDivElement | undefined>(undefined);
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 	let typingTimeout: ReturnType<typeof setTimeout> | null = null;
+
+	const MESSAGES_PAGE_SIZE = 20;
 
 	const widgetFilterLabel = $derived(
 		selectedWidgetId ? widgets.find((w) => w.id === selectedWidgetId)?.name ?? 'All widgets' : 'All widgets'
@@ -53,15 +58,25 @@
 		}
 	}
 
+	async function scrollToBottom() {
+		await tick();
+		requestAnimationFrame(() => {
+			if (messagesContainerEl) messagesContainerEl.scrollTop = messagesContainerEl.scrollHeight;
+		});
+	}
+
 	async function selectConversation(conv: Conversation) {
 		selectedConversation = conv;
 		conversationDetail = null;
 		messages = [];
+		hasMoreMessages = false;
 		try {
-			const res = await fetch(`/api/conversations/${conv.id}`);
+			const res = await fetch(`/api/conversations/${conv.id}?limit=${MESSAGES_PAGE_SIZE}`);
 			const json = await res.json().catch(() => ({}));
 			conversationDetail = json.conversation ?? null;
 			messages = Array.isArray(json.messages) ? json.messages : [];
+			hasMoreMessages = !!json.hasMore;
+			scrollToBottom();
 		} catch {
 			// ignore
 		}
@@ -84,11 +99,24 @@
 
 	async function refreshMessages() {
 		if (!selectedConversation) return;
+		const newestCreatedAt = messages.length > 0 ? messages[messages.length - 1].createdAt : null;
 		try {
-			const res = await fetch(`/api/conversations/${selectedConversation.id}`);
+			const url = newestCreatedAt
+				? `/api/conversations/${selectedConversation.id}?since=${encodeURIComponent(newestCreatedAt)}`
+				: `/api/conversations/${selectedConversation.id}?limit=${MESSAGES_PAGE_SIZE}`;
+			const res = await fetch(url);
 			const json = await res.json().catch(() => ({}));
 			if (json.conversation) conversationDetail = json.conversation;
-			if (Array.isArray(json.messages)) messages = json.messages;
+			if (Array.isArray(json.messages)) {
+				if (newestCreatedAt && json.messages.length > 0) {
+					messages = [...messages, ...json.messages];
+					scrollToBottom();
+				} else if (!newestCreatedAt) {
+					messages = json.messages;
+					hasMoreMessages = !!json.hasMore;
+					scrollToBottom();
+				}
+			}
 		} catch {
 			// ignore
 		}
@@ -128,9 +156,32 @@
 			if (res.ok) {
 				humanReply = '';
 				await refreshMessages();
+				scrollToBottom();
 			}
 		} finally {
 			sending = false;
+		}
+	}
+
+	async function loadMoreMessages() {
+		if (!selectedConversation || messages.length === 0 || loadingMore || !hasMoreMessages) return;
+		const oldestCreatedAt = messages[0].createdAt;
+		loadingMore = true;
+		try {
+			const res = await fetch(
+				`/api/conversations/${selectedConversation.id}?limit=${MESSAGES_PAGE_SIZE}&before=${encodeURIComponent(oldestCreatedAt)}`
+			);
+			const json = await res.json().catch(() => ({}));
+			if (Array.isArray(json.messages) && json.messages.length > 0) {
+				messages = [...json.messages, ...messages];
+				hasMoreMessages = !!json.hasMore;
+			} else {
+				hasMoreMessages = false;
+			}
+		} catch {
+			// ignore
+		} finally {
+			loadingMore = false;
 		}
 	}
 
@@ -299,8 +350,23 @@
 						</div>
 					</div>
 
-					<!-- Messages -->
-					<div class="flex-1 overflow-y-auto p-4 space-y-3">
+					<!-- Messages: fixed max height, latest at bottom, scroll up to load more -->
+					<div
+						bind:this={messagesContainerEl}
+						class="flex flex-col flex-1 min-h-0 overflow-y-auto p-4 space-y-3 max-h-[400px]"
+					>
+						{#if hasMoreMessages}
+							<div class="flex justify-center pb-2">
+								<button
+									type="button"
+									class="text-sm text-amber-600 hover:text-amber-700 font-medium disabled:opacity-50"
+									disabled={loadingMore}
+									onclick={loadMoreMessages}
+								>
+									{loadingMore ? 'Loading…' : 'Load more'}
+								</button>
+							</div>
+						{/if}
 						{#each messages as msg}
 							<div
 								class="flex {msg.role === 'user' ? 'justify-end' : msg.role === 'human_agent' ? 'justify-end' : 'justify-start'}"

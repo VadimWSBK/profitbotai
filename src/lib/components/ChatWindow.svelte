@@ -82,23 +82,25 @@
 	function startPolling() {
 		if (!useDirect || !widgetId || !sessionId || sessionId === 'preview') return;
 		pollTimer = setInterval(async () => {
+			// Don't overwrite messages while we're waiting for our own send — keeps the user's message visible
+			if (loading) return;
 			try {
 				const res = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
 				const data = await res.json().catch(() => ({}));
-				const list = Array.isArray(data.messages) ? data.messages : [];
 				const newList = Array.isArray(data.messages) ? data.messages : [];
-				const hasNew = newList.length > messages.length || data.agentTyping !== agentTyping;
-				if (hasNew || newList.length > 0) {
-					messages = newList.map((m: { role: string; content: string; avatarUrl?: string }) => ({
-						role: m.role as 'user' | 'bot',
-						content: m.content,
-						avatarUrl: m.avatarUrl
-					}));
-					agentTyping = !!data.agentTyping;
-					agentAvatarUrl = data.agentAvatarUrl ?? null;
+				const serverMessages = newList.map((m: { role: string; content: string; avatarUrl?: string }) => ({
+					role: m.role as 'user' | 'bot',
+					content: m.content,
+					avatarUrl: m.avatarUrl
+				}));
+				// Only replace messages when server has at least as many as we have (avoids wiping optimistic or just-added messages)
+				if (serverMessages.length >= messages.length) {
+					messages = serverMessages;
 					showStarterPrompts = false;
 					requestAnimationFrame(() => scrollToBottom());
 				}
+				agentTyping = !!data.agentTyping;
+				agentAvatarUrl = data.agentAvatarUrl ?? null;
 			} catch {
 				// ignore
 			}

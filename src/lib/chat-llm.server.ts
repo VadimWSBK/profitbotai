@@ -47,11 +47,20 @@ export async function chatWithLlm(
 
 	if (provider === 'google') {
 		const genAI = new GoogleGenerativeAI(trimmedKey);
-		const genModel = genAI.getGenerativeModel({ model: model || 'gemini-2.5-flash' });
 		const systemPart = messages.find((m) => m.role === 'system')?.content;
-		const parts = messages.filter((m) => m.role !== 'system').map((m) => `${m.role}: ${m.content}`);
-		const prompt = systemPart ? `System: ${systemPart}\n\n${parts.join('\n\n')}` : parts.join('\n\n');
-		const result = await genModel.generateContent(prompt);
+		const nonSystem = messages.filter((m) => m.role !== 'system');
+		// Use startChat with history so the model gets proper multi-turn context (user/assistant turns)
+		const history = nonSystem.slice(0, -1).map((m) => ({
+			role: m.role === 'assistant' ? 'model' : 'user',
+			parts: [{ text: m.content }]
+		}));
+		const lastMessage = nonSystem.at(-1);
+		const genModel = genAI.getGenerativeModel({
+			model: model || 'gemini-2.5-flash',
+			systemInstruction: systemPart || undefined
+		});
+		const chat = genModel.startChat({ history });
+		const result = await chat.sendMessage(lastMessage?.content ?? '');
 		const text = result.response.text();
 		if (!text) throw new Error('Empty Google response');
 		return text;

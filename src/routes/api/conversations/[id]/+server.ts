@@ -2,8 +2,12 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSupabaseClient } from '$lib/supabase.server';
 
+const MESSAGES_PAGE_SIZE = 20;
+
 /**
  * GET /api/conversations/[id] – get one conversation with messages. Marks user messages as read.
+ * Query: limit (default 20), before (ISO date – load older messages), since (ISO date – new messages for polling).
+ * Returns: conversation, messages (asc order), hasMore (true if more older messages exist).
  */
 export const GET: RequestHandler = async (event) => {
 	const user = event.locals.user;
@@ -11,6 +15,10 @@ export const GET: RequestHandler = async (event) => {
 
 	const id = event.params.id;
 	if (!id) return json({ error: 'Missing conversation id' }, { status: 400 });
+
+	const limit = Math.min(Math.max(1, Number.parseInt(event.url.searchParams.get('limit') ?? String(MESSAGES_PAGE_SIZE), 10)), 100);
+	const before = event.url.searchParams.get('before')?.trim() || null;
+	const since = event.url.searchParams.get('since')?.trim() || null;
 
 	const supabase = getSupabaseClient(event);
 	const { data: conv, error: convError } = await supabase
@@ -20,13 +28,6 @@ export const GET: RequestHandler = async (event) => {
 		.single();
 	if (convError || !conv) return json({ error: 'Conversation not found' }, { status: 404 });
 
-	const { data: messages, error: msgError } = await supabase
-		.from('widget_conversation_messages')
-		.select('id, role, content, read_at, created_at')
-		.eq('conversation_id', id)
-		.order('created_at', { ascending: true });
-	if (msgError) return json({ error: msgError.message }, { status: 500 });
-
 	// Mark user messages as read
 	await supabase
 		.from('widget_conversation_messages')
@@ -34,6 +35,35 @@ export const GET: RequestHandler = async (event) => {
 		.eq('conversation_id', id)
 		.eq('role', 'user')
 		.is('read_at', null);
+
+	let messages: { id: string; role: string; content: string; read_at: string | null; created_at: string }[] = [];
+	let hasMore = false;
+
+	if (since) {
+		// Polling: messages created after this date (order asc)
+		const { data: rows, error: msgError } = await supabase
+			.from('widget_conversation_messages')
+			.select('id, role, content, read_at, created_at')
+			.eq('conversation_id', id)
+			.gt('created_at', since)
+			.order('created_at', { ascending: true });
+		if (msgError) return json({ error: msgError.message }, { status: 500 });
+		messages = (rows ?? []) as typeof messages;
+	} else {
+		// Latest page or "load more": order desc, then reverse for asc response
+		let query = supabase
+			.from('widget_conversation_messages')
+			.select('id, role, content, read_at, created_at')
+			.eq('conversation_id', id)
+			.order('created_at', { ascending: false })
+			.limit(limit + 1);
+		if (before) query = query.lt('created_at', before);
+		const { data: rows, error: msgError } = await query;
+		if (msgError) return json({ error: msgError.message }, { status: 500 });
+		const raw = (rows ?? []) as typeof messages;
+		hasMore = raw.length > limit;
+		messages = raw.slice(0, limit).reverse();
+	}
 
 	const widget = Array.isArray(conv.widgets) ? conv.widgets[0] : conv.widgets;
 	return json({
@@ -46,13 +76,14 @@ export const GET: RequestHandler = async (event) => {
 			createdAt: conv.created_at,
 			updatedAt: conv.updated_at
 		},
-		messages: (messages ?? []).map((m: { id: string; role: string; content: string; read_at: string | null; created_at: string }) => ({
+		messages: messages.map((m) => ({
 			id: m.id,
 			role: m.role,
 			content: m.content,
 			readAt: m.read_at,
 			createdAt: m.created_at
-		}))
+		})),
+		hasMore
 	});
 };
 
