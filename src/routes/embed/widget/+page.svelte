@@ -55,5 +55,5 @@
 </svelte:head>
 
 <div class="embed-widget-root min-h-[600px] w-full bg-transparent">
-	<WidgetPreview config={config} />
+	<WidgetPreview config={config} widgetId={data.widgetId} />
 </div>

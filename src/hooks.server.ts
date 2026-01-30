@@ -7,8 +7,13 @@ const API_EVENTS_PATH = '/api/widgets/events';
 
 function isPublicPath(pathname: string): boolean {
 	if (pathname.startsWith(EMBED_PREFIX)) return true;
-	// Allow anonymous POST so embed script can send widget events
 	if (pathname === API_EVENTS_PATH) return true;
+	// Allow anonymous GET for widget config (embed loads this to display the chat)
+	if (/^\/api\/widgets\/[^/]+$/.test(pathname)) return true;
+	// Allow anonymous POST for chat (embed widget sends messages)
+	if (/^\/api\/widgets\/[^/]+\/chat$/.test(pathname)) return true;
+	// Allow anonymous GET for widget messages (embed polls for human agent replies)
+	if (/^\/api\/widgets\/[^/]+\/messages$/.test(pathname)) return true;
 	return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'));
 }
 

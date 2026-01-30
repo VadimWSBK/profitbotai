@@ -1,19 +1,49 @@
 <script lang="ts">
 	import type { WidgetConfig } from '$lib/widget-config';
+	import { onMount, onDestroy } from 'svelte';
+	import { browser } from '$app/environment';
 
-	let { config, onClose } = $props<{ config: WidgetConfig; onClose: () => void }>();
+	let { config, widgetId, onClose } = $props<{ config: WidgetConfig; widgetId?: string; onClose: () => void }>();
 
 	type Message = { role: 'user' | 'bot'; content: string };
 
+	const SESSION_STORAGE_KEY = (id: string) => `profitbot_session_${id}`;
+
+	function getSessionId(): string {
+		if (!widgetId) return 'preview';
+		if (!browser) return 'preview';
+		const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('session_id') : null;
+		const fromUrl = typeof params === 'string' ? params.trim() : '';
+		if (fromUrl) return fromUrl;
+		const key = SESSION_STORAGE_KEY(widgetId);
+		let stored = '';
+		try {
+			stored = localStorage.getItem(key) ?? '';
+		} catch {
+			// ignore
+		}
+		if (stored.trim()) return stored.trim();
+		const newId = `visitor_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+		try {
+			localStorage.setItem(key, newId);
+		} catch {
+			// ignore
+		}
+		return newId;
+	}
+
+	let sessionId = $state('');
 	let inputText = $state('');
 	let messages = $state<Message[]>([]);
 	let showStarterPrompts = $state(true);
 	let loading = $state(false);
 	let contentEl: HTMLDivElement;
+	let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 	const win = $derived(config.window);
 	const bubble = $derived(config.bubble);
 	const botStyle = $derived(win.botMessageSettings);
+	const useDirect = $derived(config.chatBackend === 'direct' && !!config.llmProvider && !!widgetId);
 
 	function addBotMessage(content: string) {
 		messages = [...messages, { role: 'bot', content }];
@@ -25,6 +55,54 @@
 		if (contentEl) contentEl.scrollTop = contentEl.scrollHeight;
 	}
 
+	async function fetchStoredMessages() {
+		if (!widgetId || !sessionId || sessionId === 'preview') return;
+		try {
+			const res = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
+			const data = await res.json().catch(() => ({}));
+			const list = Array.isArray(data.messages) ? data.messages : [];
+			if (list.length > 0) {
+				messages = list.map((m: { role: string; content: string }) => ({ role: m.role as 'user' | 'bot', content: m.content }));
+				showStarterPrompts = false;
+				requestAnimationFrame(() => scrollToBottom());
+			}
+		} catch {
+			// ignore
+		}
+	}
+
+	function startPolling() {
+		if (!useDirect || !widgetId || !sessionId || sessionId === 'preview') return;
+		pollTimer = setInterval(async () => {
+			try {
+				const res = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
+				const data = await res.json().catch(() => ({}));
+				const list = Array.isArray(data.messages) ? data.messages : [];
+				if (list.length > messages.length) {
+					messages = list.map((m: { role: string; content: string }) => ({ role: m.role as 'user' | 'bot', content: m.content }));
+					showStarterPrompts = false;
+					requestAnimationFrame(() => scrollToBottom());
+				}
+			} catch {
+				// ignore
+			}
+		}, 3000);
+	}
+
+	function stopPolling() {
+		if (pollTimer) {
+			clearInterval(pollTimer);
+			pollTimer = null;
+		}
+	}
+
+	onMount(() => {
+		sessionId = getSessionId();
+		fetchStoredMessages();
+		startPolling();
+	});
+	onDestroy(() => stopPolling());
+
 	async function sendMessage(text: string) {
 		const trimmed = text.trim();
 		if (!trimmed) return;
@@ -35,12 +113,38 @@
 
 		loading = true;
 		let botReply = config.window.customErrorMessage;
-		if (config.n8nWebhookUrl) {
+		const useN8n = config.chatBackend !== 'direct' && config.n8nWebhookUrl;
+		if (useDirect) {
 			try {
+				const res = await fetch(`/api/widgets/${widgetId}/chat`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ message: trimmed, sessionId })
+				});
+				const data = await res.json().catch(() => ({}));
+				if (!res.ok) botReply = (data.error as string) ?? config.window.customErrorMessage;
+				else botReply = data.output ?? data.message ?? botReply;
+				if (typeof botReply !== 'string') botReply = JSON.stringify(botReply);
+			} catch {
+				botReply = config.window.customErrorMessage;
+			}
+		} else if (useN8n) {
+			try {
+				const bot = config.bot ?? { role: '', tone: '', instructions: '' };
+				const parts: string[] = [];
+				if (bot.role?.trim()) parts.push(bot.role.trim());
+				if (bot.tone?.trim()) parts.push(`Tone: ${bot.tone.trim()}`);
+				if (bot.instructions?.trim()) parts.push(bot.instructions.trim());
+				const systemPrompt = parts.length > 0 ? parts.join('\n\n') : undefined;
 				const res = await fetch(config.n8nWebhookUrl, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ message: trimmed, sessionId: 'preview' })
+					body: JSON.stringify({
+						message: trimmed,
+						sessionId: 'preview',
+						...(systemPrompt && { systemPrompt }),
+						...(systemPrompt && { role: bot.role?.trim() || undefined, tone: bot.tone?.trim() || undefined, instructions: bot.instructions?.trim() || undefined })
+					})
 				});
 				const data = await res.json().catch(() => ({}));
 				botReply = data.output ?? data.message ?? data.reply ?? data.text ?? botReply;
@@ -49,7 +153,9 @@
 				botReply = config.window.customErrorMessage;
 			}
 		} else {
-			botReply = "Preview mode — add your n8n webhook URL in the Connect tab to get real responses.";
+			botReply = config.chatBackend === 'direct'
+				? 'Configure Direct LLM in the Connect tab (add API keys in Settings).'
+				: "Preview mode — add your n8n webhook URL or select Direct LLM in the Connect tab.";
 		}
 		addBotMessage(botReply);
 		loading = false;

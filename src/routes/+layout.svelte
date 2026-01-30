@@ -31,7 +31,7 @@
 		<a href="/" class="p-3 rounded-lg hover:bg-gray-800 hover:text-white transition-colors opacity-60" title="Stream">
 			<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
 		</a>
-		<a href="/" class="p-3 rounded-lg bg-gray-800 text-white mt-1" title="Dashboard">
+		<a href="/" class="p-3 rounded-lg mt-1 transition-colors {($page.url.pathname === '/' ? 'bg-gray-800 text-white' : 'hover:bg-gray-800 hover:text-white')}" title="Dashboard">
 			<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
 		</a>
 		{#if data.role === 'admin'}
@@ -44,6 +44,9 @@
 		</a>
 		<a href="/devices" class="p-3 rounded-lg hover:bg-gray-800 hover:text-white transition-colors mt-1" title="Devices">
 			<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+		</a>
+		<a href="/messages" class="p-3 rounded-lg mt-1 transition-colors {($page.url.pathname === '/messages' ? 'bg-gray-800 text-white' : 'hover:bg-gray-800 hover:text-white')}" title="Messages">
+			<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
 		</a>
 		<div class="flex-1"></div>
 		<a href="/settings" class="p-3 rounded-lg hover:bg-gray-800 hover:text-white transition-colors" title="Settings">

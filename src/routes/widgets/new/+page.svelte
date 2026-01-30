@@ -25,7 +25,8 @@
 					config: {
 						bubble: config.bubble,
 						tooltip: config.tooltip,
-						window: config.window
+						window: config.window,
+						bot: config.bot
 					},
 					n8n_webhook_url: config.n8nWebhookUrl
 				})

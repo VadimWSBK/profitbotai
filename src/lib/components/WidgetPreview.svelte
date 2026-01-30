@@ -2,7 +2,7 @@
 	import type { WidgetConfig } from '$lib/widget-config';
 	import ChatWindow from './ChatWindow.svelte';
 
-	let { config } = $props<{ config: WidgetConfig }>();
+	let { config, widgetId } = $props<{ config: WidgetConfig; widgetId?: string }>();
 	let iconError = $state(false);
 	let open = $state(false);
 
@@ -39,7 +39,7 @@
 			class="absolute flex flex-col items-end gap-2"
 			style="right: 0; bottom: {bubble.bubbleSizePx + 12}px;"
 		>
-			<ChatWindow config={config} onClose={() => (open = false)} />
+			<ChatWindow config={config} widgetId={widgetId} onClose={() => (open = false)} />
 		</div>
 	{/if}
 

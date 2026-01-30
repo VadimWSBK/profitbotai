@@ -82,14 +82,35 @@ export interface WindowConfig {
 	sectionBorderColor: string;
 }
 
+/** Bot personality / instructions sent to n8n so the AI Agent can use them (role, tone, rules). */
+export interface BotInstructionsConfig {
+	/** Who the bot is, e.g. "You are a helpful sales assistant for NetZero Coating." */
+	role: string;
+	/** How to sound, e.g. "Professional and friendly", "Casual and concise" */
+	tone: string;
+	/** Extra rules: what to do/avoid, length, language, etc. */
+	instructions: string;
+}
+
+/** How the widget gets chat replies: n8n webhook or Direct LLM (our backend). */
+export type ChatBackend = 'n8n' | 'direct';
+
 export interface WidgetConfig {
 	name: string;
 	displayMode: 'popup' | 'standalone' | 'embedded';
 	bubble: BubbleConfig;
 	tooltip: TooltipConfig;
 	window: WindowConfig;
+	bot: BotInstructionsConfig;
+	/** 'n8n' = use n8nWebhookUrl; 'direct' = use our API + user's LLM keys */
+	chatBackend: ChatBackend;
 	n8nWebhookUrl: string;
 	n8nWorkflowId?: string;
+	/** When chatBackend is 'direct': primary and optional fallback LLM */
+	llmProvider?: string;
+	llmModel?: string;
+	llmFallbackProvider?: string;
+	llmFallbackModel?: string;
 }
 
 export const defaultBubbleConfig: BubbleConfig = {
@@ -161,11 +182,23 @@ export const defaultWindowConfig: WindowConfig = {
 	sectionBorderColor: '#e5e7eb'
 };
 
+export const defaultBotInstructionsConfig: BotInstructionsConfig = {
+	role: '',
+	tone: '',
+	instructions: ''
+};
+
 export const defaultWidgetConfig: WidgetConfig = {
 	name: 'My Chat Widget',
 	displayMode: 'popup',
 	bubble: defaultBubbleConfig,
 	tooltip: defaultTooltipConfig,
 	window: defaultWindowConfig,
-	n8nWebhookUrl: ''
+	bot: defaultBotInstructionsConfig,
+	chatBackend: 'n8n',
+	n8nWebhookUrl: '',
+	llmProvider: '',
+	llmModel: '',
+	llmFallbackProvider: '',
+	llmFallbackModel: ''
 };

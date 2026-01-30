@@ -1,17 +1,21 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getSupabaseClient } from '$lib/supabase.server';
+import { getSupabaseClient, getSupabaseAdmin } from '$lib/supabase.server';
 
 /**
  * GET /api/widgets/[id] – fetch one widget (full config for editor).
+ * Anonymous GET allowed for embed (Shopify, etc.); uses service role to bypass RLS.
  */
 export const GET: RequestHandler = async (event) => {
 	const id = event.params.id;
 	if (!id) return json({ error: 'Missing id' }, { status: 400 });
-	if (!event.locals.user) return json({ error: 'Unauthorized' }, { status: 401 });
+	// Allow anonymous GET for embed (visitors on Shopify etc. fetch widget config)
+	// PATCH/DELETE still require auth below
+	const isAnonymousGet = !event.locals.user && event.request.method === 'GET';
 
 	try {
-		const supabase = getSupabaseClient(event);
+		// Anonymous embed: use admin client to bypass RLS (widget config is public anyway)
+		const supabase = isAnonymousGet ? getSupabaseAdmin() : getSupabaseClient(event);
 		const { data, error } = await supabase
 			.from('widgets')
 			.select('*')
@@ -36,6 +40,12 @@ export const GET: RequestHandler = async (event) => {
 				bubble: config.bubble ?? {},
 				tooltip: config.tooltip ?? {},
 				window: config.window ?? {},
+				bot: config.bot ?? {},
+				chatBackend: (config.chatBackend as string) ?? 'n8n',
+				llmProvider: config.llmProvider ?? '',
+				llmModel: config.llmModel ?? '',
+				llmFallbackProvider: config.llmFallbackProvider ?? '',
+				llmFallbackModel: config.llmFallbackModel ?? '',
 				n8nWebhookUrl: data.n8n_webhook_url ?? ''
 			},
 			n8nWebhookUrl: data.n8n_webhook_url ?? '',

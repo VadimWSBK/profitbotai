@@ -35,15 +35,25 @@ The app expects these tables (already applied if you used the Supabase MCP):
 
 - **widgets** – `id`, `name`, `display_mode`, `config` (jsonb), `n8n_webhook_url`, `created_at`, `updated_at`
 - **widget_events** – `id`, `widget_id` (fk), `event_type`, `session_id`, `metadata` (jsonb), `created_at`
+- **widget_documents** – `id`, `widget_id` (fk), `content`, `embedding` (vector 1536), `metadata` (jsonb), `created_at` — for Train Bot / RAG (requires `vector` extension)
 
 RLS is enabled with permissive policies; tighten them when you add auth.
+
+## Train Bot (optional)
+
+Add a knowledge base per widget so n8n can use **Supabase Vector Store** for RAG:
+
+1. Set **OPENAI_API_KEY** in `.env` (used for embeddings; e.g. OpenAI text-embedding-3-small). The app also needs **SUPABASE_SERVICE_ROLE_KEY** (Settings → API in Supabase) so the server can write to `widget_documents`.
+2. Run the migration that creates `widget_documents` and enables the `vector` extension (see `supabase/migrations/20260130120000_widget_documents_vector.sql`).
+3. In the dashboard, open a widget → **Train Bot** tab: upload PDFs or paste URLs to scrape. Content is chunked, embedded, and stored in Supabase.
+4. In n8n, add **Supabase Vector Store** and use **“Retrieve documents for AI Agent as Tool”** with the same Supabase project and table `widget_documents` (filter by `metadata->>'widget_id'` = your widget ID) so the AI Agent can answer from this data.
 
 ## n8n (optional)
 
 Use n8n to power chat responses:
 
 1. In the dashboard, open a widget → **Connect** tab and set **n8n Webhook URL** (e.g. from a Webhook node in n8n).
-2. The chat widget sends `POST {webhook}` with `{ message, sessionId }`; your workflow can reply with the response body or a field like `output` / `message`.
+2. The chat widget sends `POST {webhook}` with `{ message, sessionId }` and, when set in **Train Bot** → Bot instructions, `systemPrompt`, `role`, `tone`, and `instructions`. Map `systemPrompt` into your AI Agent node’s system message so the bot follows the configured role and tone. Your workflow can reply with the response body or a field like `output` / `message`.
 
 ## Scripts
 

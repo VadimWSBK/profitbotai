@@ -2,14 +2,16 @@
 	import WidgetPreview from '$lib/components/WidgetPreview.svelte';
 	import IconUrlField from '$lib/components/IconUrlField.svelte';
 	import { defaultWidgetConfig, type WidgetConfig } from '$lib/widget-config';
+	import { getModels } from '$lib/llm-providers';
 
-	type MainTab = 'customize' | 'connect' | 'embed';
+	type MainTab = 'customize' | 'connect' | 'train' | 'embed';
 	type CustomizeTab = 'bubble' | 'tooltip' | 'window' | 'footer' | 'advanced';
 
 	const customizeTabs: CustomizeTab[] = ['bubble', 'tooltip', 'window', 'footer', 'advanced'];
 
 	let { data } = $props();
 	const widgetId = $derived((data.widgetId as string) ?? '');
+	const llmKeysAvailable = $derived((data.llmKeysAvailable as string[]) ?? []);
 	const initial = $derived((data.initial as {
 		id: string;
 		name: string;
@@ -54,6 +56,11 @@
 	let saving = $state(false);
 	let embedCopied = $state(false);
 	let botMessageSettingsOpen = $state(true);
+	let trainStatus = $state<{ configured: boolean; documentCount: number } | null>(null);
+	let trainUploading = $state(false);
+	let trainScraping = $state(false);
+	let trainUploadFile = $state<File | null>(null);
+	let trainScrapeUrl = $state('');
 
 	async function save() {
 		saving = true;
@@ -67,7 +74,13 @@
 					config: {
 						bubble: config.bubble,
 						tooltip: config.tooltip,
-						window: config.window
+						window: config.window,
+						bot: config.bot,
+						chatBackend: config.chatBackend,
+						llmProvider: config.llmProvider ?? '',
+						llmModel: config.llmModel ?? '',
+						llmFallbackProvider: config.llmFallbackProvider ?? '',
+						llmFallbackModel: config.llmFallbackModel ?? ''
 					},
 					n8n_webhook_url: config.n8nWebhookUrl
 				})
@@ -97,6 +110,62 @@
 		const origin = typeof window !== 'undefined' ? window.location.origin : 'https://your-domain.com';
 		return `<script src="${origin}/embed/chat-widget.js" data-widget-id="${widgetId}"><\/script>`;
 	}
+
+	async function fetchTrainStatus() {
+		if (!widgetId) return;
+		try {
+			const res = await fetch(`/api/widgets/${widgetId}/train`);
+			const data = await res.json().catch(() => ({}));
+			trainStatus = { configured: data.configured ?? false, documentCount: data.documentCount ?? 0 };
+		} catch {
+			trainStatus = { configured: false, documentCount: 0 };
+		}
+	}
+
+	async function trainUpload() {
+		if (!trainUploadFile || !widgetId) return;
+		trainUploading = true;
+		try {
+			const form = new FormData();
+			form.append('file', trainUploadFile);
+			const res = await fetch(`/api/widgets/${widgetId}/train/upload`, { method: 'POST', body: form });
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(data.error || 'Upload failed');
+			alert(`Added ${data.chunks ?? 0} chunks to the knowledge base.`);
+			trainUploadFile = null;
+			fetchTrainStatus();
+		} catch (e) {
+			alert(e instanceof Error ? e.message : 'Upload failed');
+		} finally {
+			trainUploading = false;
+		}
+	}
+
+	async function trainScrape() {
+		const url = trainScrapeUrl.trim();
+		if (!url || !widgetId) return;
+		trainScraping = true;
+		try {
+			const res = await fetch(`/api/widgets/${widgetId}/train/scrape`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ url })
+			});
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(data.error || 'Scrape failed');
+			alert(`Added ${data.chunks ?? 0} chunks to the knowledge base.`);
+			trainScrapeUrl = '';
+			fetchTrainStatus();
+		} catch (e) {
+			alert(e instanceof Error ? e.message : 'Scrape failed');
+		} finally {
+			trainScraping = false;
+		}
+	}
+
+	$effect(() => {
+		if (mainTab === 'train' && widgetId) fetchTrainStatus();
+	});
 </script>
 
 <svelte:head>
@@ -151,6 +220,13 @@
 			onclick={() => (mainTab = 'connect')}
 		>
 			Connect
+		</button>
+		<button
+			type="button"
+			class="pb-3 text-sm font-medium border-b-2 transition-colors {mainTab === 'train' ? 'border-amber-600 text-amber-600' : 'border-transparent text-gray-500 hover:text-gray-700'}"
+			onclick={() => (mainTab = 'train')}
+		>
+			Train Bot
 		</button>
 		<button
 			type="button"
@@ -404,12 +480,165 @@
 		</div>
 	{:else if mainTab === 'connect'}
 		<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-			<h3 class="text-lg font-semibold text-gray-900 mb-1">Connect to n8n</h3>
-			<p class="text-gray-500 text-sm mb-6">Point your widget to an n8n webhook.</p>
-			<label class="block">
-				<span class="text-sm font-medium text-gray-700 mb-1">n8n Webhook URL</span>
-				<input type="url" bind:value={config.n8nWebhookUrl} class="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm" placeholder="https://your-n8n.com/webhook/..." />
+			<h3 class="text-lg font-semibold text-gray-900 mb-1">Connect</h3>
+			<p class="text-gray-500 text-sm mb-6">Use an n8n webhook or a Direct LLM (API keys set in Settings).</p>
+
+			<label class="block mb-4">
+				<span class="text-sm font-medium text-gray-700 mb-2 block">Backend</span>
+				<select bind:value={config.chatBackend} class="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm">
+					<option value="n8n">n8n Webhook</option>
+					<option value="direct">Direct LLM</option>
+				</select>
 			</label>
+
+			{#if config.chatBackend === 'n8n'}
+				<label class="block">
+					<span class="text-sm font-medium text-gray-700 mb-1">n8n Webhook URL</span>
+					<input type="url" bind:value={config.n8nWebhookUrl} class="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm" placeholder="https://your-n8n.com/webhook/..." />
+				</label>
+			{:else}
+				{#if llmKeysAvailable.length === 0}
+					<p class="text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm">Add at least one LLM API key in <a href="/settings" class="underline font-medium">Settings</a> to use Direct LLM.</p>
+				{:else}
+					<div class="space-y-4">
+						<label class="block">
+							<span class="text-sm font-medium text-gray-700 mb-1">Primary LLM</span>
+							<select bind:value={config.llmProvider} class="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm">
+								<option value="">— Select —</option>
+								{#each llmKeysAvailable as pid}
+									<option value={pid}>{pid === 'openai' ? 'OpenAI' : pid === 'anthropic' ? 'Anthropic' : pid === 'google' ? 'Google (Gemini)' : pid}</option>
+								{/each}
+							</select>
+						</label>
+						{#if config.llmProvider}
+							<label class="block">
+								<span class="text-sm font-medium text-gray-700 mb-1">Primary model</span>
+								<select bind:value={config.llmModel} class="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono">
+									{#each getModels(config.llmProvider) as model}
+										<option value={model}>{model}</option>
+									{/each}
+								</select>
+							</label>
+						{/if}
+						<label class="block">
+							<span class="text-sm font-medium text-gray-700 mb-1">Fallback LLM (optional)</span>
+							<select bind:value={config.llmFallbackProvider} class="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm">
+								<option value="">— None —</option>
+								{#each llmKeysAvailable.filter((p) => p !== config.llmProvider) as pid}
+									<option value={pid}>{pid === 'openai' ? 'OpenAI' : pid === 'anthropic' ? 'Anthropic' : pid === 'google' ? 'Google (Gemini)' : pid}</option>
+								{/each}
+							</select>
+						</label>
+						{#if config.llmFallbackProvider}
+							<label class="block">
+								<span class="text-sm font-medium text-gray-700 mb-1">Fallback model</span>
+								<select bind:value={config.llmFallbackModel} class="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono">
+									{#each getModels(config.llmFallbackProvider) as model}
+										<option value={model}>{model}</option>
+									{/each}
+								</select>
+							</label>
+						{/if}
+					</div>
+				{/if}
+			{/if}
+		</div>
+	{:else if mainTab === 'train'}
+		<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+			<h3 class="text-lg font-semibold text-gray-900 mb-1">Train Bot</h3>
+			<p class="text-gray-500 text-sm mb-6">
+				Define how the bot should act and add knowledge. These instructions are sent with every message to your n8n webhook so your AI Agent can use them.
+			</p>
+
+			<div class="border border-gray-200 rounded-lg p-4 mb-6 bg-gray-50/50">
+				<h4 class="text-sm font-semibold text-gray-900 mb-3">Bot instructions (role, tone, rules)</h4>
+				<p class="text-xs text-gray-500 mb-4">Sent to n8n as <code class="bg-gray-200 px-1 rounded">systemPrompt</code>, <code class="bg-gray-200 px-1 rounded">role</code>, <code class="bg-gray-200 px-1 rounded">tone</code>, and <code class="bg-gray-200 px-1 rounded">instructions</code>. In n8n, map these into your AI Agent node&apos;s system message.</p>
+				<div class="space-y-4">
+					<label class="block">
+						<span class="text-sm font-medium text-gray-700 mb-1">Role</span>
+						<input
+							type="text"
+							bind:value={config.bot.role}
+							placeholder="e.g. You are a helpful sales assistant for NetZero Coating."
+							class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+						/>
+					</label>
+					<label class="block">
+						<span class="text-sm font-medium text-gray-700 mb-1">Tone</span>
+						<input
+							type="text"
+							bind:value={config.bot.tone}
+							placeholder="e.g. Professional and friendly, concise"
+							class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+						/>
+					</label>
+					<label class="block">
+						<span class="text-sm font-medium text-gray-700 mb-1">Instructions / rules</span>
+						<textarea
+							bind:value={config.bot.instructions}
+							placeholder="e.g. Answer only about our products. Keep replies under 3 sentences. Do not discuss competitors."
+							class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm min-h-[80px]"
+							rows="3"
+						></textarea>
+					</label>
+				</div>
+			</div>
+
+			<h4 class="text-sm font-semibold text-gray-800 mb-2">Knowledge base (RAG)</h4>
+			<p class="text-gray-500 text-sm mb-4">
+				Add knowledge from PDFs or web pages. Content is chunked, embedded with OpenAI, and stored in Supabase. In n8n, connect the same Supabase project and use <strong>Supabase Vector Store</strong> → &quot;Retrieve documents for AI Agent as Tool&quot; so your bot can answer from this data.
+			</p>
+			{#if trainStatus && !trainStatus.configured}
+				<p class="text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm mb-6">
+					Add <code class="bg-amber-100 px-1 rounded">OPENAI_API_KEY</code> to your <code class="bg-amber-100 px-1 rounded">.env</code> to enable Train Bot.
+				</p>
+			{/if}
+			{#if trainStatus}
+				<p class="text-sm text-gray-600 mb-6">Knowledge base: <strong>{trainStatus.documentCount}</strong> chunk(s) stored for this widget.</p>
+			{/if}
+			<div class="space-y-6">
+				<div>
+					<h4 class="text-sm font-medium text-gray-800 mb-2">Upload PDF</h4>
+					<div class="flex flex-wrap items-end gap-3">
+						<label class="flex-1 min-w-[200px]">
+							<span class="sr-only">Choose PDF</span>
+							<input
+								type="file"
+								accept="application/pdf"
+								class="block w-full text-sm text-gray-600 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-amber-50 file:text-amber-800 file:font-medium"
+								onchange={(e) => (trainUploadFile = (e.currentTarget.files ?? [])[0] ?? null)}
+							/>
+						</label>
+						<button
+							type="button"
+							disabled={!trainUploadFile || trainUploading || !trainStatus?.configured}
+							onclick={trainUpload}
+							class="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 disabled:pointer-events-none text-white font-medium rounded-lg"
+						>
+							{trainUploading ? 'Uploading…' : 'Add to knowledge base'}
+						</button>
+					</div>
+				</div>
+				<div>
+					<h4 class="text-sm font-medium text-gray-800 mb-2">Scrape a webpage</h4>
+					<div class="flex flex-wrap gap-3">
+						<input
+							type="url"
+							bind:value={trainScrapeUrl}
+							placeholder="https://example.com/page"
+							class="flex-1 min-w-[200px] px-3 py-2 border border-gray-300 rounded-lg text-sm"
+						/>
+						<button
+							type="button"
+							disabled={!trainScrapeUrl.trim() || trainScraping || !trainStatus?.configured}
+							onclick={trainScrape}
+							class="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 disabled:pointer-events-none text-white font-medium rounded-lg"
+						>
+							{trainScraping ? 'Scraping…' : 'Add to knowledge base'}
+						</button>
+					</div>
+				</div>
+			</div>
 		</div>
 	{:else if mainTab === 'embed'}
 		<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
@@ -423,4 +652,4 @@
 	{/if}
 </div>
 
-<WidgetPreview config={config} />
+<WidgetPreview config={config} widgetId={widgetId} />
