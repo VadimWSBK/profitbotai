@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getSupabaseAdmin } from '$lib/supabase.server';
+import { getSupabase } from '$lib/supabase.server';
 import { chatWithLlm } from '$lib/chat-llm.server';
 
 const MAX_HISTORY_MESSAGES = 30;
@@ -28,7 +28,7 @@ export const POST: RequestHandler = async (event) => {
 		: `anon-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
 	try {
-		const supabase = getSupabaseAdmin();
+		const supabase = getSupabase();
 		const { data: widget, error: widgetError } = await supabase
 			.from('widgets')
 			.select('config, created_by')
@@ -82,13 +82,11 @@ export const POST: RequestHandler = async (event) => {
 		const ownerId = widget.created_by as string | null;
 		if (!ownerId) return json({ error: 'Widget has no owner' }, { status: 400 });
 
-		const { data: keyRow, error: keyError } = await supabase
-			.from('user_llm_keys')
-			.select('api_key')
-			.eq('user_id', ownerId)
-			.eq('provider', llmProvider)
-			.single();
-		if (keyError || !keyRow?.api_key) return json({ error: 'Owner has no API key for this provider' }, { status: 400 });
+		const { data: apiKey, error: keyError } = await supabase.rpc('get_owner_llm_key_for_chat', {
+			p_widget_id: widgetId,
+			p_provider: llmProvider
+		});
+		if (keyError || !apiKey) return json({ error: 'Owner has no API key for this provider' }, { status: 400 });
 
 		// Load conversation history for context (user, assistant, human_agent -> assistant for LLM)
 		const { data: historyRows } = await supabase
@@ -119,18 +117,16 @@ export const POST: RequestHandler = async (event) => {
 
 		let reply: string;
 		try {
-			reply = await chatWithLlm(llmProvider, llmModel, keyRow.api_key, messages);
+			reply = await chatWithLlm(llmProvider, llmModel, apiKey, messages);
 		} catch (primaryErr) {
 			if (llmFallbackProvider && llmFallbackModel) {
-				const { data: fallbackRow } = await supabase
-					.from('user_llm_keys')
-					.select('api_key')
-					.eq('user_id', ownerId)
-					.eq('provider', llmFallbackProvider)
-					.single();
-				if (fallbackRow?.api_key) {
+				const { data: fallbackKey } = await supabase.rpc('get_owner_llm_key_for_chat', {
+					p_widget_id: widgetId,
+					p_provider: llmFallbackProvider
+				});
+				if (fallbackKey) {
 					try {
-						reply = await chatWithLlm(llmFallbackProvider, llmFallbackModel, fallbackRow.api_key, messages);
+						reply = await chatWithLlm(llmFallbackProvider, llmFallbackModel, fallbackKey, messages);
 					} catch {
 						reply = (primaryErr instanceof Error ? primaryErr.message : 'Sorry, I could not respond.') as string;
 					}
@@ -142,9 +138,13 @@ export const POST: RequestHandler = async (event) => {
 			}
 		}
 
-		await supabase
+		const { error: insertErr } = await supabase
 			.from('widget_conversation_messages')
 			.insert({ conversation_id: conv.id, role: 'assistant', content: reply });
+		if (insertErr) {
+			console.error('Failed to persist assistant message:', insertErr);
+			// Still return the reply to the user
+		}
 
 		return json({ output: reply, message: reply });
 	} catch (e) {

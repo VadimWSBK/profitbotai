@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getSupabaseAdmin } from '$lib/supabase.server';
+import { getSupabase } from '$lib/supabase.server';
 
 /**
  * GET /api/widgets/[id]/messages?session_id= – messages for this widget + session (for embed).
@@ -13,7 +13,7 @@ export const GET: RequestHandler = async (event) => {
 		return json({ error: 'Missing widget id or session_id' }, { status: 400 });
 	}
 	try {
-		const supabase = getSupabaseAdmin();
+		const supabase = getSupabase();
 		const { data: conv, error: convError } = await supabase
 			.from('widget_conversations')
 			.select('id')
