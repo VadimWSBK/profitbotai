@@ -5,7 +5,7 @@
 <div class="w-full max-w-sm mx-auto">
 	<div class="bg-white rounded-2xl shadow-lg border border-gray-200 p-8">
 		<div class="text-center mb-8">
-			<h1 class="text-2xl font-bold text-gray-900">ProfitBot</h1>
+			<img src="/PROFITBOT._LOGO.svg" alt="ProfitBot" class="h-6 mx-auto mb-2" />
 			<p class="text-gray-500 mt-1">Sign in to your account</p>
 		</div>
 

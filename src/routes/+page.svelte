@@ -66,7 +66,7 @@
 	}
 </script>
 
-<div class="max-w-4xl">
+<div class="max-w-4xl mx-auto">
 	<!-- Title row -->
 	<div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
 		<div>

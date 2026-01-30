@@ -6,6 +6,8 @@
 	type MainTab = 'customize' | 'connect' | 'embed';
 	type CustomizeTab = 'bubble' | 'tooltip' | 'window' | 'footer' | 'advanced';
 
+	const customizeTabs: CustomizeTab[] = ['bubble', 'tooltip', 'window', 'footer', 'advanced'];
+
 	let { data } = $props();
 	const widgetId = $derived((data.widgetId as string) ?? '');
 	const initial = $derived((data.initial as {
@@ -16,16 +18,14 @@
 		n8nWebhookUrl?: string;
 	}) ?? null);
 
-	function deepMerge<T extends Record<string, unknown>>(target: T, source: Partial<T>): T {
-		const out = { ...target };
+	function deepMerge<T extends object>(target: T, source: Partial<T>): T {
+		const out = { ...target } as T;
 		for (const key of Object.keys(source) as (keyof T)[]) {
 			const s = source[key];
 			if (s === undefined) continue;
-			if (s !== null && typeof s === 'object' && !Array.isArray(s) && typeof target[key] === 'object' && target[key] !== null && !Array.isArray(target[key])) {
-				(out[key] as Record<string, unknown>) = deepMerge(
-					(target[key] as Record<string, unknown>) as T[keyof T],
-					s as Partial<T[keyof T]>
-				) as T[keyof T];
+			const tVal = target[key];
+			if (s !== null && typeof s === 'object' && !Array.isArray(s) && tVal !== null && typeof tVal === 'object' && !Array.isArray(tVal)) {
+				out[key] = deepMerge(tVal as object, s as object) as T[keyof T];
 			} else {
 				(out[key] as T[keyof T]) = s as T[keyof T];
 			}
@@ -45,7 +45,10 @@
 			: base
 	);
 
-	let config = $state<WidgetConfig>(mergedConfig);
+	let config = $state<WidgetConfig>(base);
+	$effect(() => {
+		config = mergedConfig;
+	});
 	let mainTab = $state<MainTab>('customize');
 	let customizeTab = $state<CustomizeTab>('bubble');
 	let saving = $state(false);
@@ -100,7 +103,7 @@
 	<title>{config.name} – Edit Widget</title>
 </svelte:head>
 
-<div class="max-w-3xl">
+<div class="max-w-3xl mx-auto">
 	<header class="flex flex-wrap items-center justify-between gap-4 mb-6">
 		<div class="flex items-center gap-2 flex-wrap">
 			<input
@@ -160,7 +163,7 @@
 
 	{#if mainTab === 'customize'}
 		<nav class="flex flex-wrap gap-2 mb-6">
-			{#each ['bubble', 'tooltip', 'window', 'footer', 'advanced'] as tab}
+			{#each customizeTabs as tab}
 				<button
 					type="button"
 					class="px-3 py-2 text-sm font-medium rounded-lg transition-colors {customizeTab === tab ? 'bg-amber-100 text-amber-800' : tab === 'footer' ? 'text-gray-400 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}"
