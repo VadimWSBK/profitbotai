@@ -1,5 +1,6 @@
 <script lang="ts">
 	import WidgetPreview from '$lib/components/WidgetPreview.svelte';
+	import IconUrlField from '$lib/components/IconUrlField.svelte';
 	import { defaultWidgetConfig, type WidgetConfig } from '$lib/widget-config';
 
 	type MainTab = 'customize' | 'connect' | 'embed';
@@ -193,10 +194,7 @@
 							<input type="text" bind:value={config.bubble.backgroundColor} class="flex-1 px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm" />
 						</div>
 					</label>
-					<label class="block">
-						<span class="text-sm font-medium text-gray-700 mb-1">Custom Icon URL ⓘ</span>
-						<input type="url" bind:value={config.bubble.customIconUrl} class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-					</label>
+					<IconUrlField bind:value={config.bubble.customIconUrl} uploadUrl={widgetId ? `/api/widgets/${widgetId}/upload` : '/api/widgets/upload'} label="Chat bubble icon (URL or upload)" />
 					<label class="block">
 						<span class="text-sm font-medium text-gray-700 mb-1">Custom Icon Size (%) ⓘ</span>
 						<input type="range" min="20" max="100" bind:value={config.bubble.customIconSize} class="w-full accent-amber-600" />
@@ -289,10 +287,7 @@
 						<span class="text-sm font-medium text-gray-700 mb-1">Title ⓘ</span>
 						<input type="text" bind:value={config.window.title} class="w-full px-3 py-2 border border-gray-300 rounded-lg" />
 					</label>
-					<label class="block">
-						<span class="text-sm font-medium text-gray-700 mb-1">Title Avatar URL ⓘ</span>
-						<input type="url" bind:value={config.window.titleAvatarUrl} class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-					</label>
+					<IconUrlField bind:value={config.window.titleAvatarUrl} uploadUrl={widgetId ? `/api/widgets/${widgetId}/upload` : '/api/widgets/upload'} label="Header logo (URL or upload)" />
 					<label class="block">
 						<span class="text-sm font-medium text-gray-700 mb-1">Welcome Message ⓘ</span>
 						<textarea bind:value={config.window.welcomeMessage} class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm min-h-[80px]"></textarea>
@@ -313,6 +308,61 @@
 							<button type="button" class="text-sm text-amber-600 hover:text-amber-700 font-medium" onclick={addStarterPrompt}>+ Add Prompt</button>
 						</div>
 					</label>
+					<label class="block">
+						<span class="text-sm font-medium text-gray-700 mb-1">Starter prompt colors ⓘ</span>
+						<div class="flex flex-wrap gap-2 items-center">
+							<input type="color" bind:value={config.window.starterPromptBackgroundColor} class="w-10 h-10 rounded border border-gray-300 cursor-pointer" title="Background" />
+							<input type="color" bind:value={config.window.starterPromptTextColor} class="w-10 h-10 rounded border border-gray-300 cursor-pointer" title="Text" />
+							<input type="color" bind:value={config.window.starterPromptBorderColor} class="w-10 h-10 rounded border border-gray-300 cursor-pointer" title="Border" />
+						</div>
+					</label>
+					<label class="block">
+						<span class="text-sm font-medium text-gray-700 mb-1">Header icon color ⓘ</span>
+						<div class="flex gap-2 items-center">
+							<input type="color" bind:value={config.window.headerIconColor} class="w-10 h-10 rounded border border-gray-300 cursor-pointer" />
+							<input type="text" bind:value={config.window.headerIconColor} class="flex-1 px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm" />
+						</div>
+					</label>
+					<label class="block">
+						<span class="text-sm font-medium text-gray-700 mb-1">Input & send button colors ⓘ</span>
+						<div class="flex flex-wrap gap-2 items-center">
+							<input type="color" bind:value={config.window.inputBackgroundColor} class="w-10 h-10 rounded border border-gray-300 cursor-pointer" title="Input bg" />
+							<input type="color" bind:value={config.window.inputBorderColor} class="w-10 h-10 rounded border border-gray-300 cursor-pointer" title="Input border" />
+							<input type="color" bind:value={config.window.inputPlaceholderColor} class="w-10 h-10 rounded border border-gray-300 cursor-pointer" title="Placeholder" />
+							<input type="color" bind:value={config.window.sendButtonBackgroundColor} class="w-10 h-10 rounded border border-gray-300 cursor-pointer" title="Send bg" />
+							<input type="color" bind:value={config.window.sendButtonIconColor} class="w-10 h-10 rounded border border-gray-300 cursor-pointer" title="Send icon" />
+						</div>
+					</label>
+					<label class="block">
+						<span class="text-sm font-medium text-gray-700 mb-1">Footer & section border ⓘ</span>
+						<div class="flex gap-2 items-center">
+							<input type="color" bind:value={config.window.footerBackgroundColor} class="w-10 h-10 rounded border border-gray-300 cursor-pointer" />
+							<input type="color" bind:value={config.window.footerTextColor} class="w-10 h-10 rounded border border-gray-300 cursor-pointer" />
+							<input type="color" bind:value={config.window.sectionBorderColor} class="w-10 h-10 rounded border border-gray-300 cursor-pointer" />
+						</div>
+					</label>
+					<div class="border border-gray-200 rounded-lg overflow-hidden">
+						<button type="button" class="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 text-left font-medium text-gray-800" onclick={() => (botMessageSettingsOpen = !botMessageSettingsOpen)}>
+							Bot Message Settings
+							<svg class="w-5 h-5 transition-transform {botMessageSettingsOpen ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+						</button>
+						{#if botMessageSettingsOpen}
+							<div class="p-4 space-y-4 border-t border-gray-200">
+								<label class="block">
+									<span class="text-sm font-medium text-gray-700 mb-1">Bot message bubble background & text ⓘ</span>
+									<div class="flex gap-2 items-center">
+										<input type="color" bind:value={config.window.botMessageSettings.backgroundColor} class="w-10 h-10 rounded border border-gray-300 cursor-pointer" />
+										<input type="color" bind:value={config.window.botMessageSettings.textColor} class="w-10 h-10 rounded border border-gray-300 cursor-pointer" />
+									</div>
+								</label>
+								<label class="flex items-center gap-2">
+									<input type="checkbox" bind:checked={config.window.botMessageSettings.showAvatar} class="rounded border-gray-300 text-amber-600 focus:ring-amber-500" />
+									<span class="text-sm font-medium text-gray-700">Show Avatar ⓘ</span>
+								</label>
+								<IconUrlField bind:value={config.window.botMessageSettings.avatarUrl} uploadUrl={widgetId ? `/api/widgets/${widgetId}/upload` : '/api/widgets/upload'} label="Bot avatar (URL or upload)" />
+							</div>
+						{/if}
+					</div>
 					<label class="block">
 						<span class="text-sm font-medium text-gray-700 mb-1">Height (px) ⓘ</span>
 						<input type="number" min="300" max="900" bind:value={config.window.heightPx} class="w-full max-w-[120px] px-3 py-2 border border-gray-300 rounded-lg" />

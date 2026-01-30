@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getSupabase } from '$lib/supabase.server';
+import { getSupabaseClient } from '$lib/supabase.server';
 
 type WidgetListItem = { id: string; name: string; tags: string[]; createdAt: string };
 
@@ -21,11 +21,11 @@ function rowToListItem(row: { id: string; name: string; display_mode: string; cr
 }
 
 /**
- * GET /api/widgets – list widgets from Supabase.
+ * GET /api/widgets – list widgets from Supabase (RLS: admins only see widgets).
  */
-export const GET: RequestHandler = async () => {
+export const GET: RequestHandler = async (event) => {
 	try {
-		const supabase = getSupabase();
+		const supabase = getSupabaseClient(event);
 		const { data, error } = await supabase
 			.from('widgets')
 			.select('id, name, display_mode, created_at')
@@ -46,13 +46,16 @@ export const GET: RequestHandler = async () => {
 };
 
 /**
- * POST /api/widgets – create a widget.
+ * POST /api/widgets – create a widget (admin only; RLS enforces).
  * Body: { name?, display_mode?, config?, n8n_webhook_url? }
  */
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async (event) => {
 	try {
-		const supabase = getSupabase();
-		const body = await request.json().catch(() => ({}));
+		if (!event.locals.user) {
+			return json({ error: 'Unauthorized' }, { status: 401 });
+		}
+		const supabase = getSupabaseClient(event);
+		const body = await event.request.json().catch(() => ({}));
 		const name = typeof body.name === 'string' ? body.name : 'My Chat Widget';
 		const display_mode = ['popup', 'standalone', 'embedded'].includes(body.display_mode)
 			? body.display_mode
@@ -62,7 +65,13 @@ export const POST: RequestHandler = async ({ request }) => {
 
 		const { data, error } = await supabase
 			.from('widgets')
-			.insert({ name, display_mode, config, n8n_webhook_url })
+			.insert({
+				name,
+				display_mode,
+				config,
+				n8n_webhook_url,
+				created_by: event.locals.user.id
+			})
 			.select('id, name, display_mode, created_at')
 			.single();
 

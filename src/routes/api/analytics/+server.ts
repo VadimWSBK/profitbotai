@@ -1,14 +1,16 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getSupabase } from '$lib/supabase.server';
+import { getSupabaseClient } from '$lib/supabase.server';
 
 /**
- * GET /api/analytics?widget_id=... – list events for a widget (or all).
+ * GET /api/analytics?widget_id=... – list events for a widget (or all). Admin only (RLS).
  * Optional: from=iso, to=iso for date range.
  */
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async (event) => {
 	try {
-		const supabase = getSupabase();
+		if (!event.locals.user) return json({ error: 'Unauthorized', events: [] }, { status: 401 });
+		const supabase = getSupabaseClient(event);
+		const url = event.url;
 		const widgetId = url.searchParams.get('widget_id');
 		const from = url.searchParams.get('from');
 		const to = url.searchParams.get('to');

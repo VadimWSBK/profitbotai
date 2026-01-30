@@ -1,16 +1,17 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getSupabase } from '$lib/supabase.server';
+import { getSupabaseClient } from '$lib/supabase.server';
 
 /**
  * GET /api/widgets/[id] – fetch one widget (full config for editor).
  */
-export const GET: RequestHandler = async ({ params }) => {
-	const id = params.id;
+export const GET: RequestHandler = async (event) => {
+	const id = event.params.id;
 	if (!id) return json({ error: 'Missing id' }, { status: 400 });
+	if (!event.locals.user) return json({ error: 'Unauthorized' }, { status: 401 });
 
 	try {
-		const supabase = getSupabase();
+		const supabase = getSupabaseClient(event);
 		const { data, error } = await supabase
 			.from('widgets')
 			.select('*')
@@ -53,13 +54,14 @@ export const GET: RequestHandler = async ({ params }) => {
  * PATCH /api/widgets/[id] – update widget.
  * Body: { name?, display_mode?, config?, n8n_webhook_url? }
  */
-export const PATCH: RequestHandler = async ({ params, request }) => {
-	const id = params.id;
+export const PATCH: RequestHandler = async (event) => {
+	const id = event.params.id;
 	if (!id) return json({ error: 'Missing id' }, { status: 400 });
+	if (!event.locals.user) return json({ error: 'Unauthorized' }, { status: 401 });
 
 	try {
-		const supabase = getSupabase();
-		const body = await request.json().catch(() => ({}));
+		const supabase = getSupabaseClient(event);
+		const body = await event.request.json().catch(() => ({}));
 		const updates: Record<string, unknown> = {};
 
 		if (typeof body.name === 'string') updates.name = body.name;
@@ -95,12 +97,13 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 /**
  * DELETE /api/widgets/[id] – delete widget (and its events via FK cascade).
  */
-export const DELETE: RequestHandler = async ({ params }) => {
-	const id = params.id;
+export const DELETE: RequestHandler = async (event) => {
+	const id = event.params.id;
 	if (!id) return json({ error: 'Missing id' }, { status: 400 });
+	if (!event.locals.user) return json({ error: 'Unauthorized' }, { status: 401 });
 
 	try {
-		const supabase = getSupabase();
+		const supabase = getSupabaseClient(event);
 		const { error } = await supabase.from('widgets').delete().eq('id', id);
 
 		if (error) {

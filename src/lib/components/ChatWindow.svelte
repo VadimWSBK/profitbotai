@@ -101,10 +101,10 @@
 				</div>
 			{/if}
 			<span class="flex-1 font-semibold text-sm truncate">{win.title}</span>
-			<button type="button" class="p-1.5 rounded hover:bg-white/20 transition-colors" onclick={() => { messages = []; showStarterPrompts = true; }} title="Refresh">
+			<button type="button" class="p-1.5 rounded hover:opacity-80 transition-opacity" style="color: {win.headerIconColor};" onclick={() => { messages = []; showStarterPrompts = true; }} title="Refresh">
 				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
 			</button>
-			<button type="button" class="p-1.5 rounded hover:bg-white/20 transition-colors" onclick={onClose} title="Close">
+			<button type="button" class="p-1.5 rounded hover:opacity-80 transition-opacity" style="color: {win.headerIconColor};" onclick={onClose} title="Close">
 				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
 			</button>
 		</header>
@@ -137,13 +137,18 @@
 					{win.welcomeMessage}
 				</div>
 			</div>
-			{#if win.starterPrompts.filter((p) => p.trim()).length > 0}
+			{#if win.starterPrompts.filter((p: string) => p.trim()).length > 0}
 				<div class="flex flex-wrap gap-2">
-					{#each win.starterPrompts.filter((p) => p.trim()) as prompt}
+					{#each win.starterPrompts.filter((p: string) => p.trim()) as prompt}
 						<button
 							type="button"
-							class="px-3 py-2 rounded-lg border border-gray-300 bg-gray-50 hover:bg-gray-100 text-left transition-colors"
-							style="font-size: {win.starterPromptFontSizePx}px;"
+							class="px-3 py-2 rounded-lg border text-left transition-colors hover:opacity-90"
+							style="
+								font-size: {win.starterPromptFontSizePx}px;
+								background-color: {win.starterPromptBackgroundColor};
+								color: {win.starterPromptTextColor};
+								border-color: {win.starterPromptBorderColor};
+							"
 							onclick={() => handleStarterPrompt(prompt)}
 						>
 							{prompt}
@@ -180,16 +185,16 @@
 					</div>
 				{:else}
 					<div class="flex justify-end">
-						<div
-							class="px-3 py-2 max-w-[85%] rounded-lg"
-							style="
-								background-color: {bubble.backgroundColor};
-								color: {bubble.colorOfInternalIcons};
-								border-radius: {win.messageBorderRadius}px;
-							"
-						>
-							{msg.content}
-						</div>
+				<div
+					class="px-3 py-2 max-w-[85%] rounded-lg"
+					style="
+						background-color: {bubble.backgroundColor};
+						color: {bubble.colorOfInternalIcons};
+						border-radius: {win.messageBorderRadius}px;
+					"
+				>
+					{msg.content}
+				</div>
 					</div>
 				{/if}
 			{/each}
@@ -204,18 +209,28 @@
 		{/if}
 	</div>
 
-	<form class="shrink-0 p-3 border-t border-gray-200 flex gap-2" style="background-color: {win.backgroundColor};" onsubmit={handleSubmit}>
+	<form
+		class="shrink-0 p-3 border-t flex gap-2"
+		style="background-color: {win.backgroundColor}; border-color: {win.sectionBorderColor};"
+		onsubmit={handleSubmit}
+	>
 		<input
 			type="text"
-			class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 outline-none"
+			class="chat-window-input flex-1 px-3 py-2 border rounded-lg outline-none focus:ring-2"
+			style="
+				background-color: {win.inputBackgroundColor};
+				border-color: {win.inputBorderColor};
+				color: {win.inputTextColor};
+				--ph: {win.inputPlaceholderColor};
+			"
 			placeholder={win.inputPlaceholder}
 			bind:value={inputText}
 			disabled={loading}
 		/>
 		<button
 			type="submit"
-			class="shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-white transition-opacity disabled:opacity-50"
-			style="background-color: {bubble.backgroundColor}; color: {bubble.colorOfInternalIcons};"
+			class="shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-opacity disabled:opacity-50"
+			style="background-color: {win.sendButtonBackgroundColor}; color: {win.sendButtonIconColor};"
 			disabled={loading}
 			title="Send"
 		>
@@ -224,7 +239,10 @@
 	</form>
 
 	{#if win.footerText}
-		<footer class="shrink-0 px-3 py-2 text-center text-xs text-gray-500 border-t border-gray-100">
+		<footer
+			class="shrink-0 px-3 py-2 text-center text-xs border-t"
+			style="background-color: {win.footerBackgroundColor}; color: {win.footerTextColor}; border-color: {win.sectionBorderColor};"
+		>
 			{win.footerText}
 		</footer>
 	{/if}
@@ -244,5 +262,8 @@
 	}
 	.chat-window .scrollbar-hide::-webkit-scrollbar {
 		display: none;
+	}
+	.chat-window-input::placeholder {
+		color: var(--ph, #9ca3af);
 	}
 </style>

@@ -6,6 +6,7 @@
 		createdAt: string;
 	};
 
+	let { data } = $props();
 	let searchQuery = $state('');
 	let embedFilter = $state('');
 	let typeFilter = $state('');
@@ -69,13 +70,15 @@
 			<h1 class="text-2xl font-bold text-gray-900">Dashboard</h1>
 			<p class="text-gray-500 mt-0.5">Manage all your widgets</p>
 		</div>
-		<a
-			href="/widgets/new"
-			class="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-medium rounded-lg transition-colors shrink-0"
-		>
-			<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-			Add Widget
-		</a>
+		{#if data?.role === 'admin'}
+			<a
+				href="/widgets/new"
+				class="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-medium rounded-lg transition-colors shrink-0"
+			>
+				<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+				Add Widget
+			</a>
+		{/if}
 	</div>
 
 	<!-- Search and filters -->

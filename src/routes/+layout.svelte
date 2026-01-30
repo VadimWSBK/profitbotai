@@ -3,8 +3,13 @@
 	import favicon from '$lib/assets/favicon.svg';
 	import { page } from '$app/stores';
 
-	let { children } = $props();
+	let { data, children } = $props();
 	const isEmbed = $derived($page.url.pathname.startsWith('/embed'));
+	const isAuthPage = $derived(
+		$page.url.pathname === '/login' ||
+			$page.url.pathname === '/auth/signup' ||
+			$page.url.pathname.startsWith('/auth/')
+	);
 </script>
 
 <svelte:head>
@@ -13,6 +18,10 @@
 
 {#if isEmbed}
 	<div class="min-h-screen bg-transparent">
+		{@render children()}
+	</div>
+{:else if isAuthPage}
+	<div class="min-h-screen bg-gray-100 flex items-center justify-center p-4">
 		{@render children()}
 	</div>
 {:else}
@@ -25,9 +34,11 @@
 		<a href="/" class="p-3 rounded-lg bg-gray-800 text-white mt-1" title="Dashboard">
 			<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
 		</a>
-		<a href="/analytics" class="p-3 rounded-lg hover:bg-gray-800 hover:text-white transition-colors mt-1" title="Analytics">
-			<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4v16"/></svg>
-		</a>
+		{#if data.role === 'admin'}
+			<a href="/analytics" class="p-3 rounded-lg hover:bg-gray-800 hover:text-white transition-colors mt-1" title="Analytics">
+				<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4v16"/></svg>
+			</a>
+		{/if}
 		<a href="/cards" class="p-3 rounded-lg hover:bg-gray-800 hover:text-white transition-colors mt-1" title="Cards">
 			<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
 		</a>
@@ -44,16 +55,25 @@
 	<div class="flex-1 flex flex-col min-w-0">
 		<!-- Header -->
 		<header class="flex items-center justify-between px-6 py-4 bg-white border-b border-gray-200 shrink-0">
-			<h2 class="text-lg font-medium text-gray-800">Hello, John 👋</h2>
+			<h2 class="text-lg font-medium text-gray-800">
+				{data.user ? `Hello, ${data.user.email?.split('@')[0] ?? 'User'} 👋` : 'Dashboard'}
+			</h2>
 			<div class="flex items-center gap-3">
-				<button type="button" class="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-					<svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-					Support
-				</button>
-				<button type="button" class="p-2 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors" title="Toggle theme">
-					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
-				</button>
-				<div class="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center text-white font-semibold text-sm">J</div>
+				{#if data.user}
+					<span class="text-sm text-gray-500 capitalize">{data.role ?? 'user'}</span>
+					<a
+						href="/auth/logout"
+						class="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+					>
+						Sign out
+					</a>
+					<div
+						class="w-9 h-9 rounded-full bg-amber-600 flex items-center justify-center text-white font-semibold text-sm"
+						title={data.user.email ?? ''}
+					>
+						{(data.user.email ?? 'U').charAt(0).toUpperCase()}
+					</div>
+				{/if}
 			</div>
 		</header>
 

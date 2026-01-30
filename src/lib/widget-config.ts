@@ -50,6 +50,10 @@ export interface WindowConfig {
 	customErrorMessage: string;
 	starterPrompts: string[];
 	starterPromptFontSizePx: number;
+	// Starter prompt button colors
+	starterPromptBackgroundColor: string;
+	starterPromptTextColor: string;
+	starterPromptBorderColor: string;
 	renderHtmlInBotResponses: boolean;
 	clearChatOnReload: boolean;
 	showScrollbar: boolean;
@@ -57,11 +61,25 @@ export interface WindowConfig {
 	widthPx: number;
 	fontSizePx: number;
 	botMessageSettings: BotMessageSettings;
-	// Header bar color (for title area)
+	// Header bar
 	headerBackgroundColor: string;
 	headerTextColor: string;
-	footerText: string;
+	headerIconColor: string;
+	// Input area
 	inputPlaceholder: string;
+	inputBackgroundColor: string;
+	inputBorderColor: string;
+	inputPlaceholderColor: string;
+	inputTextColor: string;
+	// Send button
+	sendButtonBackgroundColor: string;
+	sendButtonIconColor: string;
+	// Footer
+	footerText: string;
+	footerBackgroundColor: string;
+	footerTextColor: string;
+	// Border between sections
+	sectionBorderColor: string;
 }
 
 export interface WidgetConfig {
@@ -117,6 +135,9 @@ export const defaultWindowConfig: WindowConfig = {
 	customErrorMessage: 'Please connect me to n8n first',
 	starterPrompts: ['Who are you?', 'What do you do?'],
 	starterPromptFontSizePx: 15,
+	starterPromptBackgroundColor: '#f3f4f6',
+	starterPromptTextColor: '#1c1c1c',
+	starterPromptBorderColor: '#d1d5db',
 	renderHtmlInBotResponses: false,
 	clearChatOnReload: false,
 	showScrollbar: false,
@@ -124,10 +145,20 @@ export const defaultWindowConfig: WindowConfig = {
 	widthPx: 400,
 	fontSizePx: 16,
 	botMessageSettings: defaultBotMessageSettings,
-	headerBackgroundColor: '#ffc8b8',
+	headerBackgroundColor: '#ffedea',
 	headerTextColor: '#1c1c1c',
+	headerIconColor: '#374151',
 	footerText: 'Free customizable chat widget for n8n | n8nchatui.com',
-	inputPlaceholder: 'Type your query'
+	inputPlaceholder: 'Type your query',
+	inputBackgroundColor: '#ffffff',
+	inputBorderColor: '#d1d5db',
+	inputPlaceholderColor: '#9ca3af',
+	inputTextColor: '#1c1c1c',
+	sendButtonBackgroundColor: '#84cc16',
+	sendButtonIconColor: '#ffffff',
+	footerBackgroundColor: '#ffffff',
+	footerTextColor: '#6b7280',
+	sectionBorderColor: '#e5e7eb'
 };
 
 export const defaultWidgetConfig: WidgetConfig = {
