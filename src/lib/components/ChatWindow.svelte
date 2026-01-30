@@ -37,6 +37,7 @@
 	let messages = $state<Message[]>([]);
 	let showStarterPrompts = $state(true);
 	let loading = $state(false);
+	let messagesLoading = $state(false);
 	let agentTyping = $state(false);
 	let agentAvatarUrl = $state<string | null>(null);
 	let contentEl: HTMLDivElement;
@@ -58,24 +59,32 @@
 	}
 
 	async function fetchStoredMessages() {
-		if (!widgetId || !sessionId || sessionId === 'preview') return;
+		if (!widgetId || !sessionId || sessionId === 'preview') {
+			messagesLoading = false;
+			return;
+		}
 		try {
 			const res = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
 			const data = await res.json().catch(() => ({}));
 			const list = Array.isArray(data.messages) ? data.messages : [];
-			if (list.length > 0 || data.agentTyping || data.agentAvatarUrl) {
+			// Only overwrite messages on initial load so we never wipe the user's last message (e.g. if this request returns late)
+			if (messages.length === 0 && list.length > 0) {
 				messages = list.map((m: { role: string; content: string; avatarUrl?: string }) => ({
 					role: m.role as 'user' | 'bot',
 					content: m.content,
 					avatarUrl: m.avatarUrl
 				}));
-				agentTyping = !!data.agentTyping;
-				agentAvatarUrl = data.agentAvatarUrl ?? null;
 				showStarterPrompts = false;
 				requestAnimationFrame(() => scrollToBottom());
 			}
+			if (list.length > 0 || data.agentTyping || data.agentAvatarUrl) {
+				agentTyping = !!data.agentTyping;
+				agentAvatarUrl = data.agentAvatarUrl ?? null;
+			}
 		} catch {
 			// ignore
+		} finally {
+			messagesLoading = false;
 		}
 	}
 
@@ -116,8 +125,11 @@
 
 	onMount(() => {
 		sessionId = getSessionId();
+		const willFetch = !!(widgetId && sessionId && sessionId !== 'preview');
+		if (willFetch) messagesLoading = true;
 		fetchStoredMessages();
 		startPolling();
+		if (!willFetch) messagesLoading = false;
 	});
 	onDestroy(() => stopPolling());
 
@@ -240,7 +252,14 @@
 		role="log"
 		aria-live="polite"
 	>
-		{#if messages.length === 0}
+		{#if messagesLoading}
+			<div class="flex-1 flex items-center justify-center min-h-[120px]" aria-busy="true" aria-label="Loading conversation">
+				<svg class="animate-spin w-8 h-8 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+					<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+					<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+				</svg>
+			</div>
+		{:else if messages.length === 0}
 			<!-- Welcome message -->
 			<div class="flex gap-2 items-start">
 				{#if botStyle.showAvatar && botStyle.avatarUrl}
@@ -262,7 +281,7 @@
 				</div>
 			</div>
 		{:else}
-			{#each messages as msg}
+			{#each messages as msg, i (i)}
 				{#if msg.role === 'bot'}
 					<div class="flex gap-2 items-start">
 						{#if msg.avatarUrl}

@@ -1,5 +1,7 @@
 <script lang="ts">
 	import type { WidgetConfig } from '$lib/widget-config';
+	import { fly } from 'svelte/transition';
+	import { cubicOut } from 'svelte/easing';
 	import ChatWindow from './ChatWindow.svelte';
 
 	let { config, widgetId } = $props<{ config: WidgetConfig; widgetId?: string }>();
@@ -36,8 +38,10 @@
 >
 	{#if open}
 		<div
-			class="absolute flex flex-col items-end gap-2"
+			class="absolute flex flex-col items-end gap-2 chat-window-container"
 			style="right: 0; bottom: {bubble.bubbleSizePx + 12}px;"
+			in:fly={{ y: 12, duration: 200, easing: cubicOut }}
+			out:fly={{ y: 8, duration: 150, easing: cubicOut }}
 		>
 			<ChatWindow config={config} widgetId={widgetId} onClose={() => (open = false)} />
 		</div>
