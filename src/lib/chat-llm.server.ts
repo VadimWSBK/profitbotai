@@ -47,7 +47,7 @@ export async function chatWithLlm(
 
 	if (provider === 'google') {
 		const genAI = new GoogleGenerativeAI(trimmedKey);
-		const genModel = genAI.getGenerativeModel({ model: model || 'gemini-1.5-flash' });
+		const genModel = genAI.getGenerativeModel({ model: model || 'gemini-2.5-flash' });
 		const systemPart = messages.find((m) => m.role === 'system')?.content;
 		const parts = messages.filter((m) => m.role !== 'system').map((m) => `${m.role}: ${m.content}`);
 		const prompt = systemPart ? `System: ${systemPart}\n\n${parts.join('\n\n')}` : parts.join('\n\n');

@@ -36,7 +36,8 @@ export const POST: RequestHandler = async (event) => {
 		.insert({
 			conversation_id: id,
 			role: 'human_agent',
-			content
+			content,
+			created_by: user.id
 		})
 		.select('id, role, content, created_at')
 		.single();

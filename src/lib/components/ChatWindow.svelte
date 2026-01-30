@@ -5,7 +5,7 @@
 
 	let { config, widgetId, onClose } = $props<{ config: WidgetConfig; widgetId?: string; onClose: () => void }>();
 
-	type Message = { role: 'user' | 'bot'; content: string };
+	type Message = { role: 'user' | 'bot'; content: string; avatarUrl?: string };
 
 	const SESSION_STORAGE_KEY = (id: string) => `profitbot_session_${id}`;
 
@@ -37,6 +37,8 @@
 	let messages = $state<Message[]>([]);
 	let showStarterPrompts = $state(true);
 	let loading = $state(false);
+	let agentTyping = $state(false);
+	let agentAvatarUrl = $state<string | null>(null);
 	let contentEl: HTMLDivElement;
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -61,8 +63,14 @@
 			const res = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
 			const data = await res.json().catch(() => ({}));
 			const list = Array.isArray(data.messages) ? data.messages : [];
-			if (list.length > 0) {
-				messages = list.map((m: { role: string; content: string }) => ({ role: m.role as 'user' | 'bot', content: m.content }));
+			if (list.length > 0 || data.agentTyping || data.agentAvatarUrl) {
+				messages = list.map((m: { role: string; content: string; avatarUrl?: string }) => ({
+					role: m.role as 'user' | 'bot',
+					content: m.content,
+					avatarUrl: m.avatarUrl
+				}));
+				agentTyping = !!data.agentTyping;
+				agentAvatarUrl = data.agentAvatarUrl ?? null;
 				showStarterPrompts = false;
 				requestAnimationFrame(() => scrollToBottom());
 			}
@@ -78,8 +86,16 @@
 				const res = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
 				const data = await res.json().catch(() => ({}));
 				const list = Array.isArray(data.messages) ? data.messages : [];
-				if (list.length > messages.length) {
-					messages = list.map((m: { role: string; content: string }) => ({ role: m.role as 'user' | 'bot', content: m.content }));
+				const newList = Array.isArray(data.messages) ? data.messages : [];
+				const hasNew = newList.length > messages.length || data.agentTyping !== agentTyping;
+				if (hasNew || newList.length > 0) {
+					messages = newList.map((m: { role: string; content: string; avatarUrl?: string }) => ({
+						role: m.role as 'user' | 'bot',
+						content: m.content,
+						avatarUrl: m.avatarUrl
+					}));
+					agentTyping = !!data.agentTyping;
+					agentAvatarUrl = data.agentAvatarUrl ?? null;
 					showStarterPrompts = false;
 					requestAnimationFrame(() => scrollToBottom());
 				}
@@ -247,7 +263,9 @@
 			{#each messages as msg}
 				{#if msg.role === 'bot'}
 					<div class="flex gap-2 items-start">
-						{#if botStyle.showAvatar && botStyle.avatarUrl}
+						{#if msg.avatarUrl}
+							<img src={msg.avatarUrl} alt="Agent" class="shrink-0 object-contain rounded-full" style="width: {win.avatarSize}px; height: {win.avatarSize}px; border-radius: {win.avatarBorderRadius}px;" />
+						{:else if botStyle.showAvatar && botStyle.avatarUrl}
 							<img src={botStyle.avatarUrl} alt="Bot" class="shrink-0 object-contain" style="width: {win.avatarSize}px; height: {win.avatarSize}px; border-radius: {win.avatarBorderRadius}px;" />
 						{:else if botStyle.showAvatar}
 							<div class="shrink-0 rounded-full bg-gray-300 flex items-center justify-center" style="width: {win.avatarSize}px; height: {win.avatarSize}px; border-radius: {win.avatarBorderRadius}px;">
@@ -285,12 +303,31 @@
 					</div>
 				{/if}
 			{/each}
-			{#if loading}
+			{#if loading || agentTyping}
 				<div class="flex gap-2 items-start">
-					{#if botStyle.showAvatar}
-						<div class="w-10 h-10 rounded-full bg-gray-200 shrink-0 animate-pulse" style="border-radius: {win.avatarBorderRadius}px;"></div>
+					{#if (loading ? botStyle.showAvatar : true)}
+						{#if !agentTyping && botStyle.showAvatar && botStyle.avatarUrl}
+							<img src={botStyle.avatarUrl} alt="" class="shrink-0 object-contain" style="width: {win.avatarSize}px; height: {win.avatarSize}px; border-radius: {win.avatarBorderRadius}px;" />
+						{:else if agentTyping && agentAvatarUrl}
+							<img src={agentAvatarUrl} alt="Agent" class="shrink-0 object-contain rounded-full" style="width: {win.avatarSize}px; height: {win.avatarSize}px; border-radius: {win.avatarBorderRadius}px;" />
+						{:else}
+							<div class="shrink-0 rounded-full flex items-center justify-center" style="width: {win.avatarSize}px; height: {win.avatarSize}px; border-radius: {win.avatarBorderRadius}px; background-color: {botStyle.backgroundColor};">
+								{#if agentTyping}
+									<svg class="w-5 h-5 text-gray-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+								{:else}
+									<svg class="w-5 h-5 text-gray-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2a2 2 0 012 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 017 7h1v1h-3v2h4v2h-6v-4H9v-1a5 5 0 01-5-5H4V4.73C3.4 4.39 3 3.74 3 3a2 2 0 012-2h7z"/></svg>
+								{/if}
+							</div>
+						{/if}
 					{/if}
-					<div class="px-3 py-2 rounded-lg bg-gray-200 text-gray-500 animate-pulse" style="border-radius: {win.messageBorderRadius}px;">...</div>
+					<div
+						class="px-4 py-3 rounded-lg flex gap-1 items-center"
+						style="background-color: {botStyle.backgroundColor}; color: {botStyle.textColor}; border-radius: {win.messageBorderRadius}px;"
+					>
+						<span class="typing-dot"></span>
+						<span class="typing-dot"></span>
+						<span class="typing-dot"></span>
+					</div>
 				</div>
 			{/if}
 		{/if}
@@ -359,6 +396,21 @@
 </div>
 
 <style>
+	.typing-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background-color: currentColor;
+		opacity: 0.4;
+		animation: typing-bounce 1.4s ease-in-out infinite both;
+	}
+	.typing-dot:nth-child(1) { animation-delay: 0s; }
+	.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+	.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+	@keyframes typing-bounce {
+		0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+		40% { transform: scale(1); opacity: 1; }
+	}
 	.chat-window .overflow-y-auto::-webkit-scrollbar {
 		width: 6px;
 	}

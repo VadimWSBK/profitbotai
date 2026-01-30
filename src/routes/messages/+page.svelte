@@ -33,6 +33,7 @@
 	let loading = $state(false);
 	let sending = $state(false);
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
+	let typingTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	const widgetFilterLabel = $derived(
 		selectedWidgetId ? widgets.find((w) => w.id === selectedWidgetId)?.name ?? 'All widgets' : 'All widgets'
@@ -116,6 +117,7 @@
 	async function sendHumanReply() {
 		const content = humanReply.trim();
 		if (!content || !selectedConversation) return;
+		sendAgentTyping(false);
 		sending = true;
 		try {
 			const res = await fetch(`/api/conversations/${selectedConversation.id}/messages`, {
@@ -132,6 +134,41 @@
 		}
 	}
 
+	async function sendAgentTyping(active: boolean) {
+		if (!selectedConversation || conversationDetail?.isAiActive) return;
+		if (typingTimeout) {
+			clearTimeout(typingTimeout);
+			typingTimeout = null;
+		}
+		try {
+			await fetch(`/api/conversations/${selectedConversation.id}/typing`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ active })
+			});
+		} catch {
+			// ignore
+		}
+	}
+
+	function onAgentInput() {
+		if (!selectedConversation || conversationDetail?.isAiActive) return;
+		if (typingTimeout) clearTimeout(typingTimeout);
+		sendAgentTyping(true);
+		typingTimeout = setTimeout(() => {
+			typingTimeout = null;
+			sendAgentTyping(true);
+		}, 2000);
+	}
+
+	function onAgentBlur() {
+		if (typingTimeout) {
+			clearTimeout(typingTimeout);
+			typingTimeout = null;
+		}
+		sendAgentTyping(false);
+	}
+
 	$effect(() => {
 		const w = selectedWidgetId;
 		if (selectedConversation && w !== null && selectedConversation.widgetId !== w) {
@@ -145,6 +182,10 @@
 
 	onDestroy(() => {
 		stopPolling();
+		if (typingTimeout) {
+			clearTimeout(typingTimeout);
+			typingTimeout = null;
+		}
 	});
 
 	function formatTime(iso: string) {
@@ -300,6 +341,9 @@
 								placeholder="Reply as agent…"
 								bind:value={humanReply}
 								disabled={sending}
+								oninput={onAgentInput}
+								onfocus={onAgentInput}
+								onblur={onAgentBlur}
 							/>
 							<button
 								type="submit"
