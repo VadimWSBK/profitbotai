@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { browser } from '$app/environment';
+
 	type Widget = {
 		id: string;
 		name: string;
@@ -18,6 +20,7 @@
 	const perPage = 10;
 
 	$effect(() => {
+		if (!browser) return;
 		let cancelled = false;
 		fetch('/api/widgets')
 			.then((r) => r.json())

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { browser } from '$app/environment';
 
 	const widgetId = $derived($page.url.searchParams.get('widget_id') ?? '');
 
@@ -9,6 +10,7 @@
 	let error = $state('');
 
 	$effect(() => {
+		if (!browser) return;
 		const id = $page.url.searchParams.get('widget_id') ?? '';
 		let cancelled = false;
 		loading = true;

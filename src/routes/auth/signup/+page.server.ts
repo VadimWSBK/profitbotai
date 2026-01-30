@@ -21,14 +21,21 @@ export const actions: Actions = {
 		}
 
 		const supabase = getSupabaseClient(event);
-		const { error } = await supabase.auth.signUp({ email, password });
+		const origin = event.url.origin;
+		const { error } = await supabase.auth.signUp(
+			{ email, password },
+			{ emailRedirectTo: `${origin}/auth/callback` }
+		);
 
 		if (error) {
-			return fail(400, { message: error.message });
+			const msg =
+				error.message.toLowerCase().includes('rate limit') || error.message.toLowerCase().includes('rate_limit')
+					? `Error: ${error.message} Wait a few minutes and try again, or in Supabase Dashboard go to Authentication → Rate Limits and increase/disable limits for development.`
+					: `Error: ${error.message}`;
+			return fail(400, { message: msg });
 		}
 
-		// Redirect to login; user may need to confirm email depending on Supabase project settings
-		const msg = encodeURIComponent('Check your email to confirm your account.');
-		throw redirect(302, `/login?message=${msg}`);
+		// User is created; redirect to dashboard (session may be null if email confirmation is required)
+		throw redirect(302, '/');
 	}
 };

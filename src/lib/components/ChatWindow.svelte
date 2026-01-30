@@ -137,25 +137,6 @@
 					{win.welcomeMessage}
 				</div>
 			</div>
-			{#if win.starterPrompts.filter((p: string) => p.trim()).length > 0}
-				<div class="flex flex-wrap gap-2">
-					{#each win.starterPrompts.filter((p: string) => p.trim()) as prompt}
-						<button
-							type="button"
-							class="px-3 py-2 rounded-lg border text-left transition-colors hover:opacity-90"
-							style="
-								font-size: {win.starterPromptFontSizePx}px;
-								background-color: {win.starterPromptBackgroundColor};
-								color: {win.starterPromptTextColor};
-								border-color: {win.starterPromptBorderColor};
-							"
-							onclick={() => handleStarterPrompt(prompt)}
-						>
-							{prompt}
-						</button>
-					{/each}
-				</div>
-			{/if}
 		{:else}
 			{#each messages as msg}
 				{#if msg.role === 'bot'}
@@ -208,6 +189,29 @@
 			{/if}
 		{/if}
 	</div>
+
+	{#if showStarterPrompts && win.starterPrompts.filter((p: string) => p.trim()).length > 0}
+		<div
+			class="shrink-0 px-3 pt-2 pb-1 flex flex-wrap gap-1.5 border-t"
+			style="background-color: {win.backgroundColor}; border-color: {win.sectionBorderColor};"
+		>
+			{#each win.starterPrompts.filter((p: string) => p.trim()) as prompt}
+				<button
+					type="button"
+					class="px-2 py-1 rounded-md border text-left transition-colors hover:opacity-90 text-xs"
+					style="
+						font-size: {Math.max(11, win.starterPromptFontSizePx - 3)}px;
+						background-color: {win.starterPromptBackgroundColor};
+						color: {win.starterPromptTextColor};
+						border-color: {win.starterPromptBorderColor};
+					"
+					onclick={() => handleStarterPrompt(prompt)}
+				>
+					{prompt}
+				</button>
+			{/each}
+		</div>
+	{/if}
 
 	<form
 		class="shrink-0 p-3 border-t flex gap-2"

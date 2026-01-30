@@ -1,6 +1,4 @@
 <script lang="ts">
-	import { enhance } from '$app/forms';
-
 	let { data, form } = $props();
 </script>
 
@@ -23,12 +21,7 @@
 
 		<form
 			method="POST"
-			action="?/signup"
-			use:enhance={() => {
-				return ({ result }) => {
-					if (result.type === 'redirect') return;
-				};
-			}}
+			action="/auth/signup?/signup"
 			class="space-y-4"
 		>
 			<div>
