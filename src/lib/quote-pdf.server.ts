@@ -13,7 +13,8 @@ const BUCKET = 'roof_quotes';
 
 /**
  * Generate a quote PDF for a conversation and upload to roof_quotes. Storage trigger will link to contact.
- * Returns signed URL for the new PDF or an error message.
+ * Returns signed URL and storage path for the new PDF, or an error message.
+ * Caller should append the public URL to the contact (storage trigger may not receive custom metadata).
  */
 export async function generateQuoteForConversation(
 	admin: SupabaseClient,
@@ -21,7 +22,7 @@ export async function generateQuoteForConversation(
 	widgetId: string,
 	contact: { name?: string | null; email?: string | null; phone?: string | null; address?: string | null },
 	extracted: { roofSize?: number } | null
-): Promise<{ signedUrl?: string; error?: string }> {
+): Promise<{ signedUrl?: string; storagePath?: string; error?: string }> {
 	const ownerId = (await admin.from('widgets').select('created_by').eq('id', widgetId).single()).data?.created_by as string | undefined;
 	if (!ownerId) return { error: 'Widget has no owner' };
 
@@ -77,7 +78,7 @@ export async function generateQuoteForConversation(
 	if (uploadErr) return { error: uploadErr.message };
 
 	const { data: signed } = await admin.storage.from(BUCKET).createSignedUrl(fileName, 3600);
-	return { signedUrl: signed?.signedUrl ?? undefined };
+	return { signedUrl: signed?.signedUrl ?? undefined, storagePath: fileName };
 }
 
 /**

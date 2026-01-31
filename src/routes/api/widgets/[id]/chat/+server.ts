@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { env } from '$env/dynamic/private';
 import { getSupabase, getSupabaseAdmin } from '$lib/supabase.server';
 import { chatWithLlm } from '$lib/chat-llm.server';
 import { getConversationContextForLlm } from '$lib/conversation-context.server';
@@ -230,7 +231,17 @@ export const POST: RequestHandler = async (event) => {
 					contact,
 					extracted
 				);
-				if (gen.signedUrl) {
+				if (gen.signedUrl && gen.storagePath) {
+					// Append PDF to contact (Supabase does not persist custom upload metadata, so storage trigger may not run)
+					const baseUrl = (env.SUPABASE_URL ?? '').replace(/\/$/, '');
+					const publicQuoteUrl = baseUrl ? `${baseUrl}/storage/v1/object/public/roof_quotes/${gen.storagePath}` : gen.signedUrl;
+					const { error: appendErr } = await adminSupabase.rpc('append_pdf_quote_to_contact', {
+						p_conversation_id: conv.id,
+						p_widget_id: widgetId,
+						p_pdf_url: publicQuoteUrl
+					});
+					if (appendErr) console.error('append_pdf_quote_to_contact:', appendErr);
+
 					// Send quote via widget owner's mailing integration (Resend, etc.) when connected
 					const toEmail = (contact.email ?? extractedContact.email) ?? '';
 					const emailResult = await sendQuoteEmail(adminSupabase, ownerId, {
