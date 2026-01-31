@@ -45,8 +45,13 @@
 		<a href="/devices" class="p-3 rounded-lg hover:bg-gray-800 hover:text-white transition-colors mt-1" title="Devices">
 			<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
 		</a>
-		<a href="/messages" class="p-3 rounded-lg mt-1 transition-colors {($page.url.pathname === '/messages' ? 'bg-gray-800 text-white' : 'hover:bg-gray-800 hover:text-white')}" title="Messages">
+		<a href="/messages" class="relative p-3 rounded-lg mt-1 transition-colors {($page.url.pathname === '/messages' ? 'bg-gray-800 text-white' : 'hover:bg-gray-800 hover:text-white')}" title="Messages">
 			<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+			{#if data.unreadCount > 0}
+				<span class="absolute top-1.5 right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-medium text-white ring-2 ring-gray-900">
+					{data.unreadCount > 99 ? '99+' : data.unreadCount}
+				</span>
+			{/if}
 		</a>
 		<div class="flex-1"></div>
 		<a href="/settings" class="p-3 rounded-lg hover:bg-gray-800 hover:text-white transition-colors" title="Settings">

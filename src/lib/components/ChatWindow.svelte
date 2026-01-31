@@ -152,8 +152,15 @@
 					body: JSON.stringify({ message: trimmed, sessionId })
 				});
 				const data = await res.json().catch(() => ({}));
-				if (!res.ok) botReply = (data.error as string) ?? config.window.customErrorMessage;
-				else botReply = data.output ?? data.message ?? botReply;
+				if (!res.ok) {
+					botReply = (data.error as string) ?? config.window.customErrorMessage;
+				} else if (data.liveAgentActive) {
+					// Live agent has taken over: no bot message in chat
+					loading = false;
+					return;
+				} else {
+					botReply = data.output ?? data.message ?? botReply;
+				}
 				if (typeof botReply !== 'string') botReply = JSON.stringify(botReply);
 			} catch {
 				botReply = config.window.customErrorMessage;

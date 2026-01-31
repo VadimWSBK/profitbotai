@@ -1,14 +1,17 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getSupabase } from '$lib/supabase.server';
+import { getSupabase, getSupabaseAdmin } from '$lib/supabase.server';
 import { chatWithLlm } from '$lib/chat-llm.server';
 import { getConversationContextForLlm } from '$lib/conversation-context.server';
+import { getTriggerResultIfAny } from '$lib/trigger-webhook.server';
+import type { WebhookTrigger } from '$lib/widget-config';
 
 /**
  * POST /api/widgets/[id]/chat – Direct LLM chat (no n8n).
  * Body: { message: string, sessionId?: string }
  * Persists messages to widget_conversations / widget_conversation_messages.
- * If operator took over (is_ai_active = false), does not call LLM and returns a short notice.
+ * If operator took over (is_ai_active = false): no in-chat message; if live agent hasn't replied
+ * within agentTakeoverTimeoutMinutes, switches back to AI and replies with an apology + answer.
  */
 export const POST: RequestHandler = async (event) => {
 	const widgetId = event.params.id;
@@ -60,16 +63,48 @@ export const POST: RequestHandler = async (event) => {
 			conv = inserted;
 		}
 
+		// Ensure a contact exists for this conversation (created on first message, updated as we learn more)
+		await supabase
+			.from('contacts')
+			.upsert(
+				{ conversation_id: conv.id, widget_id: widgetId },
+				{ onConflict: 'conversation_id', ignoreDuplicates: true }
+			);
+
 		// Persist user message first so it is included when we load history
 		const { error: userMsgErr } = await supabase
 			.from('widget_conversation_messages')
 			.insert({ conversation_id: conv.id, role: 'user', content: message });
 		if (userMsgErr) return json({ error: 'Failed to save message' }, { status: 500 });
 
-		// If human took over, do not call LLM
+		let resumingAfterAgentTimeout = false;
+		// If human took over: no in-chat notice. If live agent hasn't replied in timeout, switch back to AI.
 		if (!conv.is_ai_active) {
-			const notice = 'A team member is helping you. They will reply here shortly.';
-			return json({ output: notice, message: notice });
+			const timeoutMinutes = Math.max(1, Math.min(120, Number((config.agentTakeoverTimeoutMinutes as number) ?? 5)));
+			const { data: lastAgent } = await supabase
+				.from('widget_conversation_messages')
+				.select('created_at')
+				.eq('conversation_id', conv.id)
+				.eq('role', 'human_agent')
+				.order('created_at', { ascending: false })
+				.limit(1)
+				.maybeSingle();
+			const lastAgentAt = lastAgent?.created_at ? new Date(lastAgent.created_at).getTime() : 0;
+			const elapsedMs = Date.now() - lastAgentAt;
+			if (lastAgentAt === 0 || elapsedMs < timeoutMinutes * 60 * 1000) {
+				// Live agent active and within timeout: no bot message
+				return json({ output: '', liveAgentActive: true });
+			}
+			// Timeout elapsed: switch back to AI and continue below (with apology in system prompt)
+			resumingAfterAgentTimeout = true;
+			const { error: switchErr } = await supabase.rpc('switch_conversation_back_to_ai', {
+				p_conv_id: conv.id
+			});
+			if (switchErr) {
+				console.error('switch_conversation_back_to_ai:', switchErr);
+				return json({ output: '', liveAgentActive: true });
+			}
+			conv = { ...conv, is_ai_active: true };
 		}
 
 		const llmProvider = (config.llmProvider as string) ?? '';
@@ -93,11 +128,69 @@ export const POST: RequestHandler = async (event) => {
 			maxChars: 24_000
 		});
 
+		// Load contact (name, email, pdf_quotes) for context – bot can reference stored info and quote links
+		const { data: contact } = await supabase
+			.from('contacts')
+			.select('name, email, phone, address, pdf_quotes')
+			.eq('conversation_id', conv.id)
+			.maybeSingle();
+
+		// If widget has webhook triggers, classify intent and call matching webhook (e.g. n8n)
+		const webhookTriggers = (config.webhookTriggers as WebhookTrigger[] | undefined) ?? [];
+		let triggerResult: Awaited<ReturnType<typeof getTriggerResultIfAny>> = null;
+		if (webhookTriggers.length > 0 && apiKey) {
+			triggerResult = await getTriggerResultIfAny(webhookTriggers, message, {
+				llmProvider,
+				llmModel,
+				apiKey,
+				sessionId,
+				conversationId: conv.id,
+				widgetId
+			});
+		}
+
 		const bot = (config.bot as Record<string, string> | undefined) ?? {};
 		const parts: string[] = [];
 		if (bot.role?.trim()) parts.push(bot.role.trim());
 		if (bot.tone?.trim()) parts.push(`Tone: ${bot.tone.trim()}`);
 		if (bot.instructions?.trim()) parts.push(bot.instructions.trim());
+		// Include stored contact info so the bot can reference it and share PDF quote links when asked
+		if (contact && (contact.name || contact.email || contact.phone || contact.address || (Array.isArray(contact.pdf_quotes) && contact.pdf_quotes.length > 0))) {
+			const contactLines: string[] = ['Known contact info:'];
+			if (contact.name) contactLines.push(`- Name: ${contact.name}`);
+			if (contact.email) contactLines.push(`- Email: ${contact.email}`);
+			if (contact.phone) contactLines.push(`- Phone: ${contact.phone}`);
+			if (contact.address) contactLines.push(`- Address: ${contact.address}`);
+			if (Array.isArray(contact.pdf_quotes) && contact.pdf_quotes.length > 0) {
+				// Generate signed URLs for private PDF quotes (valid for 1 hour)
+				const adminSupabase = getSupabaseAdmin();
+				const signedUrls: string[] = [];
+				for (const q of contact.pdf_quotes) {
+					const stored = typeof q === 'object' && q !== null && 'url' in q ? (q as { url: string }).url : String(q);
+					// Support both: full URL (extract path) or just filename/path
+					const filePath = stored.match(/roof_quotes\/(.+)$/)?.[1] ?? stored.trim();
+					if (!filePath) continue;
+					const { data } = await adminSupabase.storage.from('roof_quotes').createSignedUrl(filePath, 3600);
+					if (data?.signedUrl) signedUrls.push(data.signedUrl);
+				}
+				if (signedUrls.length > 0) {
+					contactLines.push(`- PDF quote links (share when user asks for their quote): ${signedUrls.join(', ')}`);
+				}
+			}
+			parts.push(contactLines.join('\n'));
+		}
+		// When AI takes over again after live-agent timeout, ask the model to apologize and answer
+		if (resumingAfterAgentTimeout) {
+			parts.push(
+				'The customer was waiting for a human agent who did not respond in time. Start your reply with a brief apology for the delay, then answer their question helpfully.'
+			);
+		}
+		// If we got data from a webhook trigger (e.g. n8n), tell the model to use it in the reply
+		if (triggerResult?.webhookResult) {
+			parts.push(
+				`The following information was retrieved from an external system (trigger: ${triggerResult.triggerName}). Use it to answer the customer's question accurately and naturally. Do not say "according to our system" unless appropriate.\n\nExternal data:\n${triggerResult.webhookResult}`
+			);
+		}
 		const systemPrompt = parts.length > 0 ? parts.join('\n\n') : 'You are a helpful assistant.';
 
 		const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [

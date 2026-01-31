@@ -45,7 +45,9 @@ export const GET: RequestHandler = async (event) => {
 				llmModel: config.llmModel ?? '',
 				llmFallbackProvider: config.llmFallbackProvider ?? '',
 				llmFallbackModel: config.llmFallbackModel ?? '',
-				n8nWebhookUrl: data.n8n_webhook_url ?? ''
+				agentTakeoverTimeoutMinutes: (config.agentTakeoverTimeoutMinutes as number) ?? 5,
+				n8nWebhookUrl: data.n8n_webhook_url ?? '',
+				webhookTriggers: (config.webhookTriggers as unknown[]) ?? []
 			},
 			n8nWebhookUrl: data.n8n_webhook_url ?? '',
 			createdAt: data.created_at,

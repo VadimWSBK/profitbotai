@@ -1,8 +1,13 @@
 <script lang="ts">
 	import WidgetPreview from '$lib/components/WidgetPreview.svelte';
 	import IconUrlField from '$lib/components/IconUrlField.svelte';
-	import { defaultWidgetConfig, type WidgetConfig } from '$lib/widget-config';
+	import { defaultWidgetConfig, type WidgetConfig, type WebhookTrigger } from '$lib/widget-config';
 	import { getModels } from '$lib/llm-providers';
+
+	function slugFromName(name: string): string {
+		const base = name.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '') || 'trigger';
+		return base;
+	}
 
 	type MainTab = 'customize' | 'connect' | 'train' | 'embed';
 	type CustomizeTab = 'bubble' | 'tooltip' | 'window' | 'footer' | 'advanced';
@@ -42,7 +47,8 @@
 					...initial.config,
 					name: initial.name ?? initial.config.name,
 					displayMode: (initial.displayMode ?? initial.config.displayMode) as WidgetConfig['displayMode'],
-					n8nWebhookUrl: initial.n8nWebhookUrl ?? initial.config.n8nWebhookUrl ?? ''
+					n8nWebhookUrl: initial.n8nWebhookUrl ?? initial.config.n8nWebhookUrl ?? '',
+					webhookTriggers: (initial.config as { webhookTriggers?: WebhookTrigger[] })?.webhookTriggers ?? []
 				})
 			: base
 	);
@@ -80,7 +86,9 @@
 						llmProvider: config.llmProvider ?? '',
 						llmModel: config.llmModel ?? '',
 						llmFallbackProvider: config.llmFallbackProvider ?? '',
-						llmFallbackModel: config.llmFallbackModel ?? ''
+						llmFallbackModel: config.llmFallbackModel ?? '',
+						agentTakeoverTimeoutMinutes: config.agentTakeoverTimeoutMinutes ?? 5,
+						webhookTriggers: config.webhookTriggers ?? []
 					},
 					n8n_webhook_url: config.n8nWebhookUrl
 				})
@@ -104,6 +112,28 @@
 
 	function addStarterPrompt() {
 		config.window.starterPrompts = [...config.window.starterPrompts, ''];
+	}
+
+	function addTrigger() {
+		if (!config.webhookTriggers) config.webhookTriggers = [];
+		const name = 'New trigger';
+		const id = slugFromName(name);
+		const existingIds = new Set(config.webhookTriggers.map((t) => t.id));
+		let uniqueId = id;
+		let n = 1;
+		while (existingIds.has(uniqueId)) {
+			uniqueId = `${id}_${n}`;
+			n += 1;
+		}
+		config.webhookTriggers = [
+			...config.webhookTriggers,
+			{ id: uniqueId, name, description: '', webhookUrl: '', enabled: true }
+		];
+	}
+
+	function removeTrigger(index: number) {
+		if (!config.webhookTriggers) return;
+		config.webhookTriggers = config.webhookTriggers.filter((_, i) => i !== index);
 	}
 
 	function getEmbedSnippet(): string {
@@ -539,6 +569,48 @@
 								</select>
 							</label>
 						{/if}
+						<label class="block">
+							<span class="text-sm font-medium text-gray-700 mb-1">Live agent timeout (minutes)</span>
+							<p class="text-xs text-gray-500 mb-1">If a live agent hasn&apos;t replied in this many minutes, the AI takes over again and apologizes for the delay.</p>
+							<input type="number" min="1" max="120" bind:value={config.agentTakeoverTimeoutMinutes} class="w-full max-w-[120px] px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+						</label>
+
+						<div class="mt-6 pt-6 border-t border-gray-200">
+							<h4 class="text-sm font-semibold text-gray-900 mb-1">Webhook triggers</h4>
+							<p class="text-xs text-gray-500 mb-3">When the AI recognises the user&apos;s intent, it calls the matching N8N webhook and uses the result in the reply (e.g. roof quote, order status).</p>
+							<div class="space-y-4">
+								{#each (config.webhookTriggers ?? []) as trigger, i}
+									<div class="border border-gray-200 rounded-lg p-4 bg-gray-50/50 space-y-3">
+										<div class="flex items-center justify-between gap-2">
+											<label class="block flex-1 min-w-0">
+												<span class="text-xs font-medium text-gray-500">Name</span>
+												<input type="text" bind:value={trigger.name} class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mt-0.5" placeholder="e.g. Roof quote" />
+											</label>
+											<label class="block w-32 shrink-0">
+												<span class="text-xs font-medium text-gray-500">ID (slug)</span>
+												<input type="text" bind:value={trigger.id} class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono mt-0.5" placeholder="roof_quote" />
+											</label>
+											<label class="flex items-center gap-2 pt-6">
+												<input type="checkbox" bind:checked={trigger.enabled} class="rounded border-gray-300 text-amber-600 focus:ring-amber-500" />
+												<span class="text-xs font-medium text-gray-600">Enabled</span>
+											</label>
+											<button type="button" class="p-2 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 shrink-0" title="Remove trigger" onclick={() => removeTrigger(i)}>🗑</button>
+										</div>
+										<label class="block">
+											<span class="text-xs font-medium text-gray-500">Description (for AI to recognise intent)</span>
+											<textarea bind:value={trigger.description} class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mt-0.5 min-h-[60px]" placeholder="e.g. User asks for a roof sealing quote or cost by area in sqm" rows="2"></textarea>
+										</label>
+										<label class="block">
+											<span class="text-xs font-medium text-gray-500">Webhook URL (N8N)</span>
+											<input type="url" bind:value={trigger.webhookUrl} class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono mt-0.5" placeholder="https://your-n8n.com/webhook/roof-quote" />
+										</label>
+									</div>
+								{/each}
+								<button type="button" onclick={addTrigger} class="text-sm text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1">
+									+ Add trigger
+								</button>
+							</div>
+						</div>
 					</div>
 				{/if}
 			{/if}

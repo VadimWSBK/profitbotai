@@ -1,9 +1,13 @@
 import { getSupabaseClient } from '$lib/supabase.server';
 import type { Handle } from '@sveltejs/kit';
+import { env } from '$env/dynamic/private';
 
 const PUBLIC_PATHS = ['/login', '/auth/callback', '/auth/signup', '/auth/logout'];
 const EMBED_PREFIX = '/embed';
 const API_EVENTS_PATH = '/api/widgets/events';
+
+/** Paths that accept X-API-Key for server-to-server auth (e.g. n8n) */
+const API_KEY_PATHS = ['/api/contacts/signed-url'];
 
 function isPublicPath(pathname: string): boolean {
 	if (pathname.startsWith(EMBED_PREFIX)) return true;
@@ -33,6 +37,24 @@ export const handle: Handle = async ({ event, resolve }) => {
 			.eq('user_id', session.user.id)
 			.single();
 		event.locals.role = (profile?.role as 'admin' | 'user') ?? null;
+	}
+
+	// Allow API key auth for server-to-server (e.g. n8n)
+	const isApiKeyPath = API_KEY_PATHS.some(
+		(p) => event.url.pathname === p || event.url.pathname.startsWith(p + '/')
+	);
+	if (isApiKeyPath) {
+		const apiKey = event.request.headers.get('X-API-Key');
+		const expectedKey = env.SIGNED_URL_API_KEY;
+		if (expectedKey && apiKey === expectedKey) {
+			event.locals.user = { id: 'api-key', email: '' } as typeof event.locals.user;
+			event.locals.role = null;
+		} else if (expectedKey) {
+			return new Response(JSON.stringify({ error: 'Invalid or missing X-API-Key' }), {
+				status: 401,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		}
 	}
 
 	// Require auth for non-public routes (except embed and static)

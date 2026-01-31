@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy, tick } from 'svelte';
+	import { invalidateAll } from '$app/navigation';
 
 	let { data } = $props();
 
@@ -77,6 +78,8 @@
 			messages = Array.isArray(json.messages) ? json.messages : [];
 			hasMoreMessages = !!json.hasMore;
 			scrollToBottom();
+			// Refresh sidebar unread badge (conversation GET marks user messages as read)
+			await invalidateAll();
 		} catch {
 			// ignore
 		}

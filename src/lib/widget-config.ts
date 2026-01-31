@@ -95,6 +95,20 @@ export interface BotInstructionsConfig {
 /** How the widget gets chat replies: n8n webhook or Direct LLM (our backend). */
 export type ChatBackend = 'n8n' | 'direct';
 
+/** One webhook trigger: when the AI recognises this intent, call the webhook and use the result in the reply. */
+export interface WebhookTrigger {
+	/** Unique id used for intent classification (e.g. "roof_quote", "order_status"). */
+	id: string;
+	/** Display name (e.g. "Roof quote", "Order status"). */
+	name: string;
+	/** Description for the AI to recognise user intent (e.g. "User asks for a roof sealing quote or cost by area in sqm"). */
+	description: string;
+	/** Full URL to call (e.g. n8n webhook). POST body: { message, sessionId, conversationId, widgetId }. */
+	webhookUrl: string;
+	/** Whether this trigger is active. */
+	enabled: boolean;
+}
+
 export interface WidgetConfig {
 	name: string;
 	displayMode: 'popup' | 'standalone' | 'embedded';
@@ -111,6 +125,10 @@ export interface WidgetConfig {
 	llmModel?: string;
 	llmFallbackProvider?: string;
 	llmFallbackModel?: string;
+	/** Minutes of no live-agent reply before AI takes over again (direct only). Default 5. */
+	agentTakeoverTimeoutMinutes?: number;
+	/** Webhook triggers: when AI recognises intent, call the webhook and use the result in the reply (direct only). */
+	webhookTriggers?: WebhookTrigger[];
 }
 
 export const defaultBubbleConfig: BubbleConfig = {
@@ -200,5 +218,7 @@ export const defaultWidgetConfig: WidgetConfig = {
 	llmProvider: '',
 	llmModel: '',
 	llmFallbackProvider: '',
-	llmFallbackModel: ''
+	llmFallbackModel: '',
+	agentTakeoverTimeoutMinutes: 5,
+	webhookTriggers: []
 };
