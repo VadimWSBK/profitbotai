@@ -136,32 +136,20 @@ export const POST: RequestHandler = async (event) => {
 			.eq('conversation_id', conv.id)
 			.maybeSingle();
 
-		// Run in parallel: webhook triggers (if any) and contact extraction
-		const webhookTriggers = (config.webhookTriggers as WebhookTrigger[] | undefined) ?? [];
-		const [triggerResult, extractedContact] = await Promise.all([
-			webhookTriggers.length > 0 && apiKey
-				? getTriggerResultIfAny(webhookTriggers, message, {
-						llmProvider,
-						llmModel,
-						apiKey,
-						sessionId,
-						conversationId: conv.id,
-						widgetId,
-						conversationContext: llmHistory
-					})
-				: Promise.resolve(null),
-			extractContactFromMessage(message, {
-				llmProvider,
-				llmModel,
-				apiKey,
-				conversationContext: llmHistory
-			})
-		]);
+		// 1. Extract contact info + roof size first (so we have it for webhook triggers)
+		const extractedContact = await extractContactFromMessage(message, {
+			llmProvider,
+			llmModel,
+			apiKey,
+			conversationContext: llmHistory
+		});
 
 		// Update contact if we extracted name, email, phone, or address from the message
 		if (
-			Object.keys(extractedContact).length > 0 &&
-			(extractedContact.name || extractedContact.email || extractedContact.phone || extractedContact.address)
+			extractedContact.name ||
+			extractedContact.email ||
+			extractedContact.phone ||
+			extractedContact.address
 		) {
 			const updates: Record<string, string> = {};
 			if (extractedContact.name) updates.name = extractedContact.name;
@@ -176,7 +164,7 @@ export const POST: RequestHandler = async (event) => {
 			if (contactErr) console.error('contact update from extraction:', contactErr);
 		}
 
-		// Merge extracted fields into contact for the system prompt (so bot sees latest immediately)
+		// Merge extracted fields into contact (for system prompt + webhook payload)
 		const contactForPrompt = contact
 			? {
 					...contact,
@@ -186,6 +174,26 @@ export const POST: RequestHandler = async (event) => {
 					...(extractedContact.address && { address: extractedContact.address })
 				}
 			: null;
+
+		// 2. Run webhook triggers (with full contact + roof size for quote workflows)
+		const webhookTriggers = (config.webhookTriggers as WebhookTrigger[] | undefined) ?? [];
+		const triggerResult =
+			webhookTriggers.length > 0 && apiKey
+				? await getTriggerResultIfAny(webhookTriggers, message, {
+						llmProvider,
+						llmModel,
+						apiKey,
+						sessionId,
+						conversationId: conv.id,
+						widgetId,
+						conversationContext: llmHistory,
+						contact: contactForPrompt,
+						extracted:
+							extractedContact.roofSize != null
+								? { roofSize: extractedContact.roofSize }
+								: null
+					})
+				: null;
 
 		const bot = (config.bot as Record<string, string> | undefined) ?? {};
 		const parts: string[] = [];

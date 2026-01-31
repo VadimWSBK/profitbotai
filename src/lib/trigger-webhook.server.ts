@@ -15,11 +15,23 @@ export type TriggerResult = {
 
 export type LlmTurn = { role: 'user' | 'assistant'; content: string };
 
+export type TriggerContact = {
+	name?: string | null;
+	email?: string | null;
+	phone?: string | null;
+	address?: string | null;
+};
+
+export type TriggerExtracted = {
+	roofSize?: number;
+};
+
 /**
  * Classify user message against enabled triggers (one LLM call), then if a trigger matches,
  * POST to its webhook and return the result. Used by the chat endpoint before the main LLM reply.
  * Pass conversationContext so multi-turn flows are recognized (e.g. user provides email+roof size
  * after bot asked for them — the current message alone may not match, but with context it does).
+ * Pass contact and extracted so the webhook receives structured customer/project data for quote flows.
  */
 export async function getTriggerResultIfAny(
 	triggers: WebhookTrigger[],
@@ -33,6 +45,10 @@ export async function getTriggerResultIfAny(
 		widgetId: string;
 		/** Recent conversation turns before this message — helps classify multi-turn intents (e.g. quote flow). */
 		conversationContext?: LlmTurn[];
+		/** Merged contact (from DB + extracted) — included in webhook as customer/project for quote workflows. */
+		contact?: TriggerContact | null;
+		/** Extracted roof size etc. — included in webhook project.roofSize. */
+		extracted?: TriggerExtracted | null;
 	}
 ): Promise<TriggerResult | null> {
 	const enabled = triggers.filter((t) => t.enabled && t.webhookUrl?.trim() && t.id?.trim());
@@ -78,7 +94,28 @@ Reply with only one word: the trigger id or "none". No explanation.`;
 	const trigger = enabled.find((t) => t.id.toLowerCase() === chosen);
 	if (!trigger) return null;
 
-	const body = {
+	// Build webhook body. Include customer + project for n8n quote workflows (matches
+	// Shopify-style: customer.name/email/phone, project.roofSize/fullAddress). Also
+	// provide a `body` object so n8n code using $('...').json.body gets the structure.
+	const customer =
+		options.contact &&
+		(options.contact.name || options.contact.email || options.contact.phone)
+			? {
+					name: options.contact.name ?? undefined,
+					email: options.contact.email ?? undefined,
+					phone: options.contact.phone ?? undefined
+				}
+			: undefined;
+
+	const project =
+		options.extracted?.roofSize != null || options.contact?.address
+			? {
+					roofSize: options.extracted?.roofSize ?? undefined,
+					fullAddress: options.contact?.address ?? undefined
+				}
+			: undefined;
+
+	const bodyPayload: Record<string, unknown> = {
 		message: userMessage,
 		sessionId: options.sessionId,
 		conversationId: options.conversationId,
@@ -86,6 +123,13 @@ Reply with only one word: the trigger id or "none". No explanation.`;
 		triggerId: trigger.id,
 		triggerName: trigger.name
 	};
+	if (customer) bodyPayload.customer = customer;
+	if (project) bodyPayload.project = project;
+	// Body sub-object for n8n workflows that read $input.json.body (e.g. Shopify-style)
+	if (customer || project) {
+		bodyPayload.body = { customer: customer ?? {}, project: project ?? {} };
+	}
+	const body = bodyPayload;
 
 	let res: Response;
 	try {

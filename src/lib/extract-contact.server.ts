@@ -11,6 +11,8 @@ export type ExtractedContact = {
 	email?: string;
 	phone?: string;
 	address?: string;
+	/** Roof/project area in square metres (for quote triggers). */
+	roofSize?: number;
 };
 
 /**
@@ -33,7 +35,7 @@ export async function extractContactFromMessage(
 					.join('\n')
 			: '';
 
-	const systemPrompt = `You extract contact information from user messages. Reply with a JSON object containing ONLY the fields the user clearly provided. Use exact keys: name, email, phone, address. Omit any key not provided. Example: {"email":"jane@example.com","phone":"+1 555 123 4567"}. If nothing looks like contact info, reply: {}. No other text.`;
+	const systemPrompt = `You extract contact and project info from user messages. Reply with a JSON object containing ONLY the fields the user clearly provided. Use exact keys: name, email, phone, address, roofSize. roofSize is a number (square metres) when the user gives roof/area size (e.g. "400 sqm", "400m2", "square metre is 400"). Omit any key not provided. Example: {"email":"jane@example.com","roofSize":400}. If nothing relevant, reply: {}. No other text.`;
 
 	const userPrompt =
 		contextStr.length > 0
@@ -71,6 +73,10 @@ export async function extractContactFromMessage(
 			out.phone = parsed.phone.trim();
 		if (typeof parsed.address === 'string' && parsed.address.trim())
 			out.address = parsed.address.trim();
+		const roof = parsed.roofSize;
+		if (typeof roof === 'number' && roof > 0) out.roofSize = roof;
+		else if (typeof roof === 'string' && /^\d+(\.\d+)?$/.test(roof.trim()))
+			out.roofSize = Number.parseFloat(roof.trim());
 		return out;
 	} catch {
 		return {};
