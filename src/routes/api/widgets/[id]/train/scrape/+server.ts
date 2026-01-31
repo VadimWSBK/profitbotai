@@ -12,7 +12,7 @@ export const POST: RequestHandler = async (event) => {
 	if (!widgetId) return json({ error: 'Missing widget id' }, { status: 400 });
 	if (!event.locals.user) return json({ error: 'Unauthorized' }, { status: 401 });
 	if (!isTrainBotConfigured())
-		return json({ error: 'Train Bot is not configured. Set OPENAI_API_KEY in .env.' }, { status: 503 });
+		return json({ error: 'Train Bot is not configured. Set OPENAI_API_KEY or GEMINI_API_KEY in .env.' }, { status: 503 });
 
 	let body: { url?: string };
 	try {

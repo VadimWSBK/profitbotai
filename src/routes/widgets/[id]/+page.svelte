@@ -659,11 +659,11 @@
 
 			<h4 class="text-sm font-semibold text-gray-800 mb-2">Knowledge base (RAG)</h4>
 			<p class="text-gray-500 text-sm mb-4">
-				Add knowledge from PDFs or web pages. Content is chunked, embedded with OpenAI, and stored in Supabase. In n8n, connect the same Supabase project and use <strong>Supabase Vector Store</strong> → &quot;Retrieve documents for AI Agent as Tool&quot; so your bot can answer from this data.
+				Add knowledge from PDFs or web pages. Content is chunked, embedded (OpenAI or Gemini), and stored in Supabase. In n8n, connect the same Supabase project and use <strong>Supabase Vector Store</strong> → &quot;Retrieve documents for AI Agent as Tool&quot; so your bot can answer from this data.
 			</p>
 			{#if trainStatus && !trainStatus.configured}
 				<p class="text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm mb-6">
-					Add <code class="bg-amber-100 px-1 rounded">OPENAI_API_KEY</code> to your <code class="bg-amber-100 px-1 rounded">.env</code> to enable Train Bot.
+					Add <code class="bg-amber-100 px-1 rounded">OPENAI_API_KEY</code> or <code class="bg-amber-100 px-1 rounded">GEMINI_API_KEY</code> to your <code class="bg-amber-100 px-1 rounded">.env</code> to enable Train Bot.
 				</p>
 			{/if}
 			{#if trainStatus}
