@@ -218,7 +218,7 @@ export const POST: RequestHandler = async (event) => {
 				extracted
 			);
 			if (gen.signedUrl) {
-				const quoteLine = `A quote PDF has been generated and attached to this contact. Share this link with the customer: [Download Quote](${gen.signedUrl}). `;
+				const quoteLine = `A quote PDF has been generated. You MUST include this exact clickable link in your reply so the customer can download it now: [Download Quote](${gen.signedUrl}). In the same message, say they will also receive the quote by email, but give them the link above as a hyperlink in your response.`;
 				triggerResult = {
 					...triggerResult,
 					webhookResult: quoteLine + (triggerResult.webhookResult || '')
@@ -306,11 +306,13 @@ export const POST: RequestHandler = async (event) => {
 				'The customer was waiting for a human agent who did not respond in time. Start your reply with a brief apology for the delay, then answer their question helpfully.'
 			);
 		}
-		// If we got data from a webhook trigger (e.g. n8n), tell the model to use it in the reply
+		// If we got data from a webhook trigger or built-in quote, tell the model to use it in the reply
 		if (triggerResult?.webhookResult) {
-			parts.push(
-				`The following information was retrieved from an external system (trigger: ${triggerResult.triggerName}). Use it to answer the customer's question accurately and naturally. Do not say "according to our system" unless appropriate.\n\nExternal data:\n${triggerResult.webhookResult}`
-			);
+			const isQuote = quoteTriggerIds.includes(triggerResult.triggerId.toLowerCase());
+			const instruction = isQuote
+				? `A quote was just generated. In your reply you MUST: (1) Confirm the quote is ready, (2) Say they will receive it by email, AND (3) Include the download link from the data below as a clickable markdown link [Download Quote](url) in the same message. Do not skip the link.`
+				: `The following information was retrieved from an external system (trigger: ${triggerResult.triggerName}). Use it to answer the customer's question accurately and naturally. Do not say "according to our system" unless appropriate.`;
+			parts.push(`${instruction}\n\nData to use in your reply:\n${triggerResult.webhookResult}`);
 		}
 		const systemPrompt = parts.length > 0 ? parts.join('\n\n') : 'You are a helpful assistant.';
 
