@@ -196,13 +196,16 @@ export const POST: RequestHandler = async (event) => {
 				: null;
 
 		const bot = (config.bot as Record<string, string> | undefined) ?? {};
-		const parts: string[] = [];
+		const parts: string[] = [
+			'CRITICAL: Reply only with natural conversational text. Never output technical strings, commands, codes, or syntax (e.g. workflow_start, contacts_query, or similar). Speak like a human to a human. Your entire reply must be readable by the customer with no internal jargon.',
+			'The webhook is triggered automatically by the system when name, email, and roof size are collected. You do not trigger it—just confirm naturally.'
+		];
 		if (bot.role?.trim()) parts.push(bot.role.trim());
 		if (bot.tone?.trim()) parts.push(`Tone: ${bot.tone.trim()}`);
 		if (bot.instructions?.trim()) parts.push(bot.instructions.trim());
-		// Contact info from DB — AI has access to search/use when user asks about their details
+		// Contact data is ALREADY loaded below — use it directly, never output query syntax
 		const contactLines: string[] = [
-			'You have access to the contacts table. Use stored contact info when the user asks about their details, email, address, previous quotes, or "what do you have on file?". If nothing is stored, politely ask them to share it.'
+			'Contact data (already loaded from database): Use the info below when the user asks about their details, quote, or "what do you have on file?". If PDF links are listed, share them as clickable hyperlinks using markdown: [Download Quote](paste-the-url-here). The chat renders [text](url) as clickable links.'
 		];
 		const currentContact = contactForPrompt;
 		if (currentContact && (currentContact.name || currentContact.email || currentContact.phone || currentContact.address || (Array.isArray(currentContact.pdf_quotes) && currentContact.pdf_quotes.length > 0))) {
@@ -222,7 +225,7 @@ export const POST: RequestHandler = async (event) => {
 					if (data?.signedUrl) signedUrls.push(data.signedUrl);
 				}
 				if (signedUrls.length > 0) {
-					contactLines.push(`- PDF quote links (share when user asks for their quote): ${signedUrls.join(', ')}`);
+					contactLines.push(`- PDF quote links (when user asks for their quote, reply with: [Download Quote](URL) using one of these): ${signedUrls.join(', ')}`);
 				}
 			}
 		} else {
@@ -236,17 +239,30 @@ export const POST: RequestHandler = async (event) => {
 			if (currentEmail !== searchEmail) {
 				const { data: found } = await supabase
 					.from('contacts')
-					.select('name, email, phone, address')
+					.select('name, email, phone, address, pdf_quotes')
 					.eq('widget_id', widgetId)
 					.eq('email', searchEmail)
 					.limit(1)
 					.maybeSingle();
-				if (found && (found.name || found.email || found.phone || found.address)) {
+				if (found && (found.name || found.email || found.phone || found.address || (Array.isArray(found.pdf_quotes) && found.pdf_quotes.length > 0))) {
 					contactLines.push(`Contact lookup for ${searchEmail}:`);
 					if (found.name) contactLines.push(`- Name: ${found.name}`);
 					if (found.email) contactLines.push(`- Email: ${found.email}`);
 					if (found.phone) contactLines.push(`- Phone: ${found.phone}`);
 					if (found.address) contactLines.push(`- Address: ${found.address}`);
+					if (Array.isArray(found.pdf_quotes) && found.pdf_quotes.length > 0) {
+						const adminSupabase = getSupabaseAdmin();
+						const signedUrls: string[] = [];
+						for (const q of found.pdf_quotes) {
+							const stored = typeof q === 'object' && q !== null && 'url' in q ? (q as { url: string }).url : String(q);
+							const filePath = stored.match(/roof_quotes\/(.+)$/)?.[1] ?? stored.trim();
+							if (!filePath) continue;
+							const { data } = await adminSupabase.storage.from('roof_quotes').createSignedUrl(filePath, 3600);
+							if (data?.signedUrl) signedUrls.push(data.signedUrl);
+						}
+						if (signedUrls.length > 0)
+							contactLines.push(`- PDF quote links: ${signedUrls.join(', ')}`);
+					}
 				}
 			}
 		}
