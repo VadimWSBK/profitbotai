@@ -663,7 +663,7 @@
 			</p>
 			{#if trainStatus && !trainStatus.configured}
 				<p class="text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm mb-6">
-					Add <code class="bg-amber-100 px-1 rounded">OPENAI_API_KEY</code> or <code class="bg-amber-100 px-1 rounded">GEMINI_API_KEY</code> to your <code class="bg-amber-100 px-1 rounded">.env</code> to enable Train Bot.
+					Add an API key in <strong>Settings → LLM keys</strong> (Google or OpenAI), or set <code class="bg-amber-100 px-1 rounded">GEMINI_API_KEY</code>/<code class="bg-amber-100 px-1 rounded">OPENAI_API_KEY</code> in <code class="bg-amber-100 px-1 rounded">.env</code>. Train Bot uses the same key as your chatbot.
 				</p>
 			{/if}
 			{#if trainStatus}

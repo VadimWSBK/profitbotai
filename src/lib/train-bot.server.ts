@@ -1,16 +1,17 @@
 /**
  * Train Bot: chunk text, generate embeddings (OpenAI or Gemini), store in Supabase widget_documents.
  * n8n can use the same Supabase project and "Retrieve documents for AI Agent as Tool" for RAG.
- * PDF text extraction uses pdf-parse; web scraping uses fetch + cheerio. Either OPENAI_API_KEY or
- * GEMINI_API_KEY enables Train Bot (embeddings). Gemini uses output_dimensionality 1536 to match
- * the existing Supabase vector(1536) column.
+ * PDF text extraction uses pdf-parse; web scraping uses fetch + cheerio.
+ *
+ * Embedding API key (priority): env OPENAI_API_KEY/GEMINI_API_KEY → widget owner's LLM key from Settings.
+ * Uses the same key source as the chatbot, so if chat works with your Gemini key, Train Bot will too.
  */
 
+import type { SupabaseClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 import { getSupabaseAdmin } from '$lib/supabase.server';
 import { env } from '$env/dynamic/private';
 
-const openai = env.OPENAI_API_KEY ? new OpenAI({ apiKey: env.OPENAI_API_KEY }) : null;
 
 const EMBEDDING_MODEL = 'text-embedding-3-small';
 const GEMINI_EMBED_MODEL = 'gemini-embedding-001';
@@ -18,8 +19,35 @@ const EMBED_DIMENSION = 1536; // Supabase widget_documents.embedding vector(1536
 const CHUNK_SIZE = 800;
 const CHUNK_OVERLAP = 100;
 
-export function isTrainBotConfigured(): boolean {
-	return Boolean(env.OPENAI_API_KEY || env.GEMINI_API_KEY);
+export type EmbeddingKey = { provider: 'openai' | 'google'; key: string };
+
+/**
+ * Resolve embedding API key: env vars first, then widget owner's stored LLM key (Settings → LLM keys).
+ * Uses the same key as the chatbot, so if chat works, Train Bot will too.
+ */
+export async function getEmbeddingKeyForWidget(
+	supabase: SupabaseClient,
+	widgetId: string
+): Promise<EmbeddingKey | null> {
+	if (env.OPENAI_API_KEY?.trim()) return { provider: 'openai', key: env.OPENAI_API_KEY.trim() };
+	if (env.GEMINI_API_KEY?.trim()) return { provider: 'google', key: env.GEMINI_API_KEY.trim() };
+	const { data: googleKey } = await supabase.rpc('get_owner_llm_key_for_chat', {
+		p_widget_id: widgetId,
+		p_provider: 'google'
+	});
+	if (googleKey?.trim()) return { provider: 'google', key: googleKey.trim() };
+	const { data: openaiKey } = await supabase.rpc('get_owner_llm_key_for_chat', {
+		p_widget_id: widgetId,
+		p_provider: 'openai'
+	});
+	if (openaiKey?.trim()) return { provider: 'openai', key: openaiKey.trim() };
+	return null;
+}
+
+export async function isTrainBotConfigured(supabase: SupabaseClient, widgetId: string): Promise<boolean> {
+	if (env.OPENAI_API_KEY || env.GEMINI_API_KEY) return true;
+	const key = await getEmbeddingKeyForWidget(supabase, widgetId);
+	return key != null;
 }
 
 /** Split text into overlapping chunks for embedding. */
@@ -58,13 +86,13 @@ function normalizeL2(vec: number[]): number[] {
 }
 
 /** Get embeddings via OpenAI (text-embedding-3-small, 1536 dims). */
-async function getEmbeddingsOpenAI(texts: string[]): Promise<number[][]> {
-	if (!openai) throw new Error('OPENAI_API_KEY is not set.');
+async function getEmbeddingsOpenAI(texts: string[], apiKey: string): Promise<number[][]> {
+	const client = new OpenAI({ apiKey });
 	const batchSize = 20;
 	const out: number[][] = [];
 	for (let i = 0; i < texts.length; i += batchSize) {
 		const batch = texts.slice(i, i + batchSize);
-		const res = await openai.embeddings.create({
+		const res = await client.embeddings.create({
 			model: EMBEDDING_MODEL,
 			input: batch
 		});
@@ -77,9 +105,7 @@ async function getEmbeddingsOpenAI(texts: string[]): Promise<number[][]> {
 }
 
 /** Get embeddings via Gemini API (gemini-embedding-001, 1536 dims, RETRIEVAL_DOCUMENT, normalized). */
-async function getEmbeddingsGemini(texts: string[]): Promise<number[][]> {
-	const key = env.GEMINI_API_KEY;
-	if (!key) throw new Error('GEMINI_API_KEY is not set.');
+async function getEmbeddingsGemini(texts: string[], apiKey: string): Promise<number[][]> {
 	const batchSize = 20;
 	const out: number[][] = [];
 	const base = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_EMBED_MODEL}:embedContent`;
@@ -87,7 +113,7 @@ async function getEmbeddingsGemini(texts: string[]): Promise<number[][]> {
 		const batch = texts.slice(i, i + batchSize);
 		// Gemini REST embedContent accepts one content per request; batch with multiple requests
 		const promises = batch.map((text) =>
-			fetch(`${base}?key=${encodeURIComponent(key)}`, {
+			fetch(`${base}?key=${encodeURIComponent(apiKey)}`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -104,8 +130,8 @@ async function getEmbeddingsGemini(texts: string[]): Promise<number[][]> {
 				throw new Error(`Gemini embed failed: ${res.status} ${err}`);
 			}
 			const data = (await res.json()) as { embedding?: { values?: number[] } };
-			const values = data?.embedding?.values;
-			if (!values || values.length !== EMBED_DIMENSION)
+			const values = data?.embedding?.values ?? [];
+			if (values.length !== EMBED_DIMENSION)
 				throw new Error('Gemini embedding missing or wrong dimension');
 			out.push(normalizeL2(values));
 		}
@@ -113,11 +139,10 @@ async function getEmbeddingsGemini(texts: string[]): Promise<number[][]> {
 	return out;
 }
 
-/** Get embeddings (OpenAI if OPENAI_API_KEY set, else Gemini if GEMINI_API_KEY set). */
-async function getEmbeddings(texts: string[]): Promise<number[][]> {
-	if (env.OPENAI_API_KEY) return getEmbeddingsOpenAI(texts);
-	if (env.GEMINI_API_KEY) return getEmbeddingsGemini(texts);
-	throw new Error('Add OPENAI_API_KEY or GEMINI_API_KEY to .env to enable Train Bot.');
+/** Get embeddings using the given key. */
+async function getEmbeddings(texts: string[], embeddingKey: EmbeddingKey): Promise<number[][]> {
+	if (embeddingKey.provider === 'openai') return getEmbeddingsOpenAI(texts, embeddingKey.key);
+	return getEmbeddingsGemini(texts, embeddingKey.key);
 }
 
 export type IngestMetadata = {
@@ -131,12 +156,13 @@ export type IngestMetadata = {
 export async function ingestChunks(
 	widgetId: string,
 	text: string,
-	metadata: IngestMetadata
+	metadata: IngestMetadata,
+	embeddingKey: EmbeddingKey
 ): Promise<{ chunks: number; error?: string }> {
 	const chunks = chunkText(text);
 	if (chunks.length === 0) return { chunks: 0 };
 
-	const embeddings = await getEmbeddings(chunks);
+	const embeddings = await getEmbeddings(chunks, embeddingKey);
 	const supabase = getSupabaseAdmin();
 
 	const rows = chunks.map((content, i) => ({

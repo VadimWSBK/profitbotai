@@ -74,9 +74,16 @@ export async function extractContactFromMessage(
 		if (typeof parsed.address === 'string' && parsed.address.trim())
 			out.address = parsed.address.trim();
 		const roof = parsed.roofSize;
-		if (typeof roof === 'number' && roof > 0) out.roofSize = roof;
-		else if (typeof roof === 'string' && /^\d+(\.\d+)?$/.test(roof.trim()))
-			out.roofSize = Number.parseFloat(roof.trim());
+		if (typeof roof === 'number' && roof >= 0) out.roofSize = roof;
+		else if (typeof roof === 'string') {
+			const trimmed = roof.trim();
+			if (/^\d+(\.\d+)?$/.test(trimmed)) out.roofSize = Number.parseFloat(trimmed);
+			else {
+				// Parse "200 sqm", "200m2", "200 m²", "roof is 200 sqm" etc.
+				const numMatch = trimmed.match(/(\d+(?:\.\d+)?)\s*(?:sqm|m2|m²|square\s*metre|sq\.?\s*m\.?)?/i);
+				if (numMatch) out.roofSize = Number.parseFloat(numMatch[1]);
+			}
+		}
 		return out;
 	} catch {
 		return {};

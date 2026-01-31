@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { ingestChunks, isTrainBotConfigured } from '$lib/train-bot.server';
+import { getEmbeddingKeyForWidget, ingestChunks } from '$lib/train-bot.server';
+import { getSupabaseClient } from '$lib/supabase.server';
 
 const MAX_PDF_SIZE = 10 * 1024 * 1024; // 10MB
 
@@ -11,8 +12,11 @@ export const POST: RequestHandler = async (event) => {
 	const widgetId = event.params.id;
 	if (!widgetId) return json({ error: 'Missing widget id' }, { status: 400 });
 	if (!event.locals.user) return json({ error: 'Unauthorized' }, { status: 401 });
-	if (!isTrainBotConfigured())
-		return json({ error: 'Train Bot is not configured. Set OPENAI_API_KEY or GEMINI_API_KEY in .env.' }, { status: 503 });
+
+	const supabase = getSupabaseClient(event);
+	const embeddingKey = await getEmbeddingKeyForWidget(supabase, widgetId);
+	if (!embeddingKey)
+		return json({ error: 'Train Bot needs an API key. Add Google or OpenAI in Settings → LLM keys, or set GEMINI_API_KEY/OPENAI_API_KEY in .env.' }, { status: 503 });
 
 	const formData = await event.request.formData().catch(() => null);
 	if (!formData) return json({ error: 'Invalid form data' }, { status: 400 });
@@ -32,7 +36,7 @@ export const POST: RequestHandler = async (event) => {
 			source: 'pdf',
 			widget_id: widgetId,
 			filename: file.name
-		});
+		}, embeddingKey);
 		if (result.error) return json({ error: result.error }, { status: 500 });
 		return json({ ok: true, chunks: result.chunks });
 	} catch (e) {

@@ -34,11 +34,15 @@ export async function sendQuoteEmail(
 	opts: SendQuoteEmailOptions
 ): Promise<{ sent: boolean; error?: string }> {
 	const integration = await getMailingIntegrationForUser(supabase, userId);
-	if (!integration) return { sent: false, error: 'No mailing integration connected' };
+	if (!integration) {
+		return { sent: false, error: 'No mailing integration connected' };
+	}
 
 	const { toEmail, quoteDownloadUrl, customerName } = opts;
 	const to = toEmail.trim().toLowerCase();
-	if (!to) return { sent: false, error: 'Missing recipient email' };
+	if (!to) {
+		return { sent: false, error: 'Missing recipient email' };
+	}
 
 	// From address: use quote_settings.company.email or Resend default
 	const { data: quoteSettings } = await supabase

@@ -208,6 +208,12 @@ export const POST: RequestHandler = async (event) => {
 					})
 				: null;
 
+		if (!triggerResult) {
+			console.log('[chat/quote] no trigger matched for message (intent classification returned none)');
+		} else {
+			console.log('[chat/quote] trigger matched', { triggerId: triggerResult.triggerId, triggerName: triggerResult.triggerName });
+		}
+
 		// When quote intent matches (built-in or a quote-related webhook trigger), generate PDF if we have name, email, and roof size
 		const quoteTriggerIds = new Set(['quote', 'roof_quote']);
 		const isQuoteIntent =
@@ -222,16 +228,36 @@ export const POST: RequestHandler = async (event) => {
 			const hasEmail = !!(contact.email ?? extractedContact.email);
 			const hasRoofSize = extractedContact.roofSize != null && Number(extractedContact.roofSize) >= 0;
 
+			console.log('[chat/quote] intent=quote', {
+				hasName,
+				hasEmail,
+				hasRoofSize,
+				extractedRoofSize: extractedContact.roofSize,
+				contactName: contact.name ?? extractedContact.name,
+				contactEmail: contact.email ?? extractedContact.email
+			});
+
 			if (hasName && hasEmail && hasRoofSize) {
 				const adminSupabase = getSupabaseAdmin();
 				const extracted = { roofSize: Number(extractedContact.roofSize) };
-				const gen = await generateQuoteForConversation(
-					adminSupabase,
-					conv.id,
-					widgetId,
-					contact,
-					extracted
-				);
+				let gen: { signedUrl?: string; storagePath?: string; error?: string };
+				try {
+					gen = await generateQuoteForConversation(
+						adminSupabase,
+						conv.id,
+						widgetId,
+						contact,
+						extracted
+					);
+					console.log('[chat/quote] generateQuoteForConversation result', {
+						hasSignedUrl: !!gen.signedUrl,
+						hasStoragePath: !!gen.storagePath,
+						error: gen.error
+					});
+				} catch (e) {
+					console.error('[chat/quote] generateQuoteForConversation threw:', e);
+					gen = { error: e instanceof Error ? e.message : 'PDF generation failed' };
+				}
 				if (gen.signedUrl && gen.storagePath) {
 					// Append PDF to contact (Supabase does not persist custom upload metadata, so storage trigger may not run)
 					const baseUrl = (env.SUPABASE_URL ?? '').replace(/\/$/, '');
@@ -251,8 +277,13 @@ export const POST: RequestHandler = async (event) => {
 						customerName: contact.name ?? extractedContact.name ?? null
 					});
 					quoteEmailSent = emailResult.sent;
-					if (!quoteEmailSent && emailResult.error) {
-						console.error('Quote email not sent:', emailResult.error);
+					if (quoteEmailSent) {
+						console.log('[chat/quote] Quote email sent to', toEmail);
+					} else if (emailResult.error) {
+						console.error('[chat/quote] Quote email not sent:', emailResult.error, '(to:', toEmail + ')');
+						if (emailResult.error === 'No mailing integration connected') {
+							console.error('[chat/quote] Widget owner must connect Resend in Settings → Integrations to send quote emails.');
+						}
 					}
 					const emailInstruction = quoteEmailSent
 						? ' In the same message, say they will also receive the quote by email, but give them the link above as a hyperlink in your response.'

@@ -24,9 +24,33 @@ export async function generateQuoteForConversation(
 	extracted: { roofSize?: number } | null
 ): Promise<{ signedUrl?: string; storagePath?: string; error?: string }> {
 	const ownerId = (await admin.from('widgets').select('created_by').eq('id', widgetId).single()).data?.created_by as string | undefined;
-	if (!ownerId) return { error: 'Widget has no owner' };
+	if (!ownerId) {
+		console.error('[quote-pdf] Widget has no owner', { widgetId });
+		return { error: 'Widget has no owner' };
+	}
 
-	const { data: settingsRow } = await admin.from('quote_settings').select('*').eq('user_id', ownerId).maybeSingle();
+	let settingsRow = (await admin.from('quote_settings').select('*').eq('user_id', ownerId).maybeSingle()).data;
+	if (!settingsRow) {
+		// Create default quote_settings so first-time quote generation works (owner may not have visited Quote page yet)
+		const { error: upsertErr } = await admin.from('quote_settings').upsert(
+			{
+				user_id: ownerId,
+				company: {},
+				bank_details: {},
+				line_items: [],
+				deposit_percent: 40,
+				tax_percent: 10,
+				valid_days: 30,
+				currency: 'USD'
+			},
+			{ onConflict: 'user_id' }
+		);
+		if (upsertErr) {
+			console.error('[quote-pdf] Quote settings not found and failed to create default:', upsertErr);
+			return { error: 'Quote settings not found. Save your quote template in Settings → Quote first.' };
+		}
+		settingsRow = (await admin.from('quote_settings').select('*').eq('user_id', ownerId).single()).data ?? undefined;
+	}
 	if (!settingsRow) return { error: 'Quote settings not found' };
 
 	const settings: QuoteSettings = {
@@ -64,7 +88,9 @@ export async function generateQuoteForConversation(
 	try {
 		pdfBuffer = await generatePdfFromHtml(html);
 	} catch (e) {
-		return { error: e instanceof Error ? e.message : 'PDF generation failed' };
+		const errMsg = e instanceof Error ? e.message : 'PDF generation failed';
+		console.error('[quote-pdf] generatePdfFromHtml failed:', e);
+		return { error: errMsg };
 	}
 
 	const customerName = (customer.name || customer.email || 'Customer').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '');
@@ -75,7 +101,10 @@ export async function generateQuoteForConversation(
 		upsert: true,
 		metadata: { conversation_id: conversationId, widget_id: widgetId }
 	});
-	if (uploadErr) return { error: uploadErr.message };
+	if (uploadErr) {
+		console.error('[quote-pdf] Storage upload failed:', uploadErr);
+		return { error: `Upload failed: ${uploadErr.message}. Ensure the roof_quotes bucket exists in Supabase Storage.` };
+	}
 
 	const { data: signed } = await admin.storage.from(BUCKET).createSignedUrl(fileName, 3600);
 	return { signedUrl: signed?.signedUrl ?? undefined, storagePath: fileName };

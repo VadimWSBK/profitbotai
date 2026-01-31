@@ -13,16 +13,17 @@ export const GET: RequestHandler = async (event) => {
 
 	try {
 		const supabase = getSupabaseClient(event);
+		const configured = await isTrainBotConfigured(supabase, widgetId);
 		const { count, error } = await supabase
 			.from('widget_documents')
 			.select('*', { count: 'exact', head: true })
 			.eq('widget_id', widgetId);
 		if (error) {
 			// Table might not exist yet (migration not run)
-			return json({ configured: isTrainBotConfigured(), documentCount: 0 });
+			return json({ configured, documentCount: 0 });
 		}
-		return json({ configured: isTrainBotConfigured(), documentCount: count ?? 0 });
+		return json({ configured, documentCount: count ?? 0 });
 	} catch {
-		return json({ configured: isTrainBotConfigured(), documentCount: 0 });
+		return json({ configured: false, documentCount: 0 });
 	}
 };

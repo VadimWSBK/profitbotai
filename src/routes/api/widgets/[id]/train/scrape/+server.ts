@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { ingestChunks, isTrainBotConfigured } from '$lib/train-bot.server';
+import { getEmbeddingKeyForWidget, ingestChunks } from '$lib/train-bot.server';
+import { getSupabaseClient } from '$lib/supabase.server';
 import * as cheerio from 'cheerio';
 
 /**
@@ -11,8 +12,11 @@ export const POST: RequestHandler = async (event) => {
 	const widgetId = event.params.id;
 	if (!widgetId) return json({ error: 'Missing widget id' }, { status: 400 });
 	if (!event.locals.user) return json({ error: 'Unauthorized' }, { status: 401 });
-	if (!isTrainBotConfigured())
-		return json({ error: 'Train Bot is not configured. Set OPENAI_API_KEY or GEMINI_API_KEY in .env.' }, { status: 503 });
+
+	const supabase = getSupabaseClient(event);
+	const embeddingKey = await getEmbeddingKeyForWidget(supabase, widgetId);
+	if (!embeddingKey)
+		return json({ error: 'Train Bot needs an API key. Add Google or OpenAI in Settings → LLM keys, or set GEMINI_API_KEY/OPENAI_API_KEY in .env.' }, { status: 503 });
 
 	let body: { url?: string };
 	try {
@@ -47,7 +51,7 @@ export const POST: RequestHandler = async (event) => {
 			source: 'url',
 			widget_id: widgetId,
 			url: url.toString()
-		});
+		}, embeddingKey);
 		if (result.error) return json({ error: result.error }, { status: 500 });
 		return json({ ok: true, chunks: result.chunks });
 	} catch (e) {

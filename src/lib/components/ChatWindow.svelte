@@ -189,25 +189,31 @@
 					} finally {
 						loading = false;
 					}
-					// If we never got any text from the stream, the server may still have persisted in onFinish — avoid flashing the error
+					// If we never got any text from the stream, the server may still be generating (e.g. quote + LLM) and will persist in onFinish. Wait and retry refetch before showing error to avoid flashing "message not sent" then the real reply.
 					if (streamMessageIndex === -1) {
-						await new Promise((r) => setTimeout(r, 500));
-						try {
+						const refetchMessages = async (): Promise<Message[]> => {
 							const refetch = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
 							const data = await refetch.json().catch(() => ({}));
 							const list = Array.isArray(data.messages) ? data.messages : [];
-							const serverMessages = list.map((m: { role: string; content: string; avatarUrl?: string }) => ({
+							return list.map((m: { role: string; content: string; avatarUrl?: string }) => ({
 								role: m.role as 'user' | 'bot',
 								content: m.content,
 								avatarUrl: m.avatarUrl
 							}));
-							if (serverMessages.length > messages.length || (serverMessages.length > 0 && serverMessages[serverMessages.length - 1].role === 'bot')) {
-								messages = serverMessages;
-								requestAnimationFrame(() => scrollToBottom());
-								return;
+						};
+						const delays = [2000, 2000, 2500]; // wait 2s, refetch, wait 2s, refetch, wait 2.5s, refetch — then show error
+						for (let i = 0; i < delays.length; i++) {
+							await new Promise((r) => setTimeout(r, delays[i]));
+							try {
+								const serverMessages = await refetchMessages();
+								if (serverMessages.length > messages.length || (serverMessages.length > 0 && serverMessages[serverMessages.length - 1].role === 'bot')) {
+									messages = serverMessages;
+									requestAnimationFrame(() => scrollToBottom());
+									return;
+								}
+							} catch {
+								// ignore refetch errors
 							}
-						} catch {
-							// ignore refetch errors
 						}
 						addBotMessage(config.window.customErrorMessage);
 					}

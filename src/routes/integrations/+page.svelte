@@ -7,6 +7,11 @@
 	let disconnecting = $state<string | null>(null);
 	let formValues = $state<Record<string, string>>({});
 	let error = $state<string | null>(null);
+	// Resend test email
+	let testEmailTo = $state('');
+	let testEmailSending = $state(false);
+	let testEmailSuccess = $state(false);
+	let testEmailError = $state<string | null>(null);
 
 	async function load() {
 		try {
@@ -60,6 +65,34 @@
 		}
 	}
 
+	async function sendTestEmail() {
+		const email = testEmailTo.trim().toLowerCase();
+		if (!email) {
+			testEmailError = 'Enter an email address';
+			return;
+		}
+		testEmailSending = true;
+		testEmailError = null;
+		testEmailSuccess = false;
+		try {
+			const res = await fetch('/api/settings/integrations/resend/test-email', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ toEmail: email })
+			});
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok) {
+				testEmailError = (data.error as string) ?? 'Failed to send test email';
+				return;
+			}
+			testEmailSuccess = true;
+		} catch (e) {
+			testEmailError = e instanceof Error ? e.message : 'Failed to send test email';
+		} finally {
+			testEmailSending = false;
+		}
+	}
+
 	$effect(() => {
 		if (!loaded) load();
 	});
@@ -103,21 +136,54 @@
 							<p class="text-gray-500 text-sm mt-1">{integration.description}</p>
 
 							{#if isConnected}
-								<div class="mt-4 flex items-center gap-3">
-									<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-										<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
-											<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-										</svg>
-										Connected
-									</span>
-									<button
-										type="button"
-										disabled={disconnecting === integration.id}
-										onclick={() => disconnect(integration.id)}
-										class="text-sm text-red-600 hover:text-red-700 disabled:opacity-60"
-									>
-										{disconnecting === integration.id ? 'Disconnecting…' : 'Disconnect'}
-									</button>
+								<div class="mt-4 space-y-4">
+									<div class="flex items-center gap-3">
+										<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+											<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+												<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+											</svg>
+											Connected
+										</span>
+										<button
+											type="button"
+											disabled={disconnecting === integration.id}
+											onclick={() => disconnect(integration.id)}
+											class="text-sm text-red-600 hover:text-red-700 disabled:opacity-60"
+										>
+											{disconnecting === integration.id ? 'Disconnecting…' : 'Disconnect'}
+										</button>
+									</div>
+									{#if integration.id === 'resend'}
+										<div class="pt-3 border-t border-gray-100">
+											<p class="text-sm font-medium text-gray-700 mb-2">Send test email</p>
+											<div class="flex flex-wrap items-end gap-2">
+												<label class="flex-1 min-w-[200px]">
+													<span class="sr-only">Email address</span>
+													<input
+														type="email"
+														placeholder="you@example.com"
+														bind:value={testEmailTo}
+														disabled={testEmailSending}
+														class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 disabled:opacity-60"
+													/>
+												</label>
+												<button
+													type="button"
+													disabled={testEmailSending}
+													onclick={sendTestEmail}
+													class="px-4 py-2 bg-gray-800 hover:bg-gray-900 disabled:opacity-60 text-white font-medium rounded-lg transition-colors text-sm"
+												>
+													{testEmailSending ? 'Sending…' : 'Send test email'}
+												</button>
+											</div>
+											{#if testEmailError}
+												<p class="mt-1.5 text-sm text-red-600">{testEmailError}</p>
+											{/if}
+											{#if testEmailSuccess}
+												<p class="mt-1.5 text-sm text-green-600">Test email sent. Check the inbox for {testEmailTo || 'that address'}.</p>
+											{/if}
+										</div>
+									{/if}
 								</div>
 							{:else}
 								<div class="mt-4 space-y-3">
