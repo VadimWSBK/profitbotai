@@ -2,6 +2,7 @@
 	import type { WidgetConfig } from '$lib/widget-config';
 	import { onMount, onDestroy } from 'svelte';
 	import { browser } from '$app/environment';
+	import { readUIMessageStream } from 'ai';
 
 	let { config, widgetId, onClose } = $props<{ config: WidgetConfig; widgetId?: string; onClose: () => void }>();
 
@@ -151,17 +152,44 @@
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({ message: trimmed, sessionId })
 				});
-				const data = await res.json().catch(() => ({}));
-				if (!res.ok) {
-					botReply = (data.error as string) ?? config.window.customErrorMessage;
-				} else if (data.liveAgentActive) {
-					// Live agent has taken over: no bot message in chat
+				const contentType = res.headers.get('content-type') ?? '';
+				if (contentType.includes('application/json')) {
+					const data = await res.json().catch(() => ({}));
+					if (!res.ok) {
+						botReply = (data.error as string) ?? config.window.customErrorMessage;
+					} else if (data.liveAgentActive) {
+						loading = false;
+						return;
+					} else {
+						botReply = data.output ?? data.message ?? botReply;
+					}
+					if (typeof botReply !== 'string') botReply = JSON.stringify(botReply);
+				} else if (res.ok && res.body) {
+					// Vercel AI SDK stream: consume and update UI as tokens arrive
+					let streamMessageIndex = -1;
+					for await (const uiMessage of readUIMessageStream({
+						stream: res.body as unknown as ReadableStream<import('ai').UIMessageChunk>
+					})) {
+						const text = (uiMessage.parts ?? [])
+							.filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+							.map((p) => p.text)
+							.join('');
+						if (streamMessageIndex === -1) {
+							addBotMessage(text);
+							streamMessageIndex = messages.length - 1;
+						} else {
+							messages = messages.map((m, i) =>
+								i === streamMessageIndex ? { ...m, content: text } : m
+							);
+						}
+						requestAnimationFrame(() => scrollToBottom());
+					}
+					if (streamMessageIndex === -1) addBotMessage(config.window.customErrorMessage);
 					loading = false;
 					return;
 				} else {
-					botReply = data.output ?? data.message ?? botReply;
+					botReply = config.window.customErrorMessage;
 				}
-				if (typeof botReply !== 'string') botReply = JSON.stringify(botReply);
 			} catch {
 				botReply = config.window.customErrorMessage;
 			}

@@ -1,8 +1,9 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { env } from '$env/dynamic/private';
+import { streamText } from 'ai';
 import { getSupabase, getSupabaseAdmin } from '$lib/supabase.server';
-import { chatWithLlm } from '$lib/chat-llm.server';
+import { getAISdkModel } from '$lib/ai-sdk-model.server';
 import { getConversationContextForLlm } from '$lib/conversation-context.server';
 import { getTriggerResultIfAny } from '$lib/trigger-webhook.server';
 import { extractContactFromMessage } from '$lib/extract-contact.server';
@@ -366,14 +367,32 @@ export const POST: RequestHandler = async (event) => {
 		}
 		const systemPrompt = parts.length > 0 ? parts.join('\n\n') : 'You are a helpful assistant.';
 
-		const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
-			{ role: 'system', content: systemPrompt },
-			...llmHistory
-		];
+		const modelMessages = llmHistory.map((m) => ({
+			role: m.role as 'user' | 'assistant' | 'system',
+			content: m.content
+		}));
 
-		let reply: string;
+		async function runStream(provider: string, model: string, key: string) {
+			const modelInstance = getAISdkModel(provider, model, key);
+			return streamText({
+				model: modelInstance,
+				system: systemPrompt,
+				messages: modelMessages,
+				maxOutputTokens: 1024,
+				onFinish: async ({ text }) => {
+					if (text) {
+						const { error: insertErr } = await supabase
+							.from('widget_conversation_messages')
+							.insert({ conversation_id: conv.id, role: 'assistant', content: text });
+						if (insertErr) console.error('Failed to persist assistant message:', insertErr);
+					}
+				}
+			});
+		}
+
 		try {
-			reply = await chatWithLlm(llmProvider, llmModel, apiKey, messages);
+			const result = await runStream(llmProvider, llmModel, apiKey);
+			return result.toUIMessageStreamResponse();
 		} catch (primaryErr) {
 			if (llmFallbackProvider && llmFallbackModel) {
 				const { data: fallbackKey } = await supabase.rpc('get_owner_llm_key_for_chat', {
@@ -382,27 +401,16 @@ export const POST: RequestHandler = async (event) => {
 				});
 				if (fallbackKey) {
 					try {
-						reply = await chatWithLlm(llmFallbackProvider, llmFallbackModel, fallbackKey, messages);
+						const result = await runStream(llmFallbackProvider, llmFallbackModel, fallbackKey);
+						return result.toUIMessageStreamResponse();
 					} catch {
-						reply = (primaryErr instanceof Error ? primaryErr.message : 'Sorry, I could not respond.') as string;
+						// fallthrough to error response
 					}
-				} else {
-					reply = (primaryErr instanceof Error ? primaryErr.message : 'Sorry, I could not respond.') as string;
 				}
-			} else {
-				reply = (primaryErr instanceof Error ? primaryErr.message : 'Sorry, I could not respond.') as string;
 			}
+			const reply = (primaryErr instanceof Error ? primaryErr.message : 'Sorry, I could not respond.') as string;
+			return json({ error: reply, output: reply }, { status: 500 });
 		}
-
-		const { error: insertErr } = await supabase
-			.from('widget_conversation_messages')
-			.insert({ conversation_id: conv.id, role: 'assistant', content: reply });
-		if (insertErr) {
-			console.error('Failed to persist assistant message:', insertErr);
-			// Still return the reply to the user
-		}
-
-		return json({ output: reply, message: reply });
 	} catch (e) {
 		const msg = e instanceof Error ? e.message : 'Chat failed';
 		console.error('POST /api/widgets/[id]/chat:', e);
