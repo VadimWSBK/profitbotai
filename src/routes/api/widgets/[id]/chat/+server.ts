@@ -204,34 +204,48 @@ export const POST: RequestHandler = async (event) => {
 					})
 				: null;
 
-		// When quote intent matches (built-in, no n8n), generate PDF and attach to contact; inject link for LLM
+		// When quote intent matches (built-in, no n8n), only generate PDF if we have name, email, and roof size
 		const quoteTriggerIds = ['quote', 'roof_quote'];
 		if (triggerResult && quoteTriggerIds.includes(triggerResult.triggerId.toLowerCase())) {
-			const adminSupabase = getSupabaseAdmin();
 			const contact = contactForPrompt ?? { name: null, email: null, phone: null, address: null };
-			const extracted = extractedContact.roofSize != null ? { roofSize: extractedContact.roofSize } : null;
-			const gen = await generateQuoteForConversation(
-				adminSupabase,
-				conv.id,
-				widgetId,
-				contact,
-				extracted
-			);
-			if (gen.signedUrl) {
-				const quoteLine = `A quote PDF has been generated. You MUST include this exact clickable link in your reply so the customer can download it now: [Download Quote](${gen.signedUrl}). In the same message, say they will also receive the quote by email, but give them the link above as a hyperlink in your response.`;
-				triggerResult = {
-					...triggerResult,
-					webhookResult: quoteLine + (triggerResult.webhookResult || '')
-				};
-			} else if (gen.error) {
-				triggerResult = { ...triggerResult, webhookResult: `(Quote PDF could not be generated: ${gen.error}. ${triggerResult.webhookResult || ''})` };
+			const hasName = !!(contact.name ?? extractedContact.name);
+			const hasEmail = !!(contact.email ?? extractedContact.email);
+			const hasRoofSize = extractedContact.roofSize != null && Number(extractedContact.roofSize) >= 0;
+
+			if (hasName && hasEmail && hasRoofSize) {
+				const adminSupabase = getSupabaseAdmin();
+				const extracted = { roofSize: Number(extractedContact.roofSize) };
+				const gen = await generateQuoteForConversation(
+					adminSupabase,
+					conv.id,
+					widgetId,
+					contact,
+					extracted
+				);
+				if (gen.signedUrl) {
+					const quoteLine = `A quote PDF has been generated. You MUST include this exact clickable link in your reply so the customer can download it now: [Download Quote](${gen.signedUrl}). In the same message, say they will also receive the quote by email, but give them the link above as a hyperlink in your response.`;
+					triggerResult = {
+						...triggerResult,
+						webhookResult: quoteLine + (triggerResult.webhookResult || '')
+					};
+				} else if (gen.error) {
+					triggerResult = { ...triggerResult, webhookResult: `(Quote PDF could not be generated: ${gen.error}. ${triggerResult.webhookResult || ''})` };
+				}
+			} else {
+				// Missing required info: tell the bot to ask for it (do not generate yet)
+				const missing: string[] = [];
+				if (!hasName) missing.push('name');
+				if (!hasEmail) missing.push('email');
+				if (!hasRoofSize) missing.push('roof size in square metres');
+				const instruction = `The user wants a quote but we need the following before we can generate it: ${missing.join(', ')}. Politely ask for only the missing information (e.g. "What's your name?", "What's your email?", "What's your roof size in square metres?"). Do not say the quote is being generated or promise a quote until we have name, email, and roof size.`;
+				triggerResult = { ...triggerResult, webhookResult: instruction };
 			}
 		}
 
 		const bot = (config.bot as Record<string, string> | undefined) ?? {};
 		const parts: string[] = [
 			'CRITICAL: Reply only with natural conversational text. Never output technical strings, commands, codes, or syntax (e.g. workflow_start, contacts_query, or similar). Speak like a human to a human. Your entire reply must be readable by the customer with no internal jargon.',
-			'Quote generation is triggered automatically when the user asks for a quote; you do not trigger it—just confirm naturally.'
+			'For quotes: we only generate a quote once we have the customer\'s name, email, and roof size (square metres). If the user asks for a quote before we have all three, politely ask for the missing piece(s) only. Do not say the quote is being generated or will arrive by email until we actually have name, email, and roof size.'
 		];
 		if (bot.role?.trim()) parts.push(bot.role.trim());
 		if (bot.tone?.trim()) parts.push(`Tone: ${bot.tone.trim()}`);
@@ -309,9 +323,12 @@ export const POST: RequestHandler = async (event) => {
 		// If we got data from a webhook trigger or built-in quote, tell the model to use it in the reply
 		if (triggerResult?.webhookResult) {
 			const isQuote = quoteTriggerIds.includes(triggerResult.triggerId.toLowerCase());
-			const instruction = isQuote
+			const quoteHasLink = isQuote && triggerResult.webhookResult.includes('[Download Quote]');
+			const instruction = quoteHasLink
 				? `A quote was just generated. In your reply you MUST: (1) Confirm the quote is ready, (2) Say they will receive it by email, AND (3) Include the download link from the data below as a clickable markdown link [Download Quote](url) in the same message. Do not skip the link.`
-				: `The following information was retrieved from an external system (trigger: ${triggerResult.triggerName}). Use it to answer the customer's question accurately and naturally. Do not say "according to our system" unless appropriate.`;
+				: isQuote
+					? `The user asked for a quote but we need more information first. Follow the instruction below—ask only for what is missing. Do not say the quote is being generated until we have name, email, and roof size (square metres).`
+					: `The following information was retrieved from an external system (trigger: ${triggerResult.triggerName}). Use it to answer the customer's question accurately and naturally. Do not say "according to our system" unless appropriate.`;
 			parts.push(`${instruction}\n\nData to use in your reply:\n${triggerResult.webhookResult}`);
 		}
 		const systemPrompt = parts.length > 0 ? parts.join('\n\n') : 'You are a helpful assistant.';
