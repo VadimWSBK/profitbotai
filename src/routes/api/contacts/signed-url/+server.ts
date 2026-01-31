@@ -15,8 +15,10 @@ export const POST: RequestHandler = async (event) => {
 	} catch {
 		return json({ error: 'Invalid JSON body' }, { status: 400 });
 	}
-	const filePath = typeof body?.filePath === 'string' ? body.filePath.trim() : '';
+	let filePath = typeof body?.filePath === 'string' ? body.filePath.trim() : '';
 	if (!filePath) return json({ error: 'Missing filePath' }, { status: 400 });
+	// Accept full Key (roof_quotes/path) or path within bucket
+	if (filePath.startsWith('roof_quotes/')) filePath = filePath.slice(12);
 
 	const expiresIn = typeof body?.expiresIn === 'number' ? body.expiresIn : 3600; // 1 hour default
 
