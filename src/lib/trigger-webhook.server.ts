@@ -61,6 +61,8 @@ export async function getTriggerResultIfAny(
 
 	const systemPrompt = `You are a classifier. Given the conversation so far and the user's latest message, respond with ONLY the trigger id (the part before the colon) if the user's intent clearly matches that trigger — including when they are completing a multi-turn flow (e.g. providing email and roof size after being asked for a quote). Otherwise respond with exactly: none
 
+Important: For roof quote, cost estimate, or price by area (sqm) intents, always respond with exactly: quote (use the built-in quote trigger id "quote", not another trigger). Quote generation is built-in and does not use a webhook.
+
 Triggers:
 ${triggerList}
 

@@ -6,6 +6,7 @@ import { getConversationContextForLlm } from '$lib/conversation-context.server';
 import { getTriggerResultIfAny } from '$lib/trigger-webhook.server';
 import { extractContactFromMessage } from '$lib/extract-contact.server';
 import { generateQuoteForConversation } from '$lib/quote-pdf.server';
+import { sendQuoteEmail } from '$lib/send-quote-email.server';
 import type { WebhookTrigger } from '$lib/widget-config';
 
 /**
@@ -186,6 +187,7 @@ export const POST: RequestHandler = async (event) => {
 			enabled: true
 		};
 		const triggersForClassification = [builtInQuoteTrigger, ...webhookTriggers];
+		let quoteEmailSent: boolean | null = null; // set when we generate + send quote
 		let triggerResult =
 			apiKey && triggersForClassification.length > 0
 				? await getTriggerResultIfAny(triggersForClassification, message, {
@@ -204,9 +206,15 @@ export const POST: RequestHandler = async (event) => {
 					})
 				: null;
 
-		// When quote intent matches (built-in, no n8n), only generate PDF if we have name, email, and roof size
-		const quoteTriggerIds = ['quote', 'roof_quote'];
-		if (triggerResult && quoteTriggerIds.includes(triggerResult.triggerId.toLowerCase())) {
+		// When quote intent matches (built-in or a quote-related webhook trigger), generate PDF if we have name, email, and roof size
+		const quoteTriggerIds = new Set(['quote', 'roof_quote']);
+		const isQuoteIntent =
+			triggerResult &&
+			(quoteTriggerIds.has(triggerResult.triggerId.toLowerCase()) ||
+				/quote|roof.*quote|cost.*(area|sqm|square\s*metre)/i.test(
+					triggerResult.triggerId + ' ' + (triggerResult.triggerName ?? '')
+				));
+		if (isQuoteIntent) {
 			const contact = contactForPrompt ?? { name: null, email: null, phone: null, address: null };
 			const hasName = !!(contact.name ?? extractedContact.name);
 			const hasEmail = !!(contact.email ?? extractedContact.email);
@@ -223,7 +231,21 @@ export const POST: RequestHandler = async (event) => {
 					extracted
 				);
 				if (gen.signedUrl) {
-					const quoteLine = `A quote PDF has been generated. You MUST include this exact clickable link in your reply so the customer can download it now: [Download Quote](${gen.signedUrl}). In the same message, say they will also receive the quote by email, but give them the link above as a hyperlink in your response.`;
+					// Send quote via widget owner's mailing integration (Resend, etc.) when connected
+					const toEmail = (contact.email ?? extractedContact.email) ?? '';
+					const emailResult = await sendQuoteEmail(adminSupabase, ownerId, {
+						toEmail,
+						quoteDownloadUrl: gen.signedUrl,
+						customerName: contact.name ?? extractedContact.name ?? null
+					});
+					quoteEmailSent = emailResult.sent;
+					if (!quoteEmailSent && emailResult.error) {
+						console.error('Quote email not sent:', emailResult.error);
+					}
+					const emailInstruction = quoteEmailSent
+						? ' In the same message, say they will also receive the quote by email, but give them the link above as a hyperlink in your response.'
+						: ' Give them the link above as a hyperlink in your response. Do not say they will receive it by email.';
+					const quoteLine = `A quote PDF has been generated. You MUST include this exact clickable link in your reply so the customer can download it now: [Download Quote](${gen.signedUrl}).${emailInstruction}`;
 					triggerResult = {
 						...triggerResult,
 						webhookResult: quoteLine + (triggerResult.webhookResult || '')
@@ -322,10 +344,10 @@ export const POST: RequestHandler = async (event) => {
 		}
 		// If we got data from a webhook trigger or built-in quote, tell the model to use it in the reply
 		if (triggerResult?.webhookResult) {
-			const isQuote = quoteTriggerIds.includes(triggerResult.triggerId.toLowerCase());
+			const isQuote = quoteTriggerIds.has(triggerResult.triggerId.toLowerCase());
 			const quoteHasLink = isQuote && triggerResult.webhookResult.includes('[Download Quote]');
 			const instruction = quoteHasLink
-				? `A quote was just generated. In your reply you MUST: (1) Confirm the quote is ready, (2) Say they will receive it by email, AND (3) Include the download link from the data below as a clickable markdown link [Download Quote](url) in the same message. Do not skip the link.`
+				? `A quote was just generated. In your reply you MUST: (1) Confirm the quote is ready${quoteEmailSent === true ? ', (2) Say they will receive it by email, AND (3)' : ', (2)'} Include the download link from the data below as a clickable markdown link [Download Quote](url) in the same message. Do not skip the link.`
 				: isQuote
 					? `The user asked for a quote but we need more information first. Follow the instruction below—ask only for what is missing. Do not say the quote is being generated until we have name, email, and roof size (square metres).`
 					: `The following information was retrieved from an external system (trigger: ${triggerResult.triggerName}). Use it to answer the customer's question accurately and naturally. Do not say "according to our system" unless appropriate.`;

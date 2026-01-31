@@ -577,7 +577,8 @@
 
 						<div class="mt-6 pt-6 border-t border-gray-200">
 							<h4 class="text-sm font-semibold text-gray-900 mb-1">Webhook triggers</h4>
-							<p class="text-xs text-gray-500 mb-3">When the AI recognises the user&apos;s intent, it calls the matching N8N webhook and uses the result in the reply (e.g. roof quote, order status).</p>
+							<p class="text-xs text-gray-500 mb-1">When the AI recognises the user&apos;s intent, it calls the matching webhook and uses the result in the reply (e.g. order status).</p>
+							<p class="text-xs text-amber-700 bg-amber-50 rounded-lg px-2 py-1.5 mb-3"><strong>Quote:</strong> Quote generation is built-in—no webhook needed. When a visitor asks for a quote, the bot collects name, email and roof size (sqm) then generates the PDF automatically. Do not add a separate webhook trigger for quotes.</p>
 							<div class="space-y-4">
 								{#each (config.webhookTriggers ?? []) as trigger, i}
 									<div class="border border-gray-200 rounded-lg p-4 bg-gray-50/50 space-y-3">
