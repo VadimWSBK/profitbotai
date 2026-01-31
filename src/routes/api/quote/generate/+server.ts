@@ -2,9 +2,8 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSupabaseAdmin } from '$lib/supabase.server';
 import {
-	buildQuoteHtml,
 	computeQuoteFromSettings,
-	generatePdfFromHtml,
+	generatePdfFromDocDefinition,
 	type QuoteSettings
 } from '$lib/quote-pdf.server';
 
@@ -135,18 +134,13 @@ export const POST: RequestHandler = async (event) => {
 		}
 	};
 
-	const html = buildQuoteHtml(settings, payload);
-
 	let pdfBuffer: Buffer;
 	try {
-		pdfBuffer = await generatePdfFromHtml(html);
+		pdfBuffer = await generatePdfFromDocDefinition(settings, payload);
 	} catch (e) {
 		const msg = e instanceof Error ? e.message : 'PDF generation failed';
-		console.error('generatePdfFromHtml:', e);
-		return json({
-			error: msg,
-			hint: 'Set PUPPETEER_EXECUTABLE_PATH to your Chrome/Chromium binary (e.g. /Applications/Google Chrome.app/Contents/MacOS/Google Chrome on macOS).'
-		}, { status: 500 });
+		console.error('generatePdfFromDocDefinition:', e);
+		return json({ error: msg }, { status: 500 });
 	}
 
 	const customerName = (customer.name || customer.email || 'Customer').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '');

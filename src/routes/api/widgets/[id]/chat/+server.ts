@@ -1,6 +1,5 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { env } from '$env/dynamic/private';
 import { streamText } from 'ai';
 import { getSupabase, getSupabaseAdmin } from '$lib/supabase.server';
 import { getAISdkModel } from '$lib/ai-sdk-model.server';
@@ -208,6 +207,26 @@ export const POST: RequestHandler = async (event) => {
 					})
 				: null;
 
+		// Fallback: if classifier missed it but message clearly requests a quote and we have all required fields
+		const hasQuoteKeyword = /quote|cost|price|estimate|sqm|m2|m²|square\s*metre/i.test(message);
+		const fallbackHasRoofSize = extractedContact.roofSize != null;
+		const fallbackHasEmail = !!(contactForPrompt?.email ?? extractedContact.email);
+		const fallbackHasName = !!(contactForPrompt?.name ?? extractedContact.name);
+		if (
+			!triggerResult &&
+			hasQuoteKeyword &&
+			fallbackHasRoofSize &&
+			fallbackHasEmail &&
+			fallbackHasName
+		) {
+			triggerResult = {
+				triggerId: 'quote',
+				triggerName: 'Quote',
+				webhookResult: ''
+			};
+			console.log('[chat/quote] fallback: treating as quote intent (message had quote+sqm+contact)');
+		}
+
 		if (!triggerResult) {
 			console.log('[chat/quote] no trigger matched for message (intent classification returned none)');
 		} else {
@@ -259,13 +278,11 @@ export const POST: RequestHandler = async (event) => {
 					gen = { error: e instanceof Error ? e.message : 'PDF generation failed' };
 				}
 				if (gen.signedUrl && gen.storagePath) {
-					// Append PDF to contact (Supabase does not persist custom upload metadata, so storage trigger may not run)
-					const baseUrl = (env.SUPABASE_URL ?? '').replace(/\/$/, '');
-					const publicQuoteUrl = baseUrl ? `${baseUrl}/storage/v1/object/public/roof_quotes/${gen.storagePath}` : gen.signedUrl;
+					// Storage trigger will append path to contact on upload; explicit call in case trigger misses metadata
 					const { error: appendErr } = await adminSupabase.rpc('append_pdf_quote_to_contact', {
 						p_conversation_id: conv.id,
 						p_widget_id: widgetId,
-						p_pdf_url: publicQuoteUrl
+						p_pdf_url: gen.storagePath
 					});
 					if (appendErr) console.error('append_pdf_quote_to_contact:', appendErr);
 

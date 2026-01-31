@@ -61,9 +61,20 @@ export async function extractContactFromMessage(
 
 	// Parse JSON from response (may be wrapped in markdown code block)
 	const jsonMatch = /\{[\s\S]*\}/.exec(raw);
-	if (!jsonMatch) return {};
+	let parsed: Record<string, unknown> = {};
+	if (jsonMatch) {
+		try {
+			parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+		} catch {
+			// ignore
+		}
+	}
+
+	// Regex fallback for roof size when LLM misses it (e.g. "200 sqm", "200m2", "200 m²")
+	const roofMatch = userMessage.match(/(\d+(?:\.\d+)?)\s*(?:sqm|m2|m²|square\s*metre|sq\.?\s*m\.?)/i);
+	const roofFromRegex = roofMatch ? Number.parseFloat(roofMatch[1]) : undefined;
+
 	try {
-		const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
 		const out: ExtractedContact = {};
 		if (typeof parsed.name === 'string' && parsed.name.trim())
 			out.name = parsed.name.trim();
@@ -84,6 +95,8 @@ export async function extractContactFromMessage(
 				if (numMatch) out.roofSize = Number.parseFloat(numMatch[1]);
 			}
 		}
+		// Use regex fallback when LLM didn't extract roof size
+		if (out.roofSize == null && roofFromRegex != null && roofFromRegex >= 0) out.roofSize = roofFromRegex;
 		return out;
 	} catch {
 		return {};

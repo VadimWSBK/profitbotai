@@ -171,17 +171,19 @@
 						for await (const uiMessage of readUIMessageStream({
 							stream: res.body as unknown as ReadableStream<import('ai').UIMessageChunk>
 						})) {
-							const text = (uiMessage.parts ?? [])
+							const fromParts = (uiMessage.parts ?? [])
 								.filter((p): p is { type: 'text'; text: string } => p.type === 'text')
 								.map((p) => p.text)
 								.join('');
+							const msgContent = (uiMessage as unknown as { content?: string }).content;
+							const content = typeof msgContent === 'string' ? msgContent : fromParts ?? '';
 							if (streamMessageIndex === -1) {
-								// Create message bubble on first chunk with content so user sees typing then streaming text
-								addBotMessage(text);
+								// Create message bubble on first chunk so user sees typing then streaming text (even if empty at first)
+								addBotMessage(content);
 								streamMessageIndex = messages.length - 1;
 							} else {
 								messages = messages.map((m, i) =>
-									i === streamMessageIndex ? { ...m, content: text } : m
+									i === streamMessageIndex ? { ...m, content } : m
 								);
 							}
 							requestAnimationFrame(() => scrollToBottom());
@@ -189,7 +191,7 @@
 					} finally {
 						loading = false;
 					}
-					// If we never got any text from the stream, the server may still be generating (e.g. quote + LLM) and will persist in onFinish. Wait and retry refetch before showing error to avoid flashing "message not sent" then the real reply.
+					// If we never got any text from the stream (e.g. Vercel AI SDK stream format or server still generating quote+LLM), the server will persist in onFinish. Poll for the message and only show error after a long timeout so we never flash "message not sent" before the real reply.
 					if (streamMessageIndex === -1) {
 						const refetchMessages = async (): Promise<Message[]> => {
 							const refetch = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
@@ -201,9 +203,12 @@
 								avatarUrl: m.avatarUrl
 							}));
 						};
-						const delays = [2000, 2000, 2500]; // wait 2s, refetch, wait 2s, refetch, wait 2.5s, refetch — then show error
-						for (let i = 0; i < delays.length; i++) {
-							await new Promise((r) => setTimeout(r, delays[i]));
+						// Poll every 1.5s for up to 20s so we pick up the reply as soon as it's persisted (quote+LLM can take 10–15s)
+						const pollIntervalMs = 1500;
+						const totalWaitMs = 20000;
+						const maxAttempts = Math.ceil(totalWaitMs / pollIntervalMs);
+						for (let attempt = 0; attempt < maxAttempts; attempt++) {
+							await new Promise((r) => setTimeout(r, pollIntervalMs));
 							try {
 								const serverMessages = await refetchMessages();
 								if (serverMessages.length > messages.length || (serverMessages.length > 0 && serverMessages[serverMessages.length - 1].role === 'bot')) {

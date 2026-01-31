@@ -1,8 +1,9 @@
 /**
- * Quote PDF: generate PDF from HTML via Puppeteer. Server-only.
+ * Quote PDF: generate PDF via pdfmake (pure JS, no Chromium). Server-only.
  */
 
-import { buildQuoteHtml, computeQuoteFromSettings } from '$lib/quote-html';
+import { computeQuoteFromSettings } from '$lib/quote-html';
+import { buildQuoteDocDefinition } from '$lib/quote-pdfmake.server';
 import type { QuoteSettings } from '$lib/quote-html';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -82,15 +83,24 @@ export async function generateQuoteForConversation(
 			total: computed.total
 		}
 	};
-	const html = buildQuoteHtml(settings, payload);
 
 	let pdfBuffer: Buffer;
 	try {
-		pdfBuffer = await generatePdfFromHtml(html);
+		pdfBuffer = await generatePdfFromDocDefinition(settings, payload);
 	} catch (e) {
 		const errMsg = e instanceof Error ? e.message : 'PDF generation failed';
-		console.error('[quote-pdf] generatePdfFromHtml failed:', e);
+		console.error('[quote-pdf] generatePdfFromDocDefinition failed:', e);
 		return { error: errMsg };
+	}
+
+	// Ensure roof_quotes bucket exists (private for secure PDF storage)
+	const { data: buckets } = await admin.storage.listBuckets();
+	if (!buckets?.some((b) => b.name === BUCKET)) {
+		const { error: createErr } = await admin.storage.createBucket(BUCKET, { public: false });
+		if (createErr) {
+			console.error('[quote-pdf] Failed to create bucket:', createErr);
+			return { error: `Storage bucket ${BUCKET} could not be created: ${createErr.message}` };
+		}
 	}
 
 	const customerName = (customer.name || customer.email || 'Customer').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '');
@@ -111,37 +121,38 @@ export async function generateQuoteForConversation(
 }
 
 /**
- * Generate PDF buffer from HTML. Requires Chromium (PUPPETEER_EXECUTABLE_PATH or system Chrome).
+ * Generate PDF buffer via pdfmake (pure JS, no Chromium).
+ * Uses Roboto fonts shipped with pdfmake package.
  */
+export async function generatePdfFromDocDefinition(
+	settings: QuoteSettings,
+	payload: Parameters<typeof buildQuoteDocDefinition>[1]
+): Promise<Buffer> {
+	const pdfmake = (await import('pdfmake')).default;
+	const pathMod = await import('node:path');
+	const path = pathMod.default ?? pathMod;
+
+	// Roboto fonts shipped with pdfmake
+	const fontsDir = path.join(process.cwd(), 'node_modules', 'pdfmake', 'fonts');
+	const fonts = {
+		Roboto: {
+			normal: path.join(fontsDir, 'Roboto/Roboto-Regular.ttf'),
+			bold: path.join(fontsDir, 'Roboto/Roboto-Medium.ttf'),
+			italics: path.join(fontsDir, 'Roboto/Roboto-Italic.ttf'),
+			bolditalics: path.join(fontsDir, 'Roboto/Roboto-MediumItalic.ttf')
+		}
+	};
+	pdfmake.setFonts(fonts);
+
+	const docDefinition = buildQuoteDocDefinition(settings, payload);
+	const pdfDoc = pdfmake.createPdf(docDefinition);
+	const buffer = await pdfDoc.getBuffer();
+	return Buffer.from(buffer);
+}
+
+/** @deprecated Use generatePdfFromDocDefinition. Kept for backwards compatibility. */
 export async function generatePdfFromHtml(html: string): Promise<Buffer> {
-	const puppeteer = await import('puppeteer-core');
-	const env = await import('$env/dynamic/private').then((m) => m.env);
-	const executablePath =
-		env.PUPPETEER_EXECUTABLE_PATH ||
-		(process.platform === 'darwin' ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : undefined);
-
-	if (!executablePath) {
-		throw new Error(
-			'PDF generation requires Chromium. Set PUPPETEER_EXECUTABLE_PATH to your Chrome/Chromium binary, or install Puppeteer with Chromium.'
-		);
-	}
-
-	const browser = await puppeteer.default.launch({
-		headless: true,
-		executablePath,
-		args: ['--no-sandbox', '--disable-setuid-sandbox']
-	});
-
-	try {
-		const page = await browser.newPage();
-		await page.setContent(html, { waitUntil: 'networkidle0' });
-		const pdfBuffer = await page.pdf({
-			format: 'A4',
-			printBackground: true,
-			margin: { top: '10mm', right: '10mm', bottom: '10mm', left: '10mm' }
-		});
-		return Buffer.from(pdfBuffer);
-	} finally {
-		await browser.close();
-	}
+	throw new Error(
+		'HTML-to-PDF (Puppeteer) is deprecated. PDF generation now uses pdfmake (no Chromium). Use the quote flow.'
+	);
 }

@@ -1,10 +1,11 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getSupabaseClient } from '$lib/supabase.server';
+import { getSupabaseClient, getSupabaseAdmin } from '$lib/supabase.server';
 
 /**
  * GET /api/contacts/[id]
  * Single contact with full details. RLS ensures user can only read contacts for their widgets.
+ * pdf_quotes may store paths (roof_quotes bucket is private); resolves to signed URLs for display.
  */
 export const GET: RequestHandler = async (event) => {
 	const user = event.locals.user;
@@ -54,6 +55,29 @@ export const GET: RequestHandler = async (event) => {
 		widgets: { name: string } | { name: string }[] | null;
 	};
 
+	// Resolve pdf_quotes paths to signed URLs (roof_quotes bucket is private)
+	let pdfQuotes: Array<{ url: string; created_at?: string } | string> = [];
+	if (Array.isArray(r.pdf_quotes)) {
+		const admin = getSupabaseAdmin();
+		for (const q of r.pdf_quotes) {
+			const stored = typeof q === 'object' && q !== null && 'url' in q ? (q as { url: string }).url : String(q);
+			const filePath = stored.match(/roof_quotes\/(.+)$/)?.[1] ?? stored.trim();
+			if (!filePath || filePath.startsWith('http')) {
+				pdfQuotes.push(typeof q === 'object' ? (q as { url: string }) : { url: stored, created_at: undefined });
+				continue;
+			}
+			const { data } = await admin.storage.from('roof_quotes').createSignedUrl(filePath, 3600);
+			if (data?.signedUrl) {
+				pdfQuotes.push({
+					url: data.signedUrl,
+					created_at: typeof q === 'object' && q !== null && 'created_at' in q ? (q as { created_at?: string }).created_at : undefined
+				});
+			} else {
+				pdfQuotes.push(typeof q === 'object' ? (q as { url: string }) : { url: stored, created_at: undefined });
+			}
+		}
+	}
+
 	const contact = {
 		id: r.id,
 		conversationId: r.conversation_id,
@@ -67,7 +91,7 @@ export const GET: RequestHandler = async (event) => {
 		email: r.email ?? null,
 		phone: r.phone ?? null,
 		address: r.address ?? null,
-		pdfQuotes: Array.isArray(r.pdf_quotes) ? r.pdf_quotes : [],
+		pdfQuotes,
 		createdAt: r.created_at,
 		updatedAt: r.updated_at
 	};
