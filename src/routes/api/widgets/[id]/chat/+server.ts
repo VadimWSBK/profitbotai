@@ -4,6 +4,7 @@ import { getSupabase, getSupabaseAdmin } from '$lib/supabase.server';
 import { chatWithLlm } from '$lib/chat-llm.server';
 import { getConversationContextForLlm } from '$lib/conversation-context.server';
 import { getTriggerResultIfAny } from '$lib/trigger-webhook.server';
+import { extractContactFromMessage } from '$lib/extract-contact.server';
 import type { WebhookTrigger } from '$lib/widget-config';
 
 /**
@@ -135,19 +136,56 @@ export const POST: RequestHandler = async (event) => {
 			.eq('conversation_id', conv.id)
 			.maybeSingle();
 
-		// If widget has webhook triggers, classify intent and call matching webhook (e.g. n8n)
+		// Run in parallel: webhook triggers (if any) and contact extraction
 		const webhookTriggers = (config.webhookTriggers as WebhookTrigger[] | undefined) ?? [];
-		let triggerResult: Awaited<ReturnType<typeof getTriggerResultIfAny>> = null;
-		if (webhookTriggers.length > 0 && apiKey) {
-			triggerResult = await getTriggerResultIfAny(webhookTriggers, message, {
+		const [triggerResult, extractedContact] = await Promise.all([
+			webhookTriggers.length > 0 && apiKey
+				? getTriggerResultIfAny(webhookTriggers, message, {
+						llmProvider,
+						llmModel,
+						apiKey,
+						sessionId,
+						conversationId: conv.id,
+						widgetId,
+						conversationContext: llmHistory
+					})
+				: Promise.resolve(null),
+			extractContactFromMessage(message, {
 				llmProvider,
 				llmModel,
 				apiKey,
-				sessionId,
-				conversationId: conv.id,
-				widgetId
-			});
+				conversationContext: llmHistory
+			})
+		]);
+
+		// Update contact if we extracted name, email, phone, or address from the message
+		if (
+			Object.keys(extractedContact).length > 0 &&
+			(extractedContact.name || extractedContact.email || extractedContact.phone || extractedContact.address)
+		) {
+			const updates: Record<string, string> = {};
+			if (extractedContact.name) updates.name = extractedContact.name;
+			if (extractedContact.email) updates.email = extractedContact.email;
+			if (extractedContact.phone) updates.phone = extractedContact.phone;
+			if (extractedContact.address) updates.address = extractedContact.address;
+			const { error: contactErr } = await supabase
+				.from('contacts')
+				.update(updates)
+				.eq('conversation_id', conv.id)
+				.eq('widget_id', widgetId);
+			if (contactErr) console.error('contact update from extraction:', contactErr);
 		}
+
+		// Merge extracted fields into contact for the system prompt (so bot sees latest immediately)
+		const contactForPrompt = contact
+			? {
+					...contact,
+					...(extractedContact.name && { name: extractedContact.name }),
+					...(extractedContact.email && { email: extractedContact.email }),
+					...(extractedContact.phone && { phone: extractedContact.phone }),
+					...(extractedContact.address && { address: extractedContact.address })
+				}
+			: null;
 
 		const bot = (config.bot as Record<string, string> | undefined) ?? {};
 		const parts: string[] = [];
@@ -155,17 +193,17 @@ export const POST: RequestHandler = async (event) => {
 		if (bot.tone?.trim()) parts.push(`Tone: ${bot.tone.trim()}`);
 		if (bot.instructions?.trim()) parts.push(bot.instructions.trim());
 		// Include stored contact info so the bot can reference it and share PDF quote links when asked
-		if (contact && (contact.name || contact.email || contact.phone || contact.address || (Array.isArray(contact.pdf_quotes) && contact.pdf_quotes.length > 0))) {
+		if (contactForPrompt && (contactForPrompt.name || contactForPrompt.email || contactForPrompt.phone || contactForPrompt.address || (Array.isArray(contactForPrompt.pdf_quotes) && contactForPrompt.pdf_quotes.length > 0))) {
 			const contactLines: string[] = ['Known contact info:'];
-			if (contact.name) contactLines.push(`- Name: ${contact.name}`);
-			if (contact.email) contactLines.push(`- Email: ${contact.email}`);
-			if (contact.phone) contactLines.push(`- Phone: ${contact.phone}`);
-			if (contact.address) contactLines.push(`- Address: ${contact.address}`);
-			if (Array.isArray(contact.pdf_quotes) && contact.pdf_quotes.length > 0) {
+			if (contactForPrompt.name) contactLines.push(`- Name: ${contactForPrompt.name}`);
+			if (contactForPrompt.email) contactLines.push(`- Email: ${contactForPrompt.email}`);
+			if (contactForPrompt.phone) contactLines.push(`- Phone: ${contactForPrompt.phone}`);
+			if (contactForPrompt.address) contactLines.push(`- Address: ${contactForPrompt.address}`);
+			if (Array.isArray(contactForPrompt.pdf_quotes) && contactForPrompt.pdf_quotes.length > 0) {
 				// Generate signed URLs for private PDF quotes (valid for 1 hour)
 				const adminSupabase = getSupabaseAdmin();
 				const signedUrls: string[] = [];
-				for (const q of contact.pdf_quotes) {
+				for (const q of contactForPrompt.pdf_quotes) {
 					const stored = typeof q === 'object' && q !== null && 'url' in q ? (q as { url: string }).url : String(q);
 					// Support both: full URL (extract path) or just filename/path
 					const filePath = stored.match(/roof_quotes\/(.+)$/)?.[1] ?? stored.trim();

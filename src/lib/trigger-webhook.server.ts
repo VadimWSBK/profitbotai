@@ -13,9 +13,13 @@ export type TriggerResult = {
 	webhookResult: string;
 };
 
+export type LlmTurn = { role: 'user' | 'assistant'; content: string };
+
 /**
  * Classify user message against enabled triggers (one LLM call), then if a trigger matches,
  * POST to its webhook and return the result. Used by the chat endpoint before the main LLM reply.
+ * Pass conversationContext so multi-turn flows are recognized (e.g. user provides email+roof size
+ * after bot asked for them — the current message alone may not match, but with context it does).
  */
 export async function getTriggerResultIfAny(
 	triggers: WebhookTrigger[],
@@ -27,6 +31,8 @@ export async function getTriggerResultIfAny(
 		sessionId: string;
 		conversationId: string;
 		widgetId: string;
+		/** Recent conversation turns before this message — helps classify multi-turn intents (e.g. quote flow). */
+		conversationContext?: LlmTurn[];
 	}
 ): Promise<TriggerResult | null> {
 	const enabled = triggers.filter((t) => t.enabled && t.webhookUrl?.trim() && t.id?.trim());
@@ -36,16 +42,27 @@ export async function getTriggerResultIfAny(
 		.map((t) => `- ${t.id}: ${t.description}`)
 		.join('\n');
 
-	const systemPrompt = `You are a classifier. Given the user message and the list of triggers below, respond with ONLY the trigger id (the part before the colon) if the user's intent clearly matches that trigger. Otherwise respond with exactly: none
+	const systemPrompt = `You are a classifier. Given the conversation so far and the user's latest message, respond with ONLY the trigger id (the part before the colon) if the user's intent clearly matches that trigger — including when they are completing a multi-turn flow (e.g. providing email and roof size after being asked for a quote). Otherwise respond with exactly: none
 
 Triggers:
 ${triggerList}
 
 Reply with only one word: the trigger id or "none". No explanation.`;
 
+	const contextLines =
+		options.conversationContext && options.conversationContext.length > 0
+			? options.conversationContext
+					.map((t) => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`)
+					.join('\n')
+			: '';
+	const userPrompt =
+		contextLines.length > 0
+			? `Conversation so far:\n${contextLines}\n\nUser's latest message: ${userMessage}`
+			: `User message: ${userMessage}`;
+
 	const messages = [
 		{ role: 'system' as const, content: systemPrompt },
-		{ role: 'user' as const, content: `User message: ${userMessage}` }
+		{ role: 'user' as const, content: userPrompt }
 	];
 
 	let raw: string;

@@ -1,4 +1,34 @@
-# Supabase migrations
+# Supabase migrations & Edge Functions
+
+## Edge Function: create-signed-url
+
+Creates signed URLs for private PDFs in the `roof_quotes` bucket. Used by n8n to get shareable links for emails/chat.
+
+### Deploy
+
+```bash
+# Link to your project (first time only)
+supabase link --project-ref ghbytxmsklcizlcnxwfq
+
+# Set secret (use same value as SIGNED_URL_API_KEY in your app)
+supabase secrets set SIGNED_URL_SECRET=your-secret-key-here
+
+# Deploy (--no-verify-jwt so n8n can call without Supabase auth)
+supabase functions deploy create-signed-url --no-verify-jwt
+```
+
+### Call from n8n
+
+| Setting | Value |
+|---------|-------|
+| **Method** | POST |
+| **URL** | `https://ghbytxmsklcizlcnxwfq.supabase.co/functions/v1/create-signed-url` |
+| **Headers** | `X-API-Key`: your SIGNED_URL_SECRET |
+| **Body** | `{ "filePath": "{{ $json.Key }}", "expiresIn": 86400 }` |
+
+If `SIGNED_URL_SECRET` is not set, the function allows unauthenticated calls (less secure).
+
+---
 
 ## Tables
 
