@@ -51,7 +51,8 @@ export async function getTriggerResultIfAny(
 		extracted?: TriggerExtracted | null;
 	}
 ): Promise<TriggerResult | null> {
-	const enabled = triggers.filter((t) => t.enabled && t.webhookUrl?.trim() && t.id?.trim());
+	// Include triggers with or without webhookUrl so built-in "quote" can be classified without n8n
+	const enabled = triggers.filter((t) => t.enabled && t.id?.trim());
 	if (enabled.length === 0) return null;
 
 	const triggerList = enabled
@@ -130,6 +131,15 @@ Reply with only one word: the trigger id or "none". No explanation.`;
 		bodyPayload.body = { customer: customer ?? {}, project: project ?? {} };
 	}
 	const body = bodyPayload;
+
+	// Built-in triggers (e.g. quote) have no webhookUrl — return result without calling n8n
+	if (!trigger.webhookUrl?.trim()) {
+		return {
+			triggerId: trigger.id,
+			triggerName: trigger.name,
+			webhookResult: ''
+		};
+	}
 
 	let res: Response;
 	try {

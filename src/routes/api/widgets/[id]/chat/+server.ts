@@ -5,6 +5,7 @@ import { chatWithLlm } from '$lib/chat-llm.server';
 import { getConversationContextForLlm } from '$lib/conversation-context.server';
 import { getTriggerResultIfAny } from '$lib/trigger-webhook.server';
 import { extractContactFromMessage } from '$lib/extract-contact.server';
+import { generateQuoteForConversation } from '$lib/quote-pdf.server';
 import type { WebhookTrigger } from '$lib/widget-config';
 
 /**
@@ -175,11 +176,19 @@ export const POST: RequestHandler = async (event) => {
 				}
 			: null;
 
-		// 2. Run webhook triggers (with full contact + roof size for quote workflows)
+		// 2. Run intent classification: built-in quote (no n8n) + optional webhook triggers
 		const webhookTriggers = (config.webhookTriggers as WebhookTrigger[] | undefined) ?? [];
-		const triggerResult =
-			webhookTriggers.length > 0 && apiKey
-				? await getTriggerResultIfAny(webhookTriggers, message, {
+		const builtInQuoteTrigger: WebhookTrigger = {
+			id: 'quote',
+			name: 'Quote',
+			description: 'User asks for a roof quote, cost estimate, or price by area (e.g. sqm).',
+			webhookUrl: '',
+			enabled: true
+		};
+		const triggersForClassification = [builtInQuoteTrigger, ...webhookTriggers];
+		let triggerResult =
+			apiKey && triggersForClassification.length > 0
+				? await getTriggerResultIfAny(triggersForClassification, message, {
 						llmProvider,
 						llmModel,
 						apiKey,
@@ -195,10 +204,34 @@ export const POST: RequestHandler = async (event) => {
 					})
 				: null;
 
+		// When quote intent matches (built-in, no n8n), generate PDF and attach to contact; inject link for LLM
+		const quoteTriggerIds = ['quote', 'roof_quote'];
+		if (triggerResult && quoteTriggerIds.includes(triggerResult.triggerId.toLowerCase())) {
+			const adminSupabase = getSupabaseAdmin();
+			const contact = contactForPrompt ?? { name: null, email: null, phone: null, address: null };
+			const extracted = extractedContact.roofSize != null ? { roofSize: extractedContact.roofSize } : null;
+			const gen = await generateQuoteForConversation(
+				adminSupabase,
+				conv.id,
+				widgetId,
+				contact,
+				extracted
+			);
+			if (gen.signedUrl) {
+				const quoteLine = `A quote PDF has been generated and attached to this contact. Share this link with the customer: [Download Quote](${gen.signedUrl}). `;
+				triggerResult = {
+					...triggerResult,
+					webhookResult: quoteLine + (triggerResult.webhookResult || '')
+				};
+			} else if (gen.error) {
+				triggerResult = { ...triggerResult, webhookResult: `(Quote PDF could not be generated: ${gen.error}. ${triggerResult.webhookResult || ''})` };
+			}
+		}
+
 		const bot = (config.bot as Record<string, string> | undefined) ?? {};
 		const parts: string[] = [
 			'CRITICAL: Reply only with natural conversational text. Never output technical strings, commands, codes, or syntax (e.g. workflow_start, contacts_query, or similar). Speak like a human to a human. Your entire reply must be readable by the customer with no internal jargon.',
-			'The webhook is triggered automatically by the system when name, email, and roof size are collected. You do not trigger it—just confirm naturally.'
+			'Quote generation is triggered automatically when the user asks for a quote; you do not trigger it—just confirm naturally.'
 		];
 		if (bot.role?.trim()) parts.push(bot.role.trim());
 		if (bot.tone?.trim()) parts.push(`Tone: ${bot.tone.trim()}`);

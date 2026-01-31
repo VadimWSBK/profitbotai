@@ -6,8 +6,10 @@ const PUBLIC_PATHS = ['/login', '/auth/callback', '/auth/signup', '/auth/logout'
 const EMBED_PREFIX = '/embed';
 const API_EVENTS_PATH = '/api/widgets/events';
 
-/** Paths that accept X-API-Key for server-to-server auth (e.g. n8n) */
+/** Paths that require X-API-Key for server-to-server auth (e.g. n8n) */
 const API_KEY_PATHS = ['/api/contacts/signed-url'];
+/** Paths that accept either session or X-API-Key (e.g. quote generate from dashboard or n8n) */
+const OPTIONAL_API_KEY_PATHS = ['/api/quote/generate'];
 
 function isPublicPath(pathname: string): boolean {
 	if (pathname.startsWith(EMBED_PREFIX)) return true;
@@ -40,12 +42,15 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 
 	// Allow API key auth for server-to-server (e.g. n8n)
+	const apiKey = event.request.headers.get('X-API-Key');
+	const expectedKey = env.SIGNED_URL_API_KEY;
 	const isApiKeyPath = API_KEY_PATHS.some(
 		(p) => event.url.pathname === p || event.url.pathname.startsWith(p + '/')
 	);
+	const isOptionalApiKeyPath = OPTIONAL_API_KEY_PATHS.some(
+		(p) => event.url.pathname === p || event.url.pathname.startsWith(p + '/')
+	);
 	if (isApiKeyPath) {
-		const apiKey = event.request.headers.get('X-API-Key');
-		const expectedKey = env.SIGNED_URL_API_KEY;
 		if (expectedKey && apiKey === expectedKey) {
 			event.locals.user = { id: 'api-key', email: '' } as typeof event.locals.user;
 			event.locals.role = null;
@@ -55,6 +60,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 				headers: { 'Content-Type': 'application/json' }
 			});
 		}
+	} else if (isOptionalApiKeyPath && expectedKey && apiKey === expectedKey) {
+		event.locals.user = { id: 'api-key', email: '' } as typeof event.locals.user;
+		event.locals.role = null;
 	}
 
 	// Require auth for non-public routes (except embed and static)
