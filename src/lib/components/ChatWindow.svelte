@@ -165,27 +165,52 @@
 					}
 					if (typeof botReply !== 'string') botReply = JSON.stringify(botReply);
 				} else if (res.ok && res.body) {
-					// Vercel AI SDK stream: consume and update UI as tokens arrive
+					// Vercel AI SDK stream: consume and update UI as tokens arrive (streaming experience)
 					let streamMessageIndex = -1;
-					for await (const uiMessage of readUIMessageStream({
-						stream: res.body as unknown as ReadableStream<import('ai').UIMessageChunk>
-					})) {
-						const text = (uiMessage.parts ?? [])
-							.filter((p): p is { type: 'text'; text: string } => p.type === 'text')
-							.map((p) => p.text)
-							.join('');
-						if (streamMessageIndex === -1) {
-							addBotMessage(text);
-							streamMessageIndex = messages.length - 1;
-						} else {
-							messages = messages.map((m, i) =>
-								i === streamMessageIndex ? { ...m, content: text } : m
-							);
+					try {
+						for await (const uiMessage of readUIMessageStream({
+							stream: res.body as unknown as ReadableStream<import('ai').UIMessageChunk>
+						})) {
+							const text = (uiMessage.parts ?? [])
+								.filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+								.map((p) => p.text)
+								.join('');
+							if (streamMessageIndex === -1) {
+								// Create message bubble on first chunk with content so user sees typing then streaming text
+								addBotMessage(text);
+								streamMessageIndex = messages.length - 1;
+							} else {
+								messages = messages.map((m, i) =>
+									i === streamMessageIndex ? { ...m, content: text } : m
+								);
+							}
+							requestAnimationFrame(() => scrollToBottom());
 						}
-						requestAnimationFrame(() => scrollToBottom());
+					} finally {
+						loading = false;
 					}
-					if (streamMessageIndex === -1) addBotMessage(config.window.customErrorMessage);
-					loading = false;
+					// If we never got any text from the stream, the server may still have persisted in onFinish — avoid flashing the error
+					if (streamMessageIndex === -1) {
+						await new Promise((r) => setTimeout(r, 500));
+						try {
+							const refetch = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
+							const data = await refetch.json().catch(() => ({}));
+							const list = Array.isArray(data.messages) ? data.messages : [];
+							const serverMessages = list.map((m: { role: string; content: string; avatarUrl?: string }) => ({
+								role: m.role as 'user' | 'bot',
+								content: m.content,
+								avatarUrl: m.avatarUrl
+							}));
+							if (serverMessages.length > messages.length || (serverMessages.length > 0 && serverMessages[serverMessages.length - 1].role === 'bot')) {
+								messages = serverMessages;
+								requestAnimationFrame(() => scrollToBottom());
+								return;
+							}
+						} catch {
+							// ignore refetch errors
+						}
+						addBotMessage(config.window.customErrorMessage);
+					}
 					return;
 				} else {
 					botReply = config.window.customErrorMessage;
