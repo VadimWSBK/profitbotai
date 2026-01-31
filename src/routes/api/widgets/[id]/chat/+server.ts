@@ -200,20 +200,22 @@ export const POST: RequestHandler = async (event) => {
 		if (bot.role?.trim()) parts.push(bot.role.trim());
 		if (bot.tone?.trim()) parts.push(`Tone: ${bot.tone.trim()}`);
 		if (bot.instructions?.trim()) parts.push(bot.instructions.trim());
-		// Include stored contact info so the bot can reference it and share PDF quote links when asked
-		if (contactForPrompt && (contactForPrompt.name || contactForPrompt.email || contactForPrompt.phone || contactForPrompt.address || (Array.isArray(contactForPrompt.pdf_quotes) && contactForPrompt.pdf_quotes.length > 0))) {
-			const contactLines: string[] = ['Known contact info:'];
-			if (contactForPrompt.name) contactLines.push(`- Name: ${contactForPrompt.name}`);
-			if (contactForPrompt.email) contactLines.push(`- Email: ${contactForPrompt.email}`);
-			if (contactForPrompt.phone) contactLines.push(`- Phone: ${contactForPrompt.phone}`);
-			if (contactForPrompt.address) contactLines.push(`- Address: ${contactForPrompt.address}`);
-			if (Array.isArray(contactForPrompt.pdf_quotes) && contactForPrompt.pdf_quotes.length > 0) {
-				// Generate signed URLs for private PDF quotes (valid for 1 hour)
+		// Contact info from DB — AI has access to search/use when user asks about their details
+		const contactLines: string[] = [
+			'You have access to the contacts table. Use stored contact info when the user asks about their details, email, address, previous quotes, or "what do you have on file?". If nothing is stored, politely ask them to share it.'
+		];
+		const currentContact = contactForPrompt;
+		if (currentContact && (currentContact.name || currentContact.email || currentContact.phone || currentContact.address || (Array.isArray(currentContact.pdf_quotes) && currentContact.pdf_quotes.length > 0))) {
+			contactLines.push('Current conversation contact:');
+			if (currentContact.name) contactLines.push(`- Name: ${currentContact.name}`);
+			if (currentContact.email) contactLines.push(`- Email: ${currentContact.email}`);
+			if (currentContact.phone) contactLines.push(`- Phone: ${currentContact.phone}`);
+			if (currentContact.address) contactLines.push(`- Address: ${currentContact.address}`);
+			if (Array.isArray(currentContact.pdf_quotes) && currentContact.pdf_quotes.length > 0) {
 				const adminSupabase = getSupabaseAdmin();
 				const signedUrls: string[] = [];
-				for (const q of contactForPrompt.pdf_quotes) {
+				for (const q of currentContact.pdf_quotes) {
 					const stored = typeof q === 'object' && q !== null && 'url' in q ? (q as { url: string }).url : String(q);
-					// Support both: full URL (extract path) or just filename/path
 					const filePath = stored.match(/roof_quotes\/(.+)$/)?.[1] ?? stored.trim();
 					if (!filePath) continue;
 					const { data } = await adminSupabase.storage.from('roof_quotes').createSignedUrl(filePath, 3600);
@@ -223,8 +225,32 @@ export const POST: RequestHandler = async (event) => {
 					contactLines.push(`- PDF quote links (share when user asks for their quote): ${signedUrls.join(', ')}`);
 				}
 			}
-			parts.push(contactLines.join('\n'));
+		} else {
+			contactLines.push('Current conversation contact: (none stored yet)');
 		}
+		// If user message contains an email, search contacts for this widget and include any match
+		const emailInMessage = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/.exec(message);
+		if (emailInMessage) {
+			const searchEmail = emailInMessage[0].toLowerCase();
+			const currentEmail = currentContact?.email?.toLowerCase();
+			if (currentEmail !== searchEmail) {
+				const { data: found } = await supabase
+					.from('contacts')
+					.select('name, email, phone, address')
+					.eq('widget_id', widgetId)
+					.eq('email', searchEmail)
+					.limit(1)
+					.maybeSingle();
+				if (found && (found.name || found.email || found.phone || found.address)) {
+					contactLines.push(`Contact lookup for ${searchEmail}:`);
+					if (found.name) contactLines.push(`- Name: ${found.name}`);
+					if (found.email) contactLines.push(`- Email: ${found.email}`);
+					if (found.phone) contactLines.push(`- Phone: ${found.phone}`);
+					if (found.address) contactLines.push(`- Address: ${found.address}`);
+				}
+			}
+		}
+		parts.push(contactLines.join('\n'));
 		// When AI takes over again after live-agent timeout, ask the model to apologize and answer
 		if (resumingAfterAgentTimeout) {
 			parts.push(
