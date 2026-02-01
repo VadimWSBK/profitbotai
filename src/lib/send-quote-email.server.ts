@@ -18,9 +18,9 @@ export interface SendQuoteEmailOptions {
 export async function getMailingIntegrationForUser(
 	supabase: SupabaseClient,
 	userId: string
-): Promise<{ type: 'resend'; apiKey: string } | null> {
+): Promise<{ type: 'resend'; apiKey: string; fromEmail?: string } | null> {
 	const resend = await getResendConfigForUser(supabase, userId);
-	if (resend) return { type: 'resend', apiKey: resend.apiKey };
+	if (resend) return { type: 'resend', apiKey: resend.apiKey, fromEmail: resend.fromEmail };
 	return null;
 }
 
@@ -44,19 +44,24 @@ export async function sendQuoteEmail(
 		return { sent: false, error: 'Missing recipient email' };
 	}
 
-	// From address: use quote_settings.company.email or Resend default
+	// From address: Resend requires an email on your verified domain when sending to customers.
+	// Prefer integration.fromEmail (set in Settings → Integrations → Resend), then quote_settings.company.email.
 	const { data: quoteSettings } = await supabase
 		.from('quote_settings')
 		.select('company')
 		.eq('user_id', userId)
 		.maybeSingle();
 	const company = (quoteSettings?.company as { name?: string; email?: string } | null) ?? {};
-	let fromEmail = typeof company.email === 'string' && company.email.trim()
-		? company.email.trim()
-		: 'onboarding@resend.dev';
 	const fromName = typeof company.name === 'string' && company.name.trim()
 		? company.name.trim()
 		: 'Quote';
+	let fromEmail: string;
+	if (integration.type === 'resend' && integration.fromEmail) {
+		fromEmail = integration.fromEmail;
+	} else {
+		const companyEmail = typeof company.email === 'string' && company.email.trim() ? company.email.trim() : '';
+		fromEmail = companyEmail || 'onboarding@resend.dev';
+	}
 	let from = fromName ? `${fromName} <${fromEmail}>` : fromEmail;
 
 	const greeting = customerName?.trim() ? `Hi ${customerName.trim()},` : 'Hi,';
@@ -75,24 +80,26 @@ export async function sendQuoteEmail(
 </html>`;
 
 	if (integration.type === 'resend') {
-		let result = await sendEmailWithResend(integration.apiKey, {
+		const result = await sendEmailWithResend(integration.apiKey, {
 			from,
 			to,
 			subject,
 			html,
-			replyTo: fromEmail !== 'onboarding@resend.dev' ? fromEmail : undefined
+			replyTo: fromEmail === 'onboarding@resend.dev' ? undefined : fromEmail
 		});
-		// If domain not verified, retry with Resend's default sender (works without domain verification)
-		if (!result.ok && result.error && /domain.*not verified|domain is not verified/i.test(result.error)) {
-			from = `Quote <onboarding@resend.dev>`;
-			result = await sendEmailWithResend(integration.apiKey, {
-				from,
-				to,
-				subject,
-				html
-			});
-		}
 		if (result.ok) return { sent: true };
+		// Resend only allows sending to other recipients when "from" is an email on a verified domain.
+		const needsVerifiedDomain =
+			/only send testing emails to your own|verify a domain|change the .*from.*address to an email using this domain/i.test(
+				result.error ?? ''
+			);
+		if (needsVerifiedDomain) {
+			return {
+				sent: false,
+				error:
+					'To send quote emails to customers, set the "From email" in Settings → Integrations → Resend to an address on your verified domain (e.g. quotes@rs.netzerocoating.com).'
+			};
+		}
 		return { sent: false, error: result.error };
 	}
 

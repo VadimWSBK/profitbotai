@@ -1,10 +1,12 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSupabaseClient } from '$lib/supabase.server';
+import { resolvePdfQuotesToSignedUrls } from '$lib/quote-pdf-urls.server';
 
 /**
  * GET /api/contacts?widget_id=&q=
  * List contacts for widgets the user owns. Optional widget_id filter and q (search name/email).
+ * pdf_quotes paths are resolved to signed URLs (roof_quotes bucket is private).
  */
 export const GET: RequestHandler = async (event) => {
 	const user = event.locals.user;
@@ -44,36 +46,38 @@ export const GET: RequestHandler = async (event) => {
 		return json({ error: error.message, contacts: [] }, { status: 500 });
 	}
 
-	const contacts = (rows ?? []).map(
-		(r: {
-			id: string;
-			conversation_id: string | null;
-			widget_id: string | null;
-			name: string | null;
-			email: string | null;
-			phone: string | null;
-			address: string | null;
-			pdf_quotes: unknown;
-			created_at: string;
-			updated_at: string;
-			widgets: { name: string } | { name: string }[] | null;
-		}) => ({
-			id: r.id,
-			conversationId: r.conversation_id,
-			widgetId: r.widget_id,
-			widgetName: (() => {
-				if (!r.widgets) return null;
-				const w = r.widgets;
-				return Array.isArray(w) ? w[0]?.name ?? null : (w as { name: string }).name ?? null;
-			})(),
-			name: r.name ?? null,
-			email: r.email ?? null,
-			phone: r.phone ?? null,
-			address: r.address ?? null,
-			pdfQuotes: Array.isArray(r.pdf_quotes) ? r.pdf_quotes : [],
-			createdAt: r.created_at,
-			updatedAt: r.updated_at
-		})
+	const contacts = await Promise.all(
+		(rows ?? []).map(
+			async (r: {
+				id: string;
+				conversation_id: string | null;
+				widget_id: string | null;
+				name: string | null;
+				email: string | null;
+				phone: string | null;
+				address: string | null;
+				pdf_quotes: unknown;
+				created_at: string;
+				updated_at: string;
+				widgets: { name: string } | { name: string }[] | null;
+			}) => ({
+				id: r.id,
+				conversationId: r.conversation_id,
+				widgetId: r.widget_id,
+				widgetName: (() => {
+					if (!r.widgets) return null;
+					const w = r.widgets;
+					return Array.isArray(w) ? w[0]?.name ?? null : (w as { name: string }).name ?? null;
+				})(),
+				name: r.name ?? null,
+				email: r.email ?? null,
+				phone: r.phone ?? null,
+				address: r.address ?? null,
+				pdfQuotes: await resolvePdfQuotesToSignedUrls(r.pdf_quotes),
+				createdAt: r.created_at,
+				updatedAt: r.updated_at
+			})
+		)
 	);
 
 	return json({ contacts });

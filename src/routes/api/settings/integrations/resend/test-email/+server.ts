@@ -26,7 +26,9 @@ export const POST: RequestHandler = async (event) => {
 	const config = await getResendConfig(event);
 	if (!config) return json({ error: 'Resend is not connected' }, { status: 400 });
 
-	const from = 'ProfitBot <onboarding@resend.dev>';
+	// Use stored From email (verified domain) so Resend allows sending to any recipient; fallback for testing to own email only
+	const fromAddress = config.fromEmail?.trim() || 'onboarding@resend.dev';
+	const from = `ProfitBot <${fromAddress}>`;
 	const subject = 'ProfitBot – test email';
 	const html = `
 <!DOCTYPE html>

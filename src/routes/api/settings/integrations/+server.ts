@@ -6,7 +6,7 @@ import { INTEGRATIONS } from '$lib/integrations';
 const INTEGRATION_IDS = INTEGRATIONS.map((i) => i.id);
 
 /**
- * GET /api/settings/integrations – list connected integrations (no secrets).
+ * GET /api/settings/integrations – list connected integrations and masked config (e.g. Resend fromEmail).
  */
 export const GET: RequestHandler = async (event) => {
 	if (!event.locals.user) return json({ error: 'Unauthorized' }, { status: 401 });
@@ -14,21 +14,31 @@ export const GET: RequestHandler = async (event) => {
 		const supabase = getSupabaseClient(event);
 		const { data, error } = await supabase
 			.from('user_integrations')
-			.select('integration_type')
+			.select('integration_type, config')
 			.eq('user_id', event.locals.user.id);
-		if (error) return json({ connected: [] });
-		const connected = (data ?? [])
+		if (error) return json({ connected: [], configs: {} });
+		const rows = data ?? [];
+		const connected = rows
 			.map((r) => r.integration_type)
 			.filter((t) => INTEGRATION_IDS.includes(t as (typeof INTEGRATION_IDS)[number]));
-		return json({ connected });
+		const configs: Record<string, { fromEmail?: string }> = {};
+		for (const r of rows) {
+			const config = r.config as { fromEmail?: string } | null;
+			if (r.integration_type === 'resend' && config) {
+				configs.resend = { fromEmail: typeof config.fromEmail === 'string' ? config.fromEmail : undefined };
+			}
+		}
+		return json({ connected, configs });
 	} catch {
-		return json({ connected: [] });
+		return json({ connected: [], configs: {} });
 	}
 };
 
 /**
  * PUT /api/settings/integrations – save or update integration config.
- * Body: { type: 'resend', config: { apiKey: string } }
+ * Body: { type: 'resend', config: { apiKey?: string, fromEmail?: string } }
+ * For Resend: apiKey required on first connect; fromEmail optional (use address on verified domain for sending to customers).
+ * When updating Resend and only fromEmail is sent, existing apiKey is preserved.
  */
 export const PUT: RequestHandler = async (event) => {
 	if (!event.locals.user) return json({ error: 'Unauthorized' }, { status: 401 });
@@ -38,17 +48,36 @@ export const PUT: RequestHandler = async (event) => {
 			config?: Record<string, unknown>;
 		};
 		const type = body.type?.trim();
-		const config = body.config ?? {};
+		let config = body.config ?? {};
 		if (!type || !INTEGRATION_IDS.includes(type as (typeof INTEGRATION_IDS)[number])) {
 			return json({ error: 'Invalid integration type' }, { status: 400 });
 		}
-		// For resend: require apiKey
+		const supabase = getSupabaseClient(event);
+
 		if (type === 'resend') {
 			const apiKey = (config.apiKey as string)?.trim?.();
-			if (!apiKey) return json({ error: 'API key is required' }, { status: 400 });
-			if (!apiKey.startsWith('re_')) return json({ error: 'Invalid Resend API key format (should start with re_)' }, { status: 400 });
+			const fromEmail = typeof config.fromEmail === 'string' ? config.fromEmail.trim() : undefined;
+			// If apiKey provided, full config (connect or reconnect); otherwise merge fromEmail into existing (update flow)
+			if (apiKey) {
+				if (!apiKey.startsWith('re_')) {
+					return json({ error: 'Invalid Resend API key format (should start with re_)' }, { status: 400 });
+				}
+				config = { apiKey, fromEmail };
+			} else {
+				const { data: existing } = await supabase
+					.from('user_integrations')
+					.select('config')
+					.eq('user_id', event.locals.user.id)
+					.eq('integration_type', 'resend')
+					.single();
+				const existingConfig = (existing?.config as { apiKey?: string; fromEmail?: string }) ?? {};
+				config = {
+					...existingConfig,
+					...(fromEmail === undefined ? {} : { fromEmail: fromEmail || undefined })
+				};
+			}
 		}
-		const supabase = getSupabaseClient(event);
+
 		const { error } = await supabase.from('user_integrations').upsert(
 			{
 				user_id: event.locals.user.id,

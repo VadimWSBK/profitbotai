@@ -10,6 +10,8 @@ import { Resend } from 'resend';
 
 export interface ResendConfig {
 	apiKey: string;
+	/** From address when sending (must be an email on your verified Resend domain, e.g. quotes@rs.yourdomain.com) */
+	fromEmail?: string;
 }
 
 /**
@@ -26,10 +28,11 @@ export async function getResendConfig(event: RequestEvent): Promise<ResendConfig
 		.eq('user_id', user.id)
 		.eq('integration_type', 'resend')
 		.single();
-	const config = data?.config as { apiKey?: string } | null;
+	const config = data?.config as { apiKey?: string; fromEmail?: string } | null;
 	const apiKey = config?.apiKey?.trim();
 	if (!apiKey) return null;
-	return { apiKey };
+	const fromEmail = typeof config?.fromEmail === 'string' && config.fromEmail.trim() ? config.fromEmail.trim() : undefined;
+	return { apiKey, fromEmail };
 }
 
 /**
@@ -45,10 +48,11 @@ export async function getResendConfigForUser(
 		.eq('user_id', userId)
 		.eq('integration_type', 'resend')
 		.single();
-	const config = data?.config as { apiKey?: string } | null;
+	const config = data?.config as { apiKey?: string; fromEmail?: string } | null;
 	const apiKey = config?.apiKey?.trim();
 	if (!apiKey) return null;
-	return { apiKey };
+	const fromEmail = typeof config?.fromEmail === 'string' && config.fromEmail.trim() ? config.fromEmail.trim() : undefined;
+	return { apiKey, fromEmail };
 }
 
 /**

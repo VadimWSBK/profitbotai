@@ -10,7 +10,13 @@ export const INTEGRATIONS = [
 		description: 'Send transactional emails (quotes, follow-ups, etc.) via Resend.',
 		icon: 'mail',
 		configFields: [
-			{ id: 'apiKey', label: 'API Key', type: 'password' as const, placeholder: 're_xxxxxxxxxx...' }
+			{ id: 'apiKey', label: 'API Key', type: 'password' as const, placeholder: 're_xxxxxxxxxx...' },
+			{
+				id: 'fromEmail',
+				label: 'From email (verified domain)',
+				type: 'text' as const,
+				placeholder: 'quotes@rs.yourdomain.com'
+			}
 		]
 	}
 ] as const;

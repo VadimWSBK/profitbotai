@@ -2,6 +2,7 @@
 	import { INTEGRATIONS } from '$lib/integrations';
 
 	let connected = $state<string[]>([]);
+	let configs = $state<Record<string, { fromEmail?: string }>>({});
 	let loaded = $state(false);
 	let saving = $state(false);
 	let disconnecting = $state<string | null>(null);
@@ -12,14 +13,20 @@
 	let testEmailSending = $state(false);
 	let testEmailSuccess = $state(false);
 	let testEmailError = $state<string | null>(null);
+	// Resend from-email update (when already connected)
+	let resendFromEmail = $state('');
+	let resendFromEmailSaving = $state(false);
 
 	async function load() {
 		try {
 			const res = await fetch('/api/settings/integrations');
 			const data = await res.json().catch(() => ({}));
 			connected = data.connected ?? [];
+			configs = data.configs ?? {};
+			resendFromEmail = configs.resend?.fromEmail ?? '';
 		} catch {
 			connected = [];
+			configs = {};
 		} finally {
 			loaded = true;
 		}
@@ -34,19 +41,43 @@
 				error = 'Please enter your API key';
 				return;
 			}
+			const fromEmail = id === 'resend' ? formValues[`${id}_fromEmail`]?.trim() : undefined;
 			const res = await fetch('/api/settings/integrations', {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ type: id, config: { apiKey } })
+				body: JSON.stringify({
+					type: id,
+					config: id === 'resend' ? { apiKey, fromEmail: fromEmail || undefined } : { apiKey }
+				})
 			});
 			const result = await res.json().catch(() => ({}));
 			if (!res.ok) throw new Error(result.error || 'Failed to connect');
 			await load();
-			formValues = { ...formValues, [`${id}_apiKey`]: '' };
+			formValues = { ...formValues, [`${id}_apiKey`]: '', [`${id}_fromEmail`]: '' };
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to connect';
 		} finally {
 			saving = false;
+		}
+	}
+
+	async function updateResendFromEmail() {
+		const email = resendFromEmail.trim();
+		resendFromEmailSaving = true;
+		error = null;
+		try {
+			const res = await fetch('/api/settings/integrations', {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ type: 'resend', config: { fromEmail: email || undefined } })
+			});
+			const result = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(result.error || 'Failed to update');
+			await load();
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to update';
+		} finally {
+			resendFromEmailSaving = false;
 		}
 	}
 
@@ -154,34 +185,57 @@
 										</button>
 									</div>
 									{#if integration.id === 'resend'}
-										<div class="pt-3 border-t border-gray-100">
-											<p class="text-sm font-medium text-gray-700 mb-2">Send test email</p>
-											<div class="flex flex-wrap items-end gap-2">
-												<label class="flex-1 min-w-[200px]">
-													<span class="sr-only">Email address</span>
+										<div class="pt-3 border-t border-gray-100 space-y-4">
+											<div>
+												<p class="text-sm font-medium text-gray-700 mb-1">From email (for quote emails to customers)</p>
+												<p class="text-xs text-gray-500 mb-2">Must be an address on your verified Resend domain (e.g. quotes@rs.netzerocoating.com). Required to send to customers.</p>
+												<div class="flex flex-wrap items-end gap-2">
 													<input
 														type="email"
-														placeholder="you@example.com"
-														bind:value={testEmailTo}
-														disabled={testEmailSending}
-														class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 disabled:opacity-60"
+														placeholder="quotes@rs.yourdomain.com"
+														bind:value={resendFromEmail}
+														disabled={resendFromEmailSaving}
+														class="flex-1 min-w-[200px] px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 disabled:opacity-60"
 													/>
-												</label>
-												<button
-													type="button"
-													disabled={testEmailSending}
-													onclick={sendTestEmail}
-													class="px-4 py-2 bg-gray-800 hover:bg-gray-900 disabled:opacity-60 text-white font-medium rounded-lg transition-colors text-sm"
-												>
-													{testEmailSending ? 'Sending…' : 'Send test email'}
-												</button>
+													<button
+														type="button"
+														disabled={resendFromEmailSaving}
+														onclick={updateResendFromEmail}
+														class="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white font-medium rounded-lg transition-colors text-sm"
+													>
+														{resendFromEmailSaving ? 'Saving…' : 'Save'}
+													</button>
+												</div>
 											</div>
-											{#if testEmailError}
-												<p class="mt-1.5 text-sm text-red-600">{testEmailError}</p>
-											{/if}
-											{#if testEmailSuccess}
-												<p class="mt-1.5 text-sm text-green-600">Test email sent. Check the inbox for {testEmailTo || 'that address'}.</p>
-											{/if}
+											<div>
+												<p class="text-sm font-medium text-gray-700 mb-2">Send test email</p>
+												<div class="flex flex-wrap items-end gap-2">
+													<label class="flex-1 min-w-[200px]">
+														<span class="sr-only">Email address</span>
+														<input
+															type="email"
+															placeholder="you@example.com"
+															bind:value={testEmailTo}
+															disabled={testEmailSending}
+															class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 disabled:opacity-60"
+														/>
+													</label>
+													<button
+														type="button"
+														disabled={testEmailSending}
+														onclick={sendTestEmail}
+														class="px-4 py-2 bg-gray-800 hover:bg-gray-900 disabled:opacity-60 text-white font-medium rounded-lg transition-colors text-sm"
+													>
+														{testEmailSending ? 'Sending…' : 'Send test email'}
+													</button>
+												</div>
+												{#if testEmailError}
+													<p class="mt-1.5 text-sm text-red-600">{testEmailError}</p>
+												{/if}
+												{#if testEmailSuccess}
+													<p class="mt-1.5 text-sm text-green-600">Test email sent. Check the inbox for {testEmailTo || 'that address'}.</p>
+												{/if}
+											</div>
 										</div>
 									{/if}
 								</div>
