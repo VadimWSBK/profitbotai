@@ -165,8 +165,10 @@
 					}
 					if (typeof botReply !== 'string') botReply = JSON.stringify(botReply);
 				} else if (res.ok && res.body) {
-					// Vercel AI SDK stream: consume and update UI as tokens arrive (streaming experience)
+					// AI SDK stream: consume and update UI as tokens arrive. If stream parsing fails (e.g. format change),
+					// poll for the persisted message instead of showing error—server may have completed successfully.
 					let streamMessageIndex = -1;
+					let streamParseFailed = false;
 					try {
 						for await (const uiMessage of readUIMessageStream({
 							stream: res.body as unknown as ReadableStream<import('ai').UIMessageChunk>
@@ -178,7 +180,6 @@
 							const msgContent = (uiMessage as unknown as { content?: string }).content;
 							const content = typeof msgContent === 'string' ? msgContent : fromParts ?? '';
 							if (streamMessageIndex === -1) {
-								// Create message bubble on first chunk so user sees typing then streaming text (even if empty at first)
 								addBotMessage(content);
 								streamMessageIndex = messages.length - 1;
 							} else {
@@ -188,11 +189,14 @@
 							}
 							requestAnimationFrame(() => scrollToBottom());
 						}
+					} catch {
+						streamParseFailed = true;
 					} finally {
 						loading = false;
 					}
-					// If we never got any text from the stream (e.g. Vercel AI SDK stream format or server still generating quote+LLM), the server will persist in onFinish. Poll for the message and only show error after a long timeout so we never flash "message not sent" before the real reply.
-					if (streamMessageIndex === -1) {
+					// If stream yielded nothing or parsing failed, poll for the persisted reply (quote+LLM can take 10–15s).
+					// Never show error until poll times out—avoids flashing "message not sent" when server succeeded.
+					if (streamMessageIndex === -1 || streamParseFailed) {
 						const refetchMessages = async (): Promise<Message[]> => {
 							const refetch = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
 							const data = await refetch.json().catch(() => ({}));
@@ -203,7 +207,6 @@
 								avatarUrl: m.avatarUrl
 							}));
 						};
-						// Poll every 1.5s for up to 20s so we pick up the reply as soon as it's persisted (quote+LLM can take 10–15s)
 						const pollIntervalMs = 1500;
 						const totalWaitMs = 20000;
 						const maxAttempts = Math.ceil(totalWaitMs / pollIntervalMs);
@@ -226,8 +229,37 @@
 				} else {
 					botReply = config.window.customErrorMessage;
 				}
-			} catch {
-				botReply = config.window.customErrorMessage;
+				} catch {
+				// Fetch failed: poll for message in case server succeeded (e.g. timeout after response sent)
+				const refetchMessages = async (): Promise<Message[]> => {
+					const refetch = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
+					const data = await refetch.json().catch(() => ({}));
+					const list = Array.isArray(data.messages) ? data.messages : [];
+					return list.map((m: { role: string; content: string; avatarUrl?: string }) => ({
+						role: m.role as 'user' | 'bot',
+						content: m.content,
+						avatarUrl: m.avatarUrl
+					}));
+				};
+				loading = false;
+				const pollIntervalMs = 1500;
+				const totalWaitMs = 15000;
+				const maxAttempts = Math.ceil(totalWaitMs / pollIntervalMs);
+				for (let attempt = 0; attempt < maxAttempts; attempt++) {
+					await new Promise((r) => setTimeout(r, pollIntervalMs));
+					try {
+						const serverMessages = await refetchMessages();
+						if (serverMessages.length > messages.length || (serverMessages.length > 0 && serverMessages[serverMessages.length - 1].role === 'bot')) {
+							messages = serverMessages;
+							requestAnimationFrame(() => scrollToBottom());
+							return;
+						}
+					} catch {
+						// ignore
+					}
+				}
+				addBotMessage(config.window.customErrorMessage);
+				return;
 			}
 		} else if (useN8n) {
 			try {

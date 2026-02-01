@@ -16,15 +16,21 @@ const BUCKET = 'roof_quotes';
  * Generate a quote PDF for a conversation and upload to roof_quotes. Storage trigger will link to contact.
  * Returns signed URL and storage path for the new PDF, or an error message.
  * Caller should append the public URL to the contact (storage trigger may not receive custom metadata).
+ * Pass ownerId when already known (e.g. from chat) to avoid a second widget lookup.
  */
 export async function generateQuoteForConversation(
 	admin: SupabaseClient,
 	conversationId: string,
 	widgetId: string,
 	contact: { name?: string | null; email?: string | null; phone?: string | null; address?: string | null },
-	extracted: { roofSize?: number } | null
+	extracted: { roofSize?: number } | null,
+	ownerIdFromCaller?: string
 ): Promise<{ signedUrl?: string; storagePath?: string; error?: string }> {
-	const ownerId = (await admin.from('widgets').select('created_by').eq('id', widgetId).single()).data?.created_by as string | undefined;
+	let ownerId: string | undefined = ownerIdFromCaller;
+	if (!ownerId) {
+		const row = (await admin.from('widgets').select('created_by').eq('id', widgetId).single()).data;
+		ownerId = row?.created_by as string | undefined;
+	}
 	if (!ownerId) {
 		console.error('[quote-pdf] Widget has no owner', { widgetId });
 		return { error: 'Widget has no owner' };

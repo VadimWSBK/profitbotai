@@ -266,7 +266,8 @@ export const POST: RequestHandler = async (event) => {
 						conv.id,
 						widgetId,
 						contact,
-						extracted
+						extracted,
+						ownerId ?? undefined
 					);
 					console.log('[chat/quote] generateQuoteForConversation result', {
 						hasSignedUrl: !!gen.signedUrl,
@@ -319,6 +320,7 @@ export const POST: RequestHandler = async (event) => {
 				if (!hasName) missing.push('name');
 				if (!hasEmail) missing.push('email');
 				if (!hasRoofSize) missing.push('roof size in square metres');
+				console.log('[chat/quote] PDF not generated: missing', missing.join(', '));
 				const instruction = `The user wants a quote but we need the following before we can generate it: ${missing.join(', ')}. Politely ask for only the missing information (e.g. "What's your name?", "What's your email?", "What's your roof size in square metres?"). Do not say the quote is being generated or promise a quote until we have name, email, and roof size.`;
 				triggerResult = { ...triggerResult, webhookResult: instruction };
 			}
