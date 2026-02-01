@@ -15,9 +15,40 @@ export type ExtractedContact = {
 	roofSize?: number;
 };
 
+/** Regex-only extraction when LLM fails or as fallback for missing fields. */
+function extractFromRegex(message: string): Partial<ExtractedContact> {
+	const out: Partial<ExtractedContact> = {};
+	// Email: standard pattern (e.g. user@domain.com)
+	const emailMatch = message.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+	if (emailMatch) out.email = emailMatch[0].toLowerCase();
+	// Roof size: "200 sqm", "400m2", "roof is 200", etc.
+	const roofMatch =
+		message.match(/(\d+(?:\.\d+)?)\s*(?:sqm|m2|m²|square\s*metre[s]?|sq\.?\s*metre[s]?|sq\.?\s*m\.?)/i) ??
+		message.match(/roof\s*(?:is|size)?\s*:?\s*(\d+(?:\.\d+)?)/i);
+	if (roofMatch) {
+		const n = Number.parseFloat(roofMatch[1]);
+		if (n >= 0) out.roofSize = n;
+	}
+	// Name: "my name is X", "I'm X", "name is X", "call me X" (single word or "First Last")
+	const namePatterns = [
+		/(?:my\s+name\s+is|i['']m|name\s+is|call\s+me|i\s+am)\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)?)/i,
+		/^(?:hi|hey|hello)[,\s]+([a-zA-Z]+)\b/i,
+		/\b([A-Z][a-z]+)\s+(?:here|writing|asking)/i
+	];
+	for (const re of namePatterns) {
+		const m = message.match(re);
+		if (m?.[1]?.trim() && (m[1].length > 1 || /[a-zA-Z]/.test(m[1]))) {
+			out.name = m[1].trim();
+			break;
+		}
+	}
+	return out;
+}
+
 /**
  * Use the LLM to extract any name, email, phone, or address from the user's message.
  * Returns only fields that were clearly provided. Runs quickly with a minimal prompt.
+ * Falls back to regex extraction when LLM fails or misses obvious fields (e.g. email, roof size).
  */
 export async function extractContactFromMessage(
 	userMessage: string,
@@ -56,7 +87,8 @@ export async function extractContactFromMessage(
 			messages
 		);
 	} catch {
-		return {};
+		// LLM failed: use regex fallback so quote flow can still work (email, roof size, name)
+		return extractFromRegex(userMessage);
 	}
 
 	// Parse JSON from response (may be wrapped in markdown code block)
@@ -70,37 +102,39 @@ export async function extractContactFromMessage(
 		}
 	}
 
-	// Regex fallback for roof size when LLM misses it
-	const roofMatch =
-		userMessage.match(/(\d+(?:\.\d+)?)\s*(?:sqm|m2|m²|square\s*metre[s]?|sq\.?\s*metre[s]?|sq\.?\s*m\.?)/i) ??
-		userMessage.match(/roof\s*(?:is|size)?\s*:?\s*(\d+(?:\.\d+)?)/i);
-	const roofFromRegex = roofMatch ? Number.parseFloat(roofMatch[1]) : undefined;
+	const regexFallback = extractFromRegex(userMessage);
 
 	try {
 		const out: ExtractedContact = {};
 		if (typeof parsed.name === 'string' && parsed.name.trim())
 			out.name = parsed.name.trim();
+		else if (regexFallback.name) out.name = regexFallback.name;
+
 		if (typeof parsed.email === 'string' && parsed.email.trim())
 			out.email = parsed.email.trim().toLowerCase();
+		else if (regexFallback.email) out.email = regexFallback.email;
+
 		if (typeof parsed.phone === 'string' && parsed.phone.trim())
 			out.phone = parsed.phone.trim();
+
 		if (typeof parsed.address === 'string' && parsed.address.trim())
 			out.address = parsed.address.trim();
+
 		const roof = parsed.roofSize;
 		if (typeof roof === 'number' && roof >= 0) out.roofSize = roof;
 		else if (typeof roof === 'string') {
 			const trimmed = roof.trim();
 			if (/^\d+(\.\d+)?$/.test(trimmed)) out.roofSize = Number.parseFloat(trimmed);
 			else {
-				// Parse "200 sqm", "200m2", "200 m²", "roof is 200 sqm" etc.
 				const numMatch = trimmed.match(/(\d+(?:\.\d+)?)\s*(?:sqm|m2|m²|square\s*metre|sq\.?\s*m\.?)?/i);
 				if (numMatch) out.roofSize = Number.parseFloat(numMatch[1]);
 			}
 		}
-		// Use regex fallback when LLM didn't extract roof size
-		if (out.roofSize == null && roofFromRegex != null && roofFromRegex >= 0) out.roofSize = roofFromRegex;
+		if (out.roofSize == null && regexFallback.roofSize != null && regexFallback.roofSize >= 0)
+			out.roofSize = regexFallback.roofSize;
+
 		return out;
 	} catch {
-		return {};
+		return regexFallback;
 	}
 }

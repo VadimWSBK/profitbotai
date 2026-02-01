@@ -148,6 +148,7 @@ export const POST: RequestHandler = async (event) => {
 		});
 
 		// Update contact if we extracted name, email, phone, or address from the message
+		// Skip email if another contact already has it (contacts_email_unique constraint)
 		if (
 			extractedContact.name ||
 			extractedContact.email ||
@@ -156,15 +157,26 @@ export const POST: RequestHandler = async (event) => {
 		) {
 			const updates: Record<string, string> = {};
 			if (extractedContact.name) updates.name = extractedContact.name;
-			if (extractedContact.email) updates.email = extractedContact.email;
 			if (extractedContact.phone) updates.phone = extractedContact.phone;
 			if (extractedContact.address) updates.address = extractedContact.address;
-			const { error: contactErr } = await supabase
-				.from('contacts')
-				.update(updates)
-				.eq('conversation_id', conv.id)
-				.eq('widget_id', widgetId);
-			if (contactErr) console.error('contact update from extraction:', contactErr);
+			if (extractedContact.email) {
+				const { data: existing } = await supabase
+					.from('contacts')
+					.select('id')
+					.eq('email', extractedContact.email)
+					.neq('conversation_id', conv.id)
+					.limit(1)
+					.maybeSingle();
+				if (!existing) updates.email = extractedContact.email;
+			}
+			if (Object.keys(updates).length > 0) {
+				const { error: contactErr } = await supabase
+					.from('contacts')
+					.update(updates)
+					.eq('conversation_id', conv.id)
+					.eq('widget_id', widgetId);
+				if (contactErr) console.error('contact update from extraction:', contactErr);
+			}
 		}
 
 		// Merge extracted fields into contact (for system prompt + webhook payload)
