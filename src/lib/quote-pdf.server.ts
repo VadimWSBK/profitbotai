@@ -1,11 +1,19 @@
 /**
  * Quote PDF: generate PDF via pdfmake (pure JS, no Chromium). Server-only.
+ * Fonts are loaded via SvelteKit read() so they are included in Vercel serverless bundle.
  */
 
+import { read } from '$app/server';
 import { computeQuoteFromSettings } from '$lib/quote-html';
 import { buildQuoteDocDefinition } from '$lib/quote-pdfmake.server';
 import type { QuoteSettings } from '$lib/quote-html';
 import type { SupabaseClient } from '@supabase/supabase-js';
+
+// Import fonts so they are in the server bundle; we load them via read() and pdfmake virtualfs
+import robotoRegular from '$lib/fonts/Roboto/Roboto-Regular.ttf';
+import robotoMedium from '$lib/fonts/Roboto/Roboto-Medium.ttf';
+import robotoItalic from '$lib/fonts/Roboto/Roboto-Italic.ttf';
+import robotoMediumItalic from '$lib/fonts/Roboto/Roboto-MediumItalic.ttf';
 
 export { buildQuoteHtml, computeQuoteFromSettings } from '$lib/quote-html';
 export type { QuoteSettings, QuotePayload, QuoteCompany, QuoteBankDetails, QuoteLineItem } from '$lib/quote-html';
@@ -129,29 +137,46 @@ export async function generateQuoteForConversation(
 	return { signedUrl: signed?.signedUrl ?? undefined, storagePath: fileName };
 }
 
+const FONT_KEYS = {
+	normal: 'Roboto-Regular.ttf',
+	bold: 'Roboto-Medium.ttf',
+	italics: 'Roboto-Italic.ttf',
+	bolditalics: 'Roboto-MediumItalic.ttf'
+} as const;
+
+const FONT_IMPORTS = [
+	robotoRegular,
+	robotoMedium,
+	robotoItalic,
+	robotoMediumItalic
+] as const;
+
 /**
  * Generate PDF buffer via pdfmake (pure JS, no Chromium).
- * Uses Roboto fonts shipped with pdfmake package.
+ * Fonts are loaded via SvelteKit read() into pdfmake virtualfs so they work on Vercel (no filesystem).
  */
 export async function generatePdfFromDocDefinition(
 	settings: QuoteSettings,
 	payload: Parameters<typeof buildQuoteDocDefinition>[1]
 ): Promise<Buffer> {
 	const pdfmake = (await import('pdfmake')).default;
-	const pathMod = await import('node:path');
-	const path = pathMod.default ?? pathMod;
 
-	// Roboto fonts shipped with pdfmake
-	const fontsDir = path.join(process.cwd(), 'node_modules', 'pdfmake', 'fonts');
-	const fonts = {
+	// Load font buffers via SvelteKit read() so they are in the serverless bundle; write to virtualfs
+	const vfs = pdfmake.virtualfs;
+	const keys = Object.values(FONT_KEYS);
+	for (let i = 0; i < keys.length; i++) {
+		const res = read(FONT_IMPORTS[i]);
+		const buf = await res.arrayBuffer();
+		vfs.writeFileSync(keys[i], new Uint8Array(buf));
+	}
+	pdfmake.setFonts({
 		Roboto: {
-			normal: path.join(fontsDir, 'Roboto/Roboto-Regular.ttf'),
-			bold: path.join(fontsDir, 'Roboto/Roboto-Medium.ttf'),
-			italics: path.join(fontsDir, 'Roboto/Roboto-Italic.ttf'),
-			bolditalics: path.join(fontsDir, 'Roboto/Roboto-MediumItalic.ttf')
+			normal: FONT_KEYS.normal,
+			bold: FONT_KEYS.bold,
+			italics: FONT_KEYS.italics,
+			bolditalics: FONT_KEYS.bolditalics
 		}
-	};
-	pdfmake.setFonts(fonts);
+	});
 
 	const docDefinition = buildQuoteDocDefinition(settings, payload);
 	const pdfDoc = pdfmake.createPdf(docDefinition);
