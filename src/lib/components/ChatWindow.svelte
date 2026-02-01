@@ -258,33 +258,43 @@
 					} finally {
 						loading = false;
 					}
-					// If stream yielded nothing or parsing failed, poll for the persisted reply (quote+LLM can take 10–15s).
-					// Never show error until poll times out—avoids flashing "message not sent" when server succeeded.
+					// If stream yielded nothing or parsing failed, poll for the persisted reply.
+					// Server sets agentTyping while AI is generating; poll until we have the message or server says not typing.
 					if (streamMessageIndex === -1 || streamParseFailed) {
-						const refetchMessages = async (): Promise<Message[]> => {
-							const refetch = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
-							const data = await refetch.json().catch(() => ({}));
+						const refetch = async (): Promise<{ messages: Message[]; agentTyping: boolean }> => {
+							const res = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
+							const data = await res.json().catch(() => ({}));
 							const list = Array.isArray(data.messages) ? data.messages : [];
-							return list.map((m: { role: string; content: string; avatarUrl?: string }) => ({
+							const serverMessages = list.map((m: { role: string; content: string; avatarUrl?: string }) => ({
 								role: m.role as 'user' | 'bot',
 								content: m.content,
 								avatarUrl: m.avatarUrl
 							}));
+							return { messages: serverMessages, agentTyping: !!data.agentTyping };
 						};
-						const pollIntervalMs = 1500;
-						const totalWaitMs = 20000;
-						const maxAttempts = Math.ceil(totalWaitMs / pollIntervalMs);
-						for (let attempt = 0; attempt < maxAttempts; attempt++) {
+						const pollIntervalMs = 800;
+						const maxTotalMs = 5 * 60 * 1000;
+						const pollsAfterTypingStopped = 3;
+						let typingStoppedCount = 0;
+						const deadline = Date.now() + maxTotalMs;
+						while (Date.now() < deadline) {
 							await new Promise((r) => setTimeout(r, pollIntervalMs));
 							try {
-								const serverMessages = await refetchMessages();
+								const { messages: serverMessages, agentTyping: serverTyping } = await refetch();
+								agentTyping = serverTyping;
 								if (serverMessages.length > messages.length || (serverMessages.length > 0 && serverMessages[serverMessages.length - 1].role === 'bot')) {
 									messages = serverMessages;
 									requestAnimationFrame(() => scrollToBottom());
 									return;
 								}
+								if (!serverTyping) {
+									typingStoppedCount++;
+									if (typingStoppedCount >= pollsAfterTypingStopped) break;
+								} else {
+									typingStoppedCount = 0;
+								}
 							} catch {
-								// ignore refetch errors
+								// ignore
 							}
 						}
 						addBotMessage(config.window.customErrorMessage);
@@ -295,28 +305,38 @@
 				}
 				} catch {
 				// Fetch failed: poll for message in case server succeeded (e.g. timeout after response sent)
-				const refetchMessages = async (): Promise<Message[]> => {
-					const refetch = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
-					const data = await refetch.json().catch(() => ({}));
+				loading = false;
+				const refetch = async (): Promise<{ messages: Message[]; agentTyping: boolean }> => {
+					const res = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
+					const data = await res.json().catch(() => ({}));
 					const list = Array.isArray(data.messages) ? data.messages : [];
-					return list.map((m: { role: string; content: string; avatarUrl?: string }) => ({
+					const serverMessages = list.map((m: { role: string; content: string; avatarUrl?: string }) => ({
 						role: m.role as 'user' | 'bot',
 						content: m.content,
 						avatarUrl: m.avatarUrl
 					}));
+					return { messages: serverMessages, agentTyping: !!data.agentTyping };
 				};
-				loading = false;
-				const pollIntervalMs = 1500;
-				const totalWaitMs = 15000;
-				const maxAttempts = Math.ceil(totalWaitMs / pollIntervalMs);
-				for (let attempt = 0; attempt < maxAttempts; attempt++) {
+				const pollIntervalMs = 800;
+				const maxTotalMs = 5 * 60 * 1000;
+				const pollsAfterTypingStopped = 3;
+				let typingStoppedCount = 0;
+				const deadline = Date.now() + maxTotalMs;
+				while (Date.now() < deadline) {
 					await new Promise((r) => setTimeout(r, pollIntervalMs));
 					try {
-						const serverMessages = await refetchMessages();
+						const { messages: serverMessages, agentTyping: serverTyping } = await refetch();
+						agentTyping = serverTyping;
 						if (serverMessages.length > messages.length || (serverMessages.length > 0 && serverMessages[serverMessages.length - 1].role === 'bot')) {
 							messages = serverMessages;
 							requestAnimationFrame(() => scrollToBottom());
 							return;
+						}
+						if (!serverTyping) {
+							typingStoppedCount++;
+							if (typingStoppedCount >= pollsAfterTypingStopped) break;
+						} else {
+							typingStoppedCount = 0;
 						}
 					} catch {
 						// ignore
@@ -371,6 +391,7 @@
 	const headerRadius = $derived(win.borderRadiusStyle === 'rounded' ? '12px 12px 0 0' : '0');
 
 	/** Convert markdown links [text](url) and raw URLs to clickable links. Escapes plain text for safety. */
+	/** Supports [text](url) even when the LLM puts a newline between ] and (, so only the link text is shown. */
 	function formatMessageWithLinks(text: string): string {
 		if (!text || typeof text !== 'string') return '';
 		const escape = (s: string) =>
@@ -381,16 +402,44 @@
 				.replace(/"/g, '&quot;');
 		const parts: string[] = [];
 		let lastIndex = 0;
-		const re = /\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/[^\s<>"']+)/g;
+		// Markdown link: [text](url) with optional whitespace/newlines between ] and ( so split output still becomes one link
+		const markdownLinkRe = /\[([^\]]*)\]\s*\((https?:\/\/[^)]+)\)/g;
+		const rawUrlRe = /(https?:\/\/[^\s<>"']+)/g;
+		// Collect all matches (markdown first, then raw URLs) and sort by index to output in order
+		type LinkMatch =
+			| { index: number; end: number; type: 'markdown'; text: string; url: string }
+			| { index: number; end: number; type: 'raw'; url: string };
+		const matches: LinkMatch[] = [];
 		let m: RegExpExecArray | null;
-		while ((m = re.exec(text)) !== null) {
-			parts.push(escape(text.slice(lastIndex, m.index)));
-			if (m[1] !== undefined) {
-				parts.push(`<a href="${escape(m[2])}" target="_blank" rel="noopener noreferrer" class="chat-message-link underline">${escape(m[1] || m[2])}</a>`);
-			} else {
-				parts.push(`<a href="${escape(m[3])}" target="_blank" rel="noopener noreferrer" class="chat-message-link underline">${escape(m[3])}</a>`);
+		markdownLinkRe.lastIndex = 0;
+		while ((m = markdownLinkRe.exec(text)) !== null) {
+			matches.push({
+				index: m.index,
+				end: markdownLinkRe.lastIndex,
+				type: 'markdown',
+				text: m[1] || m[2],
+				url: m[2]
+			});
+		}
+		rawUrlRe.lastIndex = 0;
+		while ((m = rawUrlRe.exec(text)) !== null) {
+			// Skip if this URL is inside a markdown link we already captured
+			const insideMarkdown = matches.some(
+				(match) => match.type === 'markdown' && m!.index >= match.index && m!.index < match.end
+			);
+			if (!insideMarkdown) {
+				matches.push({ index: m.index, end: rawUrlRe.lastIndex, type: 'raw', url: m[1] });
 			}
-			lastIndex = re.lastIndex;
+		}
+		matches.sort((a, b) => a.index - b.index);
+		for (const match of matches) {
+			parts.push(escape(text.slice(lastIndex, match.index)));
+			const url = match.url;
+			const displayText = match.type === 'markdown' ? match.text : url;
+			parts.push(
+				`<a href="${escape(url)}" target="_blank" rel="noopener noreferrer" class="chat-message-link underline">${escape(displayText)}</a>`
+			);
+			lastIndex = match.end;
 		}
 		parts.push(escape(text.slice(lastIndex)));
 		return parts.join('');

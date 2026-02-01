@@ -34,8 +34,11 @@ export const GET: RequestHandler = async (event) => {
 			avatarUrl: r.role === 'human_agent' ? r.avatar_url : undefined
 		}));
 		const now = new Date().toISOString();
+		// Typing when: (human agent typing) or (AI generating: typing_until set and agent_typing_by null)
 		const agentTyping =
-			!conv.is_ai_active && conv.agent_typing_until && conv.agent_typing_until > now;
+			conv.agent_typing_until &&
+			conv.agent_typing_until > now &&
+			(conv.agent_typing_by == null ? true : !conv.is_ai_active);
 		let agentAvatarUrl: string | null = null;
 		if (agentTyping && conv.agent_typing_by) {
 			const { data: avatar } = await supabase.rpc('get_agent_avatar', {

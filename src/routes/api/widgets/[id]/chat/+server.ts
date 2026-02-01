@@ -33,6 +33,7 @@ export const POST: RequestHandler = async (event) => {
 		? body.sessionId.trim()
 		: `anon-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
+	let conversationIdForTyping: string | null = null;
 	try {
 		const supabase = getSupabase();
 		const { data: widget, error: widgetError } = await supabase
@@ -119,6 +120,15 @@ export const POST: RequestHandler = async (event) => {
 
 		const ownerId = widget.created_by as string | null;
 		if (!ownerId) return json({ error: 'Widget has no owner' }, { status: 400 });
+
+		// Signal "AI is generating" so the client can show typing and poll until done (no artificial timeout).
+		conversationIdForTyping = conv.id;
+		const adminSupabaseForTyping = getSupabaseAdmin();
+		const typingUntil = new Date(Date.now() + 5 * 60 * 1000).toISOString(); // 5 min max
+		await adminSupabaseForTyping
+			.from('widget_conversations')
+			.update({ agent_typing_until: typingUntil, agent_typing_by: null })
+			.eq('id', conv.id);
 
 		const { data: apiKey, error: keyError } = await supabase.rpc('get_owner_llm_key_for_chat', {
 			p_widget_id: widgetId,
@@ -320,7 +330,7 @@ export const POST: RequestHandler = async (event) => {
 					const emailInstruction = quoteEmailSent
 						? ' In the same message, say they will also receive the quote by email, but give them the link above as a hyperlink in your response.'
 						: ' Give them the link above as a hyperlink in your response. Do not say they will receive it by email.';
-					const quoteLine = `A quote PDF has been generated. You MUST include this exact clickable link in your reply so the customer can download it now: [Download Quote](${gen.signedUrl}).${emailInstruction}`;
+					const quoteLine = `A quote PDF has been generated. You MUST include this exact clickable link in your reply on a single line (no line break between the text and the URL): [Download Quote](${gen.signedUrl}).${emailInstruction}`;
 					triggerResult = {
 						...triggerResult,
 						webhookResult: quoteLine + (triggerResult.webhookResult || '')
@@ -423,7 +433,7 @@ export const POST: RequestHandler = async (event) => {
 			const isQuote = quoteTriggerIds.has(triggerResult.triggerId.toLowerCase());
 			const quoteHasLink = isQuote && triggerResult.webhookResult.includes('[Download Quote]');
 			const instruction = quoteHasLink
-				? `A quote was just generated. In your reply you MUST: (1) Confirm the quote is ready${quoteEmailSent === true ? ', (2) Say they will receive it by email, AND (3)' : ', (2)'} Include the download link from the data below as a clickable markdown link [Download Quote](url) in the same message. Do not skip the link.`
+				? `A quote was just generated. In your reply you MUST: (1) Confirm the quote is ready${quoteEmailSent === true ? ', (2) Say they will receive it by email, AND (3)' : ', (2)'} Include the download link from the data below as a clickable markdown link. Copy the link exactly as given: [Download Quote](url) on one line with no newline between the brackets and the URL—so the customer only sees "Download Quote" as a link, not the long URL.`
 				: isQuote
 					? `The user asked for a quote but we need more information first. Follow the instruction below—ask only for what is missing. Do not say the quote is being generated until we have name, email, and roof size (square metres).`
 					: `The following information was retrieved from an external system (trigger: ${triggerResult.triggerName}). Use it to answer the customer's question accurately and naturally. Do not say "according to our system" unless appropriate.`;
@@ -436,6 +446,13 @@ export const POST: RequestHandler = async (event) => {
 			content: m.content
 		}));
 
+		async function clearAiTyping() {
+			await adminSupabaseForTyping
+				.from('widget_conversations')
+				.update({ agent_typing_until: null, agent_typing_by: null })
+				.eq('id', conv.id);
+		}
+
 		async function runStream(provider: string, model: string, key: string) {
 			const modelInstance = getAISdkModel(provider, model, key);
 			return streamText({
@@ -444,6 +461,7 @@ export const POST: RequestHandler = async (event) => {
 				messages: modelMessages,
 				maxOutputTokens: 1024,
 				onFinish: async ({ text }) => {
+					await clearAiTyping();
 					if (text) {
 						const { error: insertErr } = await supabase
 							.from('widget_conversation_messages')
@@ -473,11 +491,22 @@ export const POST: RequestHandler = async (event) => {
 				}
 			}
 			const reply = (primaryErr instanceof Error ? primaryErr.message : 'Sorry, I could not respond.') as string;
+			await clearAiTyping();
 			return json({ error: reply, output: reply }, { status: 500 });
 		}
 	} catch (e) {
 		const msg = e instanceof Error ? e.message : 'Chat failed';
 		console.error('POST /api/widgets/[id]/chat:', e);
+		if (conversationIdForTyping) {
+			try {
+				await getSupabaseAdmin()
+					.from('widget_conversations')
+					.update({ agent_typing_until: null, agent_typing_by: null })
+					.eq('id', conversationIdForTyping);
+			} catch {
+				// ignore
+			}
+		}
 		return json({ error: msg }, { status: 500 });
 	}
 };
