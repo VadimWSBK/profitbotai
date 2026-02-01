@@ -51,13 +51,13 @@ export async function sendQuoteEmail(
 		.eq('user_id', userId)
 		.maybeSingle();
 	const company = (quoteSettings?.company as { name?: string; email?: string } | null) ?? {};
-	const fromEmail = typeof company.email === 'string' && company.email.trim()
+	let fromEmail = typeof company.email === 'string' && company.email.trim()
 		? company.email.trim()
 		: 'onboarding@resend.dev';
 	const fromName = typeof company.name === 'string' && company.name.trim()
 		? company.name.trim()
 		: 'Quote';
-	const from = fromName ? `${fromName} <${fromEmail}>` : fromEmail;
+	let from = fromName ? `${fromName} <${fromEmail}>` : fromEmail;
 
 	const greeting = customerName?.trim() ? `Hi ${customerName.trim()},` : 'Hi,';
 	const subject = 'Your quote is ready';
@@ -75,13 +75,23 @@ export async function sendQuoteEmail(
 </html>`;
 
 	if (integration.type === 'resend') {
-		const result = await sendEmailWithResend(integration.apiKey, {
+		let result = await sendEmailWithResend(integration.apiKey, {
 			from,
 			to,
 			subject,
 			html,
 			replyTo: fromEmail !== 'onboarding@resend.dev' ? fromEmail : undefined
 		});
+		// If domain not verified, retry with Resend's default sender (works without domain verification)
+		if (!result.ok && result.error && /domain.*not verified|domain is not verified/i.test(result.error)) {
+			from = `Quote <onboarding@resend.dev>`;
+			result = await sendEmailWithResend(integration.apiKey, {
+				from,
+				to,
+				subject,
+				html
+			});
+		}
 		if (result.ok) return { sent: true };
 		return { sent: false, error: result.error };
 	}

@@ -53,7 +53,10 @@ export async function generateQuoteForConversation(
 			{ onConflict: 'user_id' }
 		);
 		if (upsertErr) {
-			console.error('[quote-pdf] Quote settings not found and failed to create default:', upsertErr);
+			const authHint = upsertErr.message?.includes('Invalid API key') || upsertErr.message?.includes('JWT')
+				? ' (Check SUPABASE_SERVICE_ROLE_KEY in environment)'
+				: '';
+			console.error('[quote-pdf] Quote settings not found and failed to create default:', upsertErr.message, authHint);
 			return { error: 'Quote settings not found. Save your quote template in Settings → Quote first.' };
 		}
 		settingsRow = (await admin.from('quote_settings').select('*').eq('user_id', ownerId).single()).data ?? undefined;
