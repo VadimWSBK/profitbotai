@@ -290,16 +290,18 @@
 								if (!serverTyping) {
 									typingStoppedCount++;
 									if (typingStoppedCount >= pollsAfterTypingStopped) break;
-								} else {
-									typingStoppedCount = 0;
-								}
-							} catch {
-								// ignore
-							}
+						} else {
+							typingStoppedCount = 0;
 						}
-						addBotMessage(config.window.customErrorMessage);
+					} catch {
+						// ignore
 					}
-					return;
+				}
+				agentTyping = false;
+				loading = false;
+				addBotMessage(config.window.customErrorMessage);
+			}
+			return;
 				} else {
 					botReply = config.window.customErrorMessage;
 				}
@@ -342,6 +344,8 @@
 						// ignore
 					}
 				}
+				agentTyping = false;
+				loading = false;
 				addBotMessage(config.window.customErrorMessage);
 				return;
 			}
@@ -402,8 +406,8 @@
 				.replace(/"/g, '&quot;');
 		const parts: string[] = [];
 		let lastIndex = 0;
-		// Markdown link: [text](url) with optional whitespace/newlines between ] and ( so split output still becomes one link
-		const markdownLinkRe = /\[([^\]]*)\]\s*\((https?:\/\/[^)]+)\)/g;
+		// Markdown link: [text](url) with optional whitespace between ] and (; optional closing ) so truncated links still embed
+		const markdownLinkRe = /\[([^\]]*)\]\s*\((https?:\/\/[^)\s]+)\)?/g;
 		const rawUrlRe = /(https?:\/\/[^\s<>"']+)/g;
 		// Collect all matches (markdown first, then raw URLs) and sort by index to output in order
 		type LinkMatch =
