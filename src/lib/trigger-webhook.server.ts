@@ -59,9 +59,14 @@ export async function getTriggerResultIfAny(
 		.map((t) => `- ${t.id}: ${t.description}`)
 		.join('\n');
 
-	const systemPrompt = `You are a classifier. Given the conversation so far and the user's latest message, respond with ONLY the trigger id (the part before the colon) if the user's intent clearly matches that trigger — including when they are completing a multi-turn flow (e.g. providing email and roof size after being asked for a quote). Otherwise respond with exactly: none
+	const systemPrompt = `You are a classifier. Given the conversation so far and the user's latest message, respond with ONLY the trigger id (the part before the colon) if the user's intent clearly matches that trigger. Otherwise respond with exactly: none
 
-Important: For roof quote, cost estimate, or price by area (sqm) intents, always respond with exactly: quote (use the built-in quote trigger id "quote", not another trigger). Quote generation is built-in and does not use a webhook.
+CRITICAL for quote intent: Respond with exactly "quote" when ANY of these is true:
+1. User asks for a quote, cost estimate, or price (e.g. roof quote, price by sqm/area).
+2. User is completing a multi-turn flow: the assistant previously asked for name, email, or roof size for a quote, and the user is now providing that information (e.g. "John, john@example.com, 400 sqm" or "my roof is 200 square metres").
+3. User provides name + email + roof/area size in one message when the conversation topic is quotes.
+
+Use the built-in trigger id "quote", not another trigger. Quote generation is built-in and does not use a webhook.
 
 Triggers:
 ${triggerList}

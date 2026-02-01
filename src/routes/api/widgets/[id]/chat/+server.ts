@@ -207,24 +207,26 @@ export const POST: RequestHandler = async (event) => {
 					})
 				: null;
 
-		// Fallback: if classifier missed it but message clearly requests a quote and we have all required fields
-		const hasQuoteKeyword = /quote|cost|price|estimate|sqm|m2|m²|square\s*metre/i.test(message);
+		// Fallback: if classifier missed it but we have all required fields for a quote
+		const hasQuoteKeyword = /quote|cost|price|estimate|sqm|m2|m²|square\s*metre[s]?|sq\.?\s*metre[s]?|roof\s*size|area\s*is|square\s*foot/i.test(message);
 		const fallbackHasRoofSize = extractedContact.roofSize != null;
 		const fallbackHasEmail = !!(contactForPrompt?.email ?? extractedContact.email);
 		const fallbackHasName = !!(contactForPrompt?.name ?? extractedContact.name);
-		if (
-			!triggerResult &&
-			hasQuoteKeyword &&
-			fallbackHasRoofSize &&
-			fallbackHasEmail &&
-			fallbackHasName
-		) {
-			triggerResult = {
-				triggerId: 'quote',
-				triggerName: 'Quote',
-				webhookResult: ''
-			};
-			console.log('[chat/quote] fallback: treating as quote intent (message had quote+sqm+contact)');
+		// Multi-turn fallback: assistant recently asked for quote info (name/email/roof) and user is providing it
+		const lastAssistantMsg = llmHistory.findLast((t) => t.role === 'assistant')?.content ?? '';
+		const assistantAskedForQuote = /quote|name|email|roof|sqm|square\s*metre|cost|estimate|price/i.test(lastAssistantMsg);
+		if (!triggerResult && fallbackHasRoofSize && fallbackHasEmail && fallbackHasName) {
+			if (hasQuoteKeyword || assistantAskedForQuote) {
+				triggerResult = {
+					triggerId: 'quote',
+					triggerName: 'Quote',
+					webhookResult: ''
+				};
+				console.log('[chat/quote] fallback: treating as quote intent', {
+					hasQuoteKeyword,
+					assistantAskedForQuote
+				});
+			}
 		}
 
 		if (!triggerResult) {

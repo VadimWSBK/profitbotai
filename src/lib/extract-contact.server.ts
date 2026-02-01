@@ -70,8 +70,10 @@ export async function extractContactFromMessage(
 		}
 	}
 
-	// Regex fallback for roof size when LLM misses it (e.g. "200 sqm", "200m2", "200 m²")
-	const roofMatch = userMessage.match(/(\d+(?:\.\d+)?)\s*(?:sqm|m2|m²|square\s*metre|sq\.?\s*m\.?)/i);
+	// Regex fallback for roof size when LLM misses it
+	const roofMatch =
+		userMessage.match(/(\d+(?:\.\d+)?)\s*(?:sqm|m2|m²|square\s*metre[s]?|sq\.?\s*metre[s]?|sq\.?\s*m\.?)/i) ??
+		userMessage.match(/roof\s*(?:is|size)?\s*:?\s*(\d+(?:\.\d+)?)/i);
 	const roofFromRegex = roofMatch ? Number.parseFloat(roofMatch[1]) : undefined;
 
 	try {

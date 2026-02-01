@@ -161,7 +161,42 @@
 						loading = false;
 						return;
 					} else {
-						botReply = data.output ?? data.message ?? botReply;
+						const outputOrMessage = data.output ?? data.message;
+						if (typeof outputOrMessage === 'string' && outputOrMessage.trim()) {
+							botReply = outputOrMessage;
+						}
+						// If res.ok but no output/message, server may have returned stream as JSON or response not ready.
+						// Poll for the persisted message instead of showing error—avoids flashing error then real reply.
+						if (typeof botReply !== 'string' || botReply === config.window.customErrorMessage) {
+							const refetchMessages = async (): Promise<Message[]> => {
+								const refetch = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
+								const refetchData = await refetch.json().catch(() => ({}));
+								const list = Array.isArray(refetchData.messages) ? refetchData.messages : [];
+								return list.map((m: { role: string; content: string; avatarUrl?: string }) => ({
+									role: m.role as 'user' | 'bot',
+									content: m.content,
+									avatarUrl: m.avatarUrl
+								}));
+							};
+							const pollIntervalMs = 1500;
+							const totalWaitMs = 20000;
+							const maxAttempts = Math.ceil(totalWaitMs / pollIntervalMs);
+							for (let attempt = 0; attempt < maxAttempts; attempt++) {
+								await new Promise((r) => setTimeout(r, pollIntervalMs));
+								try {
+									const serverMessages = await refetchMessages();
+									if (serverMessages.length > messages.length || (serverMessages.length > 0 && serverMessages[serverMessages.length - 1].role === 'bot')) {
+										messages = serverMessages;
+										requestAnimationFrame(() => scrollToBottom());
+										loading = false;
+										return;
+									}
+								} catch {
+									// ignore refetch errors
+								}
+							}
+							botReply = config.window.customErrorMessage;
+						}
 					}
 					if (typeof botReply !== 'string') botReply = JSON.stringify(botReply);
 				} else if (res.ok && res.body) {
