@@ -9,6 +9,8 @@ export interface SendQuoteEmailOptions {
 	toEmail: string;
 	quoteDownloadUrl: string;
 	customerName?: string | null;
+	/** When provided, the PDF is attached to the email. */
+	pdfBuffer?: Buffer;
 }
 
 /**
@@ -38,11 +40,12 @@ export async function sendQuoteEmail(
 		return { sent: false, error: 'No mailing integration connected' };
 	}
 
-	const { toEmail, quoteDownloadUrl, customerName } = opts;
+	const { toEmail, quoteDownloadUrl, customerName, pdfBuffer } = opts;
 	const to = toEmail.trim().toLowerCase();
 	if (!to) {
 		return { sent: false, error: 'Missing recipient email' };
 	}
+	const hasAttachment = Boolean(pdfBuffer && pdfBuffer.length > 0);
 
 	// From address: Resend requires an email on your verified domain when sending to customers.
 	// Prefer integration.fromEmail (set in Settings → Integrations → Resend), then quote_settings.company.email.
@@ -66,13 +69,16 @@ export async function sendQuoteEmail(
 
 	const greeting = customerName?.trim() ? `Hi ${customerName.trim()},` : 'Hi,';
 	const subject = 'Your quote is ready';
+	const bodyCopy = hasAttachment
+		? 'Your quote PDF is attached to this email. You can also download it using the link below:'
+		: 'Your quote is ready. Click the link below to download your PDF:';
 	const html = `
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
 <body style="font-family: system-ui, -apple-system, sans-serif; line-height: 1.5; color: #1f2937; max-width: 560px; margin: 0 auto; padding: 24px;">
   <p>${greeting}</p>
-  <p>Your quote is ready. Click the link below to download your PDF:</p>
+  <p>${bodyCopy}</p>
   <p><a href="${escapeHtml(quoteDownloadUrl)}" style="color: #b45309; font-weight: 600;">Download your quote</a></p>
   <p>This link will expire in 1 hour. If you have any questions, just reply to this email.</p>
   <p style="color: #6b7280; font-size: 14px;">— ${escapeHtml(fromName)}</p>
@@ -85,7 +91,8 @@ export async function sendQuoteEmail(
 			to,
 			subject,
 			html,
-			replyTo: fromEmail === 'onboarding@resend.dev' ? undefined : fromEmail
+			replyTo: fromEmail === 'onboarding@resend.dev' ? undefined : fromEmail,
+			attachments: hasAttachment ? [{ filename: 'quote.pdf', content: pdfBuffer! }] : undefined
 		});
 		if (result.ok) return { sent: true };
 		// Resend only allows sending to other recipients when "from" is an email on a verified domain.

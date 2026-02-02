@@ -6,6 +6,7 @@ import {
 	generatePdfFromDocDefinition,
 	type QuoteSettings
 } from '$lib/quote-pdf.server';
+import { sendQuoteEmail } from '$lib/send-quote-email.server';
 
 const BUCKET = 'roof_quotes';
 
@@ -133,6 +134,19 @@ export const POST: RequestHandler = async (event) => {
 
 	const { data: signed } = await admin.storage.from(BUCKET).createSignedUrl(fileName, 3600);
 	const pdfUrl = signed?.signedUrl ?? fileName;
+
+	// Send PDF by email when form owner has Resend connected (optional; don't fail the request if it fails)
+	const emailResult = await sendQuoteEmail(admin, ownerId, {
+		toEmail: email,
+		quoteDownloadUrl: pdfUrl,
+		customerName: name ?? undefined,
+		pdfBuffer
+	});
+	if (emailResult.sent) {
+		console.log('[forms/submit] Quote email sent to', email);
+	} else if (emailResult.error) {
+		console.warn('[forms/submit] Quote email not sent:', emailResult.error, '(to:', email + ')');
+	}
 
 	return json({ success: true, pdfUrl });
 };

@@ -57,10 +57,18 @@ export async function getResendConfigForUser(
 
 /**
  * Send an email via Resend API.
+ * Optional attachments: array of { filename, content: Buffer }.
  */
 export async function sendEmailWithResend(
 	apiKey: string,
-	opts: { from: string; to: string; subject: string; html: string; replyTo?: string }
+	opts: {
+		from: string;
+		to: string;
+		subject: string;
+		html: string;
+		replyTo?: string;
+		attachments?: { filename: string; content: Buffer }[];
+	}
 ): Promise<{ ok: boolean; error?: string }> {
 	try {
 		const resend = new Resend(apiKey);
@@ -69,7 +77,10 @@ export async function sendEmailWithResend(
 			to: opts.to,
 			subject: opts.subject,
 			html: opts.html,
-			reply_to: opts.replyTo
+			reply_to: opts.replyTo,
+			...(opts.attachments?.length && {
+				attachments: opts.attachments.map((a) => ({ filename: a.filename, content: a.content }))
+			})
 		});
 		if (error) return { ok: false, error: error.message };
 		if (data?.id) return { ok: true };
