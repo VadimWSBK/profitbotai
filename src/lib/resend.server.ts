@@ -90,3 +90,62 @@ export async function sendEmailWithResend(
 		return { ok: false, error: e instanceof Error ? e.message : 'Failed to send email' };
 	}
 }
+
+/** Resend receiving API – list received emails. */
+export async function listReceivedEmails(
+	apiKey: string,
+	opts?: { limit?: number; after?: string; before?: string }
+): Promise<{ data?: { id: string; to: string[]; from: string; subject: string; created_at: string }[]; hasMore?: boolean; error?: string }> {
+	try {
+		const resend = new Resend(apiKey);
+		const { data, error } = await resend.emails.receiving.list(opts);
+		if (error) return { error: error.message };
+		return {
+			data: (data?.data ?? []).map((e) => ({
+				id: e.id,
+				to: e.to ?? [],
+				from: e.from,
+				subject: e.subject ?? '',
+				created_at: e.created_at
+			})),
+			hasMore: data?.has_more ?? false
+		};
+	} catch (e) {
+		return { error: e instanceof Error ? e.message : 'Failed to list received emails' };
+	}
+}
+
+/** Resend receiving API – retrieve a single received email (full body). */
+export async function getReceivedEmail(
+	apiKey: string,
+	emailId: string
+): Promise<{
+	ok: boolean;
+	id?: string;
+	to?: string[];
+	from?: string;
+	subject?: string;
+	html?: string | null;
+	text?: string | null;
+	created_at?: string;
+	error?: string;
+}> {
+	try {
+		const resend = new Resend(apiKey);
+		const { data, error } = await resend.emails.receiving.get(emailId);
+		if (error) return { ok: false, error: error.message };
+		if (!data) return { ok: false, error: 'No data returned' };
+		return {
+			ok: true,
+			id: data.id,
+			to: data.to,
+			from: data.from,
+			subject: data.subject ?? '',
+			html: data.html ?? null,
+			text: data.text ?? null,
+			created_at: data.created_at
+		};
+	} catch (e) {
+		return { ok: false, error: e instanceof Error ? e.message : 'Failed to retrieve received email' };
+	}
+}

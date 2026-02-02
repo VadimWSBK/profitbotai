@@ -16,6 +16,9 @@
 	// Resend from-email update (when already connected)
 	let resendFromEmail = $state('');
 	let resendFromEmailSaving = $state(false);
+	// Sync received emails
+	let syncReceivedLoading = $state(false);
+	let syncReceivedResult = $state<{ synced: number; skipped: number } | null>(null);
 
 	async function load() {
 		try {
@@ -93,6 +96,27 @@
 			error = e instanceof Error ? e.message : 'Failed to disconnect';
 		} finally {
 			disconnecting = null;
+		}
+	}
+
+	async function syncReceivedEmails() {
+		syncReceivedLoading = true;
+		syncReceivedResult = null;
+		error = null;
+		try {
+			const res = await fetch('/api/settings/integrations/resend/sync-received', {
+				method: 'POST'
+			});
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok) {
+				error = (data.error as string) ?? 'Failed to sync received emails';
+				return;
+			}
+			syncReceivedResult = { synced: data.synced ?? 0, skipped: data.skipped ?? 0 };
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to sync received emails';
+		} finally {
+			syncReceivedLoading = false;
 		}
 	}
 
@@ -205,6 +229,25 @@
 													>
 														{resendFromEmailSaving ? 'Saving…' : 'Save'}
 													</button>
+												</div>
+											</div>
+											<div>
+												<p class="text-sm font-medium text-gray-700 mb-2">Received emails</p>
+												<p class="text-xs text-gray-500 mb-2">Sync emails sent to your inbox (replies to quotes, etc.) into Messages. Enable Inbound in Resend and add the <code class="text-xs bg-gray-100 px-1 rounded">email.received</code> webhook event for real-time updates.</p>
+												<div class="flex flex-wrap items-center gap-2">
+													<button
+														type="button"
+														disabled={syncReceivedLoading}
+														onclick={syncReceivedEmails}
+														class="px-4 py-2 bg-gray-700 hover:bg-gray-800 disabled:opacity-60 text-white font-medium rounded-lg transition-colors text-sm"
+													>
+														{syncReceivedLoading ? 'Syncing…' : 'Sync received emails'}
+													</button>
+													{#if syncReceivedResult}
+														<span class="text-sm text-gray-500">
+															{syncReceivedResult.synced} synced, {syncReceivedResult.skipped} skipped
+														</span>
+													{/if}
 												</div>
 											</div>
 											<div>

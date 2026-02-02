@@ -77,21 +77,29 @@ export const GET: RequestHandler = async (event) => {
 		chatMessages = raw.slice(0, limit).reverse();
 	}
 
-	// Fetch contact emails for unified view
-	let emailRows: { id: string; subject: string; body_preview: string | null; created_at: string; status: string }[] = [];
+	// Fetch contact emails for unified view (both outbound and inbound)
+	let emailRows: { id: string; subject: string; body_preview: string | null; created_at: string; status: string; direction: string }[] = [];
 	if (contact?.id) {
 		let emailQuery = supabase
 			.from('contact_emails')
-			.select('id, subject, body_preview, created_at, status')
-			.eq('contact_id', contact.id)
-			.eq('direction', 'outbound');
+			.select('id, subject, body_preview, created_at, status, direction')
+			.eq('contact_id', contact.id);
 		if (since) emailQuery = emailQuery.gt('created_at', since);
 		else if (before) emailQuery = emailQuery.lt('created_at', before);
 		const { data: emails } = await emailQuery.order('created_at', { ascending: !!since }).limit(100);
 		emailRows = (emails ?? []) as typeof emailRows;
 	}
 
-	type UnifiedMessage = { id: string; role: string; content: string; readAt: string | null; createdAt: string; channel: 'chat' | 'email'; status?: string };
+	type UnifiedMessage = {
+		id: string;
+		role: string;
+		content: string;
+		readAt: string | null;
+		createdAt: string;
+		channel: 'chat' | 'email';
+		status?: string;
+		direction?: 'outbound' | 'inbound';
+	};
 	const chatUnified: UnifiedMessage[] = chatMessages.map((m) => ({
 		id: m.id,
 		role: m.role,
@@ -102,12 +110,13 @@ export const GET: RequestHandler = async (event) => {
 	}));
 	const emailUnified: UnifiedMessage[] = emailRows.map((e) => ({
 		id: e.id,
-		role: 'assistant',
+		role: e.direction === 'inbound' ? 'user' : 'assistant',
 		content: `**${e.subject}**\n\n${e.body_preview ?? ''}`.trim(),
 		readAt: null,
 		createdAt: e.created_at,
 		channel: 'email' as const,
-		status: e.status
+		status: e.status,
+		direction: (e.direction === 'inbound' ? 'inbound' : 'outbound') as 'inbound' | 'outbound'
 	}));
 	const merged = [...chatUnified, ...emailUnified].sort(
 		(a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
@@ -134,7 +143,8 @@ export const GET: RequestHandler = async (event) => {
 			readAt: m.readAt,
 			createdAt: m.createdAt,
 			channel: m.channel,
-			...(m.status && { status: m.status })
+			...(m.status && { status: m.status }),
+			...(m.direction && { direction: m.direction })
 		})),
 		hasMore
 	});

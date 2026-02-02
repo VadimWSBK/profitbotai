@@ -27,6 +27,7 @@
 		createdAt: string;
 		channel?: 'chat' | 'email';
 		status?: string;
+		direction?: 'outbound' | 'inbound';
 	};
 	type ConversationDetail = {
 		id: string;
@@ -537,7 +538,9 @@
 										{#if msg.role === 'human_agent'}
 											<span class="text-xs font-medium text-blue-700">You (agent)</span>
 										{:else if msg.role === 'user'}
-											<span class="text-xs font-medium text-amber-700">Visitor</span>
+											<span class="text-xs font-medium text-amber-700">
+												{msg.channel === 'email' && msg.direction === 'inbound' ? 'Contact' : 'Visitor'}
+											</span>
 										{:else}
 											<span class="text-xs font-medium text-gray-600">AI</span>
 										{/if}
@@ -548,10 +551,14 @@
 									<div class="whitespace-pre-wrap">{msg.content.replace(/\*\*(.+?)\*\*/g, '$1')}</div>
 									<div class="flex items-center gap-2 mt-1">
 										<span class="text-xs text-gray-500">{formatTime(msg.createdAt)}</span>
-										{#if msg.channel === 'email' && msg.status}
-											<span class="text-xs {msg.status === 'opened' ? 'text-green-600' : msg.status === 'delivered' ? 'text-blue-600' : msg.status === 'bounced' || msg.status === 'failed' ? 'text-red-600' : 'text-gray-400'}">
-												({msg.status})
-											</span>
+										{#if msg.channel === 'email'}
+											{#if msg.direction === 'inbound'}
+												<span class="text-xs text-cyan-600">(received)</span>
+											{:else if msg.status}
+												<span class="text-xs {msg.status === 'opened' ? 'text-green-600' : msg.status === 'delivered' ? 'text-blue-600' : msg.status === 'bounced' || msg.status === 'failed' ? 'text-red-600' : 'text-gray-400'}">
+													({msg.status})
+												</span>
+											{/if}
 										{/if}
 									</div>
 								</div>
