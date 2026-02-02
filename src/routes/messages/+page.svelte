@@ -504,7 +504,7 @@
 					<!-- Messages: fixed max height, latest at bottom, scroll up to load more -->
 					<div
 						bind:this={messagesContainerEl}
-						class="flex flex-col flex-1 min-h-0 overflow-y-auto p-4 space-y-3 max-h-[400px]"
+						class="flex flex-col flex-1 min-h-0 overflow-y-auto p-4 space-y-3"
 					>
 						{#if hasMoreMessages}
 							<div class="flex justify-center pb-2">
@@ -528,7 +528,7 @@
 								class="flex {msg.role === 'user' ? 'justify-end' : msg.role === 'human_agent' ? 'justify-end' : 'justify-start'}"
 							>
 								<div
-									class="max-w-[80%] rounded-lg px-4 py-2 text-sm {msg.role === 'user'
+									class="max-w-[80%] min-w-0 rounded-lg px-4 py-2 text-sm break-words {msg.role === 'user'
 										? 'bg-amber-100 text-gray-900'
 										: msg.role === 'human_agent'
 											? 'bg-blue-100 text-gray-900'
@@ -548,7 +548,7 @@
 											<span class="text-xs text-gray-400">via email</span>
 										{/if}
 									</div>
-									<div class="whitespace-pre-wrap">{msg.content.replace(/\*\*(.+?)\*\*/g, '$1')}</div>
+									<div class="whitespace-pre-wrap break-words">{msg.content.replace(/\*\*(.+?)\*\*/g, '$1')}</div>
 									<div class="flex items-center gap-2 mt-1">
 										<span class="text-xs text-gray-500">{formatTime(msg.createdAt)}</span>
 										{#if msg.channel === 'email'}

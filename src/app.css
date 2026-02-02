@@ -14,3 +14,9 @@ body:has(.app-layout) {
 .scrollbar-hide::-webkit-scrollbar {
 	display: none;
 }
+
+/* Break long URLs in chat messages to prevent horizontal overflow */
+.chat-message-link {
+	word-break: break-all;
+	overflow-wrap: anywhere;
+}

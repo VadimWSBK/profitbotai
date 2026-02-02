@@ -540,14 +540,14 @@
 							</div>
 						{/if}
 						<div
-							class="px-3 py-2 max-w-[85%] rounded-lg flex items-start gap-2"
+							class="px-3 py-2 max-w-[85%] min-w-0 rounded-lg flex items-start gap-2"
 							style="
 								background-color: {botStyle.backgroundColor};
 								color: {botStyle.textColor};
 								border-radius: {win.messageBorderRadius}px;
 							"
 						>
-							<span class="flex-1 break-words">{@html formatMessageWithLinks(msg.content)}</span>
+							<span class="flex-1 min-w-0 break-all">{@html formatMessageWithLinks(msg.content)}</span>
 							{#if botStyle.showCopyToClipboardIcon}
 								<button type="button" class="shrink-0 opacity-70 hover:opacity-100" onclick={() => navigator.clipboard.writeText(msg.content)} title="Copy">
 									<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
@@ -556,9 +556,9 @@
 						</div>
 					</div>
 				{:else}
-					<div class="flex justify-end">
+					<div class="flex justify-end min-w-0 max-w-full">
 				<div
-					class="px-3 py-2 max-w-[85%] rounded-lg"
+					class="px-3 py-2 max-w-[85%] min-w-0 rounded-lg break-words"
 					style="
 						background-color: {bubble.backgroundColor};
 						color: {bubble.colorOfInternalIcons};

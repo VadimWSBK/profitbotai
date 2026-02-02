@@ -40,6 +40,13 @@
 	<aside
 		class="flex h-screen flex-col bg-gray-900 text-gray-400 shrink-0 transition-[width] duration-200 ease-out {sidebarExpanded ? 'w-52' : 'w-16'}"
 	>
+		<a href="/" class="shrink-0 flex items-center justify-center py-4 border-b border-gray-800 {sidebarExpanded ? 'px-3' : 'px-0'}" title="ProfitBot">
+			{#if sidebarExpanded}
+				<img src="/fonts/Roboto/PROFITBOT._LOGO_inverted.svg" alt="ProfitBot" class="h-8 w-auto max-w-full object-contain" />
+			{:else}
+				<img src={favicon} alt="ProfitBot" class="h-8 w-8 object-contain" />
+			{/if}
+		</a>
 		<nav class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden scrollbar-hide py-4 flex flex-col items-stretch {sidebarExpanded ? 'px-3' : 'px-0 items-center'}">
 			<a href="/" class="flex items-center gap-3 rounded-lg py-3 {sidebarExpanded ? 'px-3' : 'px-3 justify-center'} hover:bg-gray-800 hover:text-white transition-colors opacity-60" title="Stream">
 				<svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -120,7 +127,9 @@
 		<!-- Header -->
 		<header class="flex items-center justify-between px-6 py-4 bg-white border-b border-gray-200 shrink-0">
 			<h2 class="text-lg font-medium text-gray-800">
-				{data.user ? `Hello, ${data.user.email?.split('@')[0] ?? 'User'} 👋` : 'Dashboard'}
+				{data.user
+					? `Hello, ${(data.displayName && data.displayName.trim()) || data.user.email?.split('@')[0] || 'User'} 👋`
+					: 'Dashboard'}
 			</h2>
 			<div class="flex items-center gap-3">
 				{#if data.user}
@@ -131,12 +140,21 @@
 					>
 						Sign out
 					</a>
-					<div
-						class="w-9 h-9 rounded-full bg-amber-600 flex items-center justify-center text-white font-semibold text-sm"
-						title={data.user.email ?? ''}
-					>
-						{(data.user.email ?? 'U').charAt(0).toUpperCase()}
-					</div>
+					{#if data.avatarUrl}
+						<img
+							src={data.avatarUrl}
+							alt="Profile"
+							class="w-9 h-9 rounded-full object-cover border border-gray-200"
+							title={data.user.email ?? ''}
+						/>
+					{:else}
+						<div
+							class="w-9 h-9 rounded-full bg-amber-600 flex items-center justify-center text-white font-semibold text-sm"
+							title={data.user.email ?? ''}
+						>
+							{(data.user.email ?? 'U').charAt(0).toUpperCase()}
+						</div>
+					{/if}
 				{/if}
 			</div>
 		</header>

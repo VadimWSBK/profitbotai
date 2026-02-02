@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { invalidateAll } from '$app/navigation';
 	import { LLM_PROVIDERS } from '$lib/llm-providers';
 
 	let keys = $state<Record<string, string>>({ openai: '', anthropic: '', google: '' });
@@ -33,6 +34,7 @@
 				body: JSON.stringify({ displayName: displayName.trim(), avatarUrl: avatarUrl.trim() })
 			});
 			if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to save');
+			await invalidateAll();
 		} catch (e) {
 			alert(e instanceof Error ? e.message : 'Failed to save profile');
 		} finally {

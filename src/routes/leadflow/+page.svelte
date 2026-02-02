@@ -197,6 +197,65 @@
 		editingStageName = '';
 	}
 
+	function contactUrl(contactId: string): string {
+		return `/contacts?contact=${encodeURIComponent(contactId)}`;
+	}
+
+	const DRAG_TYPE = 'application/x-profitbot-leadflow';
+
+	type DragPayload = { kind: 'lead'; leadId: string; contactId: string; sourceStageId: string } | { kind: 'unassigned'; contactId: string };
+
+	let draggedPayload = $state<DragPayload | null>(null);
+	let dropTargetStageId = $state<string | null>(null);
+
+	function onDragStart(e: DragEvent, payload: DragPayload) {
+		const target = e.target as HTMLElement;
+		if (target.closest('a[href^="/contacts"]')) {
+			e.preventDefault();
+			return;
+		}
+		draggedPayload = payload;
+		if (e.dataTransfer) {
+			e.dataTransfer.effectAllowed = 'move';
+			e.dataTransfer.setData(DRAG_TYPE, JSON.stringify(payload));
+			e.dataTransfer.setData('text/plain', ''); // some browsers need this
+		}
+	}
+
+	function onDragEnd() {
+		draggedPayload = null;
+		dropTargetStageId = null;
+	}
+
+	function onDragOver(e: DragEvent, stageId: string) {
+		if (!e.dataTransfer?.types.includes(DRAG_TYPE)) return;
+		e.preventDefault();
+		e.dataTransfer.dropEffect = 'move';
+		dropTargetStageId = stageId;
+	}
+
+	function onDragLeave() {
+		dropTargetStageId = null;
+	}
+
+	function onDrop(e: DragEvent, stageId: string) {
+		e.preventDefault();
+		dropTargetStageId = null;
+		const raw = e.dataTransfer?.getData(DRAG_TYPE);
+		if (!raw) return;
+		let payload: DragPayload;
+		try {
+			payload = JSON.parse(raw) as DragPayload;
+		} catch {
+			return;
+		}
+		if (payload.kind === 'lead') {
+			if (stageId && payload.sourceStageId !== stageId) moveLead(payload.leadId, stageId);
+		} else {
+			if (stageId) addContactToStage(payload.contactId, stageId);
+		}
+	}
+
 	$effect(() => {
 		loadAll();
 	});
@@ -254,12 +313,23 @@
 					<div class="flex-1 min-h-[200px] overflow-y-auto p-2 space-y-2">
 						{#each unassignedFiltered as contact}
 							<div
-								class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm hover:shadow transition-shadow"
+								role="group"
+								aria-label="Contact card"
+								class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm hover:shadow transition-shadow cursor-grab active:cursor-grabbing {draggedPayload?.kind === 'unassigned' && draggedPayload.contactId === contact.id ? 'opacity-50' : ''}"
+								draggable="true"
+								ondragstart={(e) => onDragStart(e, { kind: 'unassigned', contactId: contact.id })}
+								ondragend={onDragEnd}
 							>
 								<div class="flex items-start gap-2">
-									<div class="w-8 h-8 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-sm font-semibold shrink-0">
+									<a
+										href={contactUrl(contact.id)}
+										class="shrink-0 w-8 h-8 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-sm font-semibold hover:bg-amber-200 transition-colors no-underline"
+										title="Open contact"
+										draggable="false"
+										onclick={(e) => e.stopPropagation()}
+									>
 										{displayLabel(contact).charAt(0).toUpperCase()}
-									</div>
+									</a>
 									<div class="min-w-0 flex-1">
 										<div class="font-medium text-gray-800 truncate">{displayLabel(contact)}</div>
 										{#if contact.email}
@@ -301,15 +371,35 @@
 							<span class="font-medium text-gray-800">{stage.name}</span>
 							<span class="text-sm text-gray-500">{(leadsByStage[stage.id] ?? []).length}</span>
 						</div>
-						<div class="flex-1 min-h-[200px] overflow-y-auto p-2 space-y-2">
+						<div
+							role="region"
+							aria-label="Drop zone for {stage.name}"
+							class="flex-1 min-h-[200px] overflow-y-auto p-2 space-y-2 transition-colors {dropTargetStageId === stage.id ? 'bg-amber-50/80 ring-2 ring-amber-300 ring-inset rounded-lg' : ''}"
+							ondragover={(e) => onDragOver(e, stage.id)}
+							ondragleave={onDragLeave}
+							ondrop={(e) => onDrop(e, stage.id)}
+						>
 							{#each (leadsByStage[stage.id] ?? []) as lead}
 								{@const contact = lead.contact}
 								{#if contact}
-									<div class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm hover:shadow transition-shadow">
+									<div
+										role="group"
+										aria-label="Lead card"
+										class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm hover:shadow transition-shadow cursor-grab active:cursor-grabbing {draggedPayload?.kind === 'lead' && draggedPayload.leadId === lead.id ? 'opacity-50' : ''}"
+										draggable="true"
+										ondragstart={(e) => onDragStart(e, { kind: 'lead', leadId: lead.id, contactId: contact.id, sourceStageId: stage.id })}
+										ondragend={onDragEnd}
+									>
 										<div class="flex items-start gap-2">
-											<div class="w-8 h-8 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-sm font-semibold shrink-0">
+											<a
+												href={contactUrl(contact.id)}
+												class="shrink-0 w-8 h-8 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-sm font-semibold hover:bg-amber-200 transition-colors no-underline"
+												title="Open contact"
+												draggable="false"
+												onclick={(e) => e.stopPropagation()}
+											>
 												{displayLabel(contact).charAt(0).toUpperCase()}
-											</div>
+											</a>
 											<div class="min-w-0 flex-1">
 												<div class="font-medium text-gray-800 truncate">{displayLabel(contact)}</div>
 												{#if contact.email}
@@ -323,7 +413,7 @@
 										</div>
 										<div class="mt-2 pt-2 border-t border-gray-100 flex gap-2">
 											<a
-												href="/contacts"
+												href={contactUrl(contact.id)}
 												class="text-xs font-medium text-amber-600 hover:text-amber-700"
 											>
 												View contact
