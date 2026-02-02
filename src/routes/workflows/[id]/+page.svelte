@@ -357,10 +357,11 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 			})
 			.catch(() => {});
 		// Load email templates for "Send email" action
-		fetch('/api/templates')
+		fetch('/api/templates', { credentials: 'include' })
 			.then((r) => r.json())
 			.then((d) => {
-				templates = (d.templates ?? d ?? []) as { id: string; name: string; subject: string; body: string }[];
+				const list = Array.isArray(d?.templates) ? d.templates : (Array.isArray(d) ? d : []);
+				templates = list as { id: string; name: string; subject: string; body: string }[];
 			})
 			.catch(() => {});
 		// Load which LLM providers have API keys (for AI node "integrated" option)
@@ -698,7 +699,10 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 							{:else if actionType === 'Send email'}
 								<div class="space-y-3">
 									<div>
-										<label for="email-template" class="block text-xs font-medium text-gray-500 mb-1">Use template</label>
+										<div class="flex items-center justify-between gap-2 mb-1">
+											<label for="email-template" class="text-xs font-medium text-gray-500">Use template</label>
+											<a href="/templates" class="text-xs font-medium text-amber-600 hover:text-amber-700">Manage templates</a>
+										</div>
 										<select
 											id="email-template"
 											class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 bg-white"
@@ -724,7 +728,12 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 												<option value={t.id}>{t.name}</option>
 											{/each}
 										</select>
-										<p class="text-xs text-gray-400 mt-1">Optional. Selecting a template fills subject and body; you can still edit them.</p>
+										<p class="text-xs text-gray-400 mt-1">
+											Optional. Selecting a template fills subject and body; you can still edit them.
+											{#if templates.length === 0}
+												<a href="/templates/new" class="text-amber-600 hover:text-amber-700 font-medium">Create a template</a>
+											{/if}
+										</p>
 									</div>
 									<div>
 										<div class="flex items-center justify-between gap-2 mb-1">
