@@ -8,6 +8,8 @@
 	let displayName = $state('');
 	let avatarUrl = $state('');
 	let profileSaving = $state(false);
+	let profileUploading = $state(false);
+	let fileInput: HTMLInputElement;
 
 	async function load() {
 		const [keysRes, profileRes] = await Promise.all([
@@ -35,6 +37,27 @@
 			alert(e instanceof Error ? e.message : 'Failed to save profile');
 		} finally {
 			profileSaving = false;
+		}
+	}
+
+	async function onProfilePhotoSelected(e: Event) {
+		const input = e.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+		profileUploading = true;
+		try {
+			const formData = new FormData();
+			formData.append('file', file);
+			const res = await fetch('/api/settings/profile/upload', { method: 'POST', body: formData });
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(data.error || 'Upload failed');
+			avatarUrl = data.url ?? '';
+			await saveProfile();
+		} catch (err) {
+			alert(err instanceof Error ? err.message : 'Upload failed');
+		} finally {
+			profileUploading = false;
+			input.value = '';
 		}
 	}
 
@@ -83,10 +106,34 @@
 				<span class="text-sm font-medium text-gray-700 mb-1">Display name</span>
 				<input type="text" bind:value={displayName} placeholder="Your name" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
 			</label>
-			<label class="block">
-				<span class="text-sm font-medium text-gray-700 mb-1">Profile photo URL</span>
-				<input type="url" bind:value={avatarUrl} placeholder="https://..." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-			</label>
+			<div class="flex items-start gap-4">
+				{#if avatarUrl}
+					<img src={avatarUrl} alt="Profile" class="w-16 h-16 rounded-full object-cover border border-gray-200 shrink-0" />
+				{:else}
+					<div class="w-16 h-16 rounded-full bg-gray-100 border border-gray-200 shrink-0 flex items-center justify-center text-gray-400 text-xs">No photo</div>
+				{/if}
+				<div class="flex-1 min-w-0 space-y-2">
+					<input
+						type="file"
+						accept="image/png,image/jpeg,image/gif,image/webp"
+						class="hidden"
+						bind:this={fileInput}
+						onchange={onProfilePhotoSelected}
+					/>
+					<button
+						type="button"
+						disabled={profileUploading}
+						onclick={() => fileInput?.click()}
+						class="px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 disabled:opacity-60 rounded-lg transition-colors"
+					>
+						{profileUploading ? 'Uploading…' : 'Upload photo'}
+					</button>
+					<label class="block">
+						<span class="text-sm font-medium text-gray-700 mb-1">Or paste profile photo URL</span>
+						<input type="url" bind:value={avatarUrl} placeholder="https://..." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+					</label>
+				</div>
+			</div>
 		</div>
 		<button type="button" disabled={profileSaving} onclick={saveProfile} class="mt-4 px-4 py-2 bg-gray-100 hover:bg-gray-200 disabled:opacity-60 text-gray-800 font-medium rounded-lg transition-colors">
 			{profileSaving ? 'Saving…' : 'Save profile'}

@@ -6,8 +6,7 @@ import { getAISdkModel } from '$lib/ai-sdk-model.server';
 import { getConversationContextForLlm } from '$lib/conversation-context.server';
 import { getTriggerResultIfAny } from '$lib/trigger-webhook.server';
 import { extractContactFromMessage } from '$lib/extract-contact.server';
-import { generateQuoteForConversation } from '$lib/quote-pdf.server';
-import { sendQuoteEmail } from '$lib/send-quote-email.server';
+import { getQuoteWorkflowForWidget, runQuoteWorkflow } from '$lib/run-workflow.server';
 import type { WebhookTrigger } from '$lib/widget-config';
 
 /**
@@ -257,7 +256,7 @@ export const POST: RequestHandler = async (event) => {
 			console.log('[chat/quote] trigger matched', { triggerId: triggerResult.triggerId, triggerName: triggerResult.triggerName });
 		}
 
-		// When quote intent matches (built-in or a quote-related webhook trigger), generate PDF if we have name, email, and roof size
+		// When quote intent matches: run widget's "Message in the chat" / "Customer requests quote" workflow instead of hardcoded generate+email
 		const quoteTriggerIds = new Set(['quote', 'roof_quote']);
 		const isQuoteIntent =
 			triggerResult &&
@@ -275,76 +274,51 @@ export const POST: RequestHandler = async (event) => {
 				hasName,
 				hasEmail,
 				hasRoofSize,
-				extractedRoofSize: extractedContact.roofSize,
-				contactName: contact.name ?? extractedContact.name,
-				contactEmail: contact.email ?? extractedContact.email
+				extractedRoofSize: extractedContact.roofSize
 			});
 
 			if (hasName && hasEmail && hasRoofSize) {
 				const adminSupabase = getSupabaseAdmin();
-				const extracted = { roofSize: Number(extractedContact.roofSize) };
-				let gen: { signedUrl?: string; storagePath?: string; error?: string };
-				try {
-					gen = await generateQuoteForConversation(
-						adminSupabase,
-						conv.id,
-						widgetId,
-						contact,
-						extracted,
-						ownerId ?? undefined
-					);
-					console.log('[chat/quote] generateQuoteForConversation result', {
-						hasSignedUrl: !!gen.signedUrl,
-						hasStoragePath: !!gen.storagePath,
-						error: gen.error
-					});
-				} catch (e) {
-					console.error('[chat/quote] generateQuoteForConversation threw:', e);
-					gen = { error: e instanceof Error ? e.message : 'PDF generation failed' };
-				}
-				if (gen.signedUrl && gen.storagePath) {
-					// Storage trigger will append path to contact on upload; explicit call in case trigger misses metadata
-					const { error: appendErr } = await adminSupabase.rpc('append_pdf_quote_to_contact', {
-						p_conversation_id: conv.id,
-						p_widget_id: widgetId,
-						p_pdf_url: gen.storagePath
-					});
-					if (appendErr) console.error('append_pdf_quote_to_contact:', appendErr);
-
-					// Send quote via widget owner's mailing integration (Resend, etc.) when connected
-					const toEmail = (contact.email ?? extractedContact.email) ?? '';
-					const emailResult = await sendQuoteEmail(adminSupabase, ownerId, {
-						toEmail,
-						quoteDownloadUrl: gen.signedUrl,
-						customerName: contact.name ?? extractedContact.name ?? null
-					});
-					quoteEmailSent = emailResult.sent;
-					if (quoteEmailSent) {
-						console.log('[chat/quote] Quote email sent to', toEmail);
-					} else if (emailResult.error) {
-						console.error('[chat/quote] Quote email not sent:', emailResult.error, '(to:', toEmail + ')');
-						if (emailResult.error === 'No mailing integration connected') {
-							console.error('[chat/quote] Widget owner must connect Resend in Settings → Integrations to send quote emails.');
-						}
+				const quoteWorkflow = await getQuoteWorkflowForWidget(adminSupabase, widgetId);
+				if (quoteWorkflow) {
+					try {
+						const runResult = await runQuoteWorkflow(adminSupabase, quoteWorkflow, {
+							conversationId: conv.id,
+							widgetId,
+							ownerId: ownerId ?? '',
+							contact,
+							extractedRoofSize:
+								extractedContact.roofSize != null ? Number(extractedContact.roofSize) : undefined
+						});
+						quoteEmailSent = runResult.quoteEmailSent;
+						triggerResult = {
+							triggerId: runResult.triggerId,
+							triggerName: runResult.triggerName,
+							webhookResult: runResult.webhookResult + (triggerResult?.webhookResult ?? '')
+						};
+						console.log('[chat/quote] Workflow ran', { workflowId: quoteWorkflow.id, quoteEmailSent });
+					} catch (e) {
+						console.error('[chat/quote] runQuoteWorkflow threw:', e);
+						triggerResult = {
+							...triggerResult,
+							webhookResult: `(Workflow failed: ${e instanceof Error ? e.message : 'Unknown error'}. ${triggerResult?.webhookResult ?? ''})`
+						};
 					}
-					const emailInstruction = quoteEmailSent
-						? ' In the same message, say they will also receive the quote by email, but give them the link above as a hyperlink in your response.'
-						: ' Give them the link above as a hyperlink in your response. Do not say they will receive it by email.';
-					const quoteLine = `A quote PDF has been generated. You MUST include this exact clickable link in your reply on a single line (no line break between the text and the URL): [Download Quote](${gen.signedUrl}).${emailInstruction}`;
+				} else {
+					// No workflow configured for this widget: do not generate or email; tell user to set up workflow
 					triggerResult = {
 						...triggerResult,
-						webhookResult: quoteLine + (triggerResult.webhookResult || '')
+						webhookResult:
+							'The user asked for a quote. No quote workflow is set up for this widget. In Workflows, create a workflow with trigger "Message in the chat" → "When customer requests quote" and actions "Generate quote" and "Send email", then assign it to this widget.'
 					};
-				} else if (gen.error) {
-					triggerResult = { ...triggerResult, webhookResult: `(Quote PDF could not be generated: ${gen.error}. ${triggerResult.webhookResult || ''})` };
 				}
 			} else {
-				// Missing required info: tell the bot to ask for it (do not generate yet)
+				// Missing required info: tell the bot to ask for it (do not run workflow yet)
 				const missing: string[] = [];
 				if (!hasName) missing.push('name');
 				if (!hasEmail) missing.push('email');
 				if (!hasRoofSize) missing.push('roof size in square metres');
-				console.log('[chat/quote] PDF not generated: missing', missing.join(', '));
+				console.log('[chat/quote] Workflow not run: missing', missing.join(', '));
 				const instruction = `The user wants a quote but we need the following before we can generate it: ${missing.join(', ')}. Politely ask for only the missing information (e.g. "What's your name?", "What's your email?", "What's your roof size in square metres?"). Do not say the quote is being generated or promise a quote until we have name, email, and roof size.`;
 				triggerResult = { ...triggerResult, webhookResult: instruction };
 			}
