@@ -75,8 +75,18 @@ export async function sendQuoteEmail(
 	if (useCustomContent) {
 		// Use workflow-configured subject and body (placeholders already substituted by caller)
 		subject = (typeof customSubject === 'string' && customSubject.trim()) ? customSubject.trim() : 'Your quote is ready';
-		const bodyEscaped = escapeHtml(customBody.trim()).replaceAll(/\n/g, '<br>\n');
-		const bodyWithLinks = linkify(bodyEscaped);
+		// Support [[link text]] → <a href="quoteDownloadUrl">link text</a> for custom link text
+		const linkTexts: string[] = [];
+		let bodyProcessed = customBody.trim().replace(/\[\[([^\]]*)\]\]/g, (_, text: string) => {
+			linkTexts.push(escapeHtml(text));
+			return `\x00L${linkTexts.length - 1}\x00`;
+		});
+		bodyProcessed = escapeHtml(bodyProcessed).replaceAll(/\n/g, '<br>\n');
+		bodyProcessed = linkify(bodyProcessed);
+		bodyProcessed = bodyProcessed.replace(/\x00L(\d+)\x00/g, (_, i: string) =>
+			`<a href="${escapeHtml(quoteDownloadUrl)}" style="color: #b45309; font-weight: 600;">${linkTexts[Number(i)]}</a>`
+		);
+		const bodyWithLinks = bodyProcessed;
 		const hasLink = bodyWithLinks.includes('href=');
 		html = `
 <!DOCTYPE html>

@@ -59,15 +59,28 @@ function getActionNodesInOrder(nodes: WorkflowNode[], edges: WorkflowEdge[]): Wo
 	return order;
 }
 
-/** Substitute {{contact.name}}, {{contact.email}}, etc. in a prompt string. */
+/** Derive first/last name from full name (first word = first name, rest = last name). */
+function splitName(fullName: string): { first_name: string; last_name: string } {
+	const trimmed = (fullName ?? '').trim();
+	const parts = trimmed.split(/\s+/).filter(Boolean);
+	const first_name = parts[0] ?? '';
+	const last_name = parts.slice(1).join(' ') ?? '';
+	return { first_name, last_name };
+}
+
+/** Substitute {{contact.name}}, {{contact.first_name}}, {{contact.last_name}}, {{contact.email}}, etc. in a prompt string. */
 function substitutePrompt(
 	template: string,
 	contact: { name?: string | null; email?: string | null; phone?: string | null; address?: string | null },
 	extras: Record<string, string> = {}
 ): string {
 	let out = template;
+	const fullName = (contact?.name ?? '').trim();
+	const { first_name, last_name } = splitName(contact?.name ?? '');
 	const map: Record<string, string> = {
-		'contact.name': (contact?.name ?? '').trim(),
+		'contact.name': fullName,
+		'contact.first_name': first_name,
+		'contact.last_name': last_name,
 		'contact.email': (contact?.email ?? '').trim(),
 		'contact.phone': (contact?.phone ?? '').trim(),
 		'contact.address': (contact?.address ?? '').trim(),

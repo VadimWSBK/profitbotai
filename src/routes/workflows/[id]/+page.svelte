@@ -34,9 +34,9 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 	const AI_PROMPT_HINT = 'Use placeholders: {{contact.name}}, {{contact.email}}, {{contact.phone}}, {{quote.total}}, etc.';
 
 	const EMAIL_VARIABLE_GROUPS: { group: string; fields: { key: string; label: string }[] }[] = [
-		{ group: 'Contact', fields: [{ key: 'name', label: 'Name' }, { key: 'email', label: 'Email' }, { key: 'phone', label: 'Phone' }] },
+		{ group: 'Contact', fields: [{ key: 'name', label: 'Name' }, { key: 'first_name', label: 'First name' }, { key: 'last_name', label: 'Last name' }, { key: 'email', label: 'Email' }, { key: 'phone', label: 'Phone' }] },
 		{ group: 'Company', fields: [{ key: 'name', label: 'Name' }, { key: 'email', label: 'Email' }] },
-		{ group: 'Quote', fields: [{ key: 'total', label: 'Total' }, { key: 'items', label: 'Items' }] }
+		{ group: 'Quote', fields: [{ key: 'total', label: 'Total' }, { key: 'items', label: 'Items' }, { key: 'downloadUrl', label: 'Quote link' }] }
 	];
 
 	type EmailVarField = 'emailTo' | 'emailSubject' | 'emailBody' | 'emailCopyTo';
@@ -67,6 +67,7 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 	let widgetId = $state<string | null>(null);
 	let widgets = $state<{ id: string; name: string }[]>([]);
 	let forms = $state<{ id: string; name: string; title?: string }[]>([]);
+	let templates = $state<{ id: string; name: string; subject: string; body: string }[]>([]);
 	let llmProvidersWithKeys = $state<string[]>([]);
 	let saveToServerLoading = $state(false);
 	let workflowStatus = $state<'draft' | 'live'>('draft');
@@ -353,6 +354,13 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 			.then((r) => r.json())
 			.then((d) => {
 				forms = (d.forms ?? d ?? []) as { id: string; name: string; title?: string }[];
+			})
+			.catch(() => {});
+		// Load email templates for "Send email" action
+		fetch('/api/templates')
+			.then((r) => r.json())
+			.then((d) => {
+				templates = (d.templates ?? d ?? []) as { id: string; name: string; subject: string; body: string }[];
 			})
 			.catch(() => {});
 		// Load which LLM providers have API keys (for AI node "integrated" option)
@@ -689,6 +697,35 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 								<p class="text-xs text-gray-500">Creates a PDF quote from the conversation. No extra settings.</p>
 							{:else if actionType === 'Send email'}
 								<div class="space-y-3">
+									<div>
+										<label for="email-template" class="block text-xs font-medium text-gray-500 mb-1">Use template</label>
+										<select
+											id="email-template"
+											class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 bg-white"
+											value={typeof data.emailTemplateId === 'string' ? data.emailTemplateId : ''}
+											onchange={(e) => {
+												const id = (e.currentTarget as HTMLSelectElement).value;
+												if (!id) {
+													updateNodeData(selectedNode.id, { emailTemplateId: undefined });
+													return;
+												}
+												const t = templates.find((x) => x.id === id);
+												if (t) {
+													updateNodeData(selectedNode.id, {
+														emailTemplateId: t.id,
+														emailSubject: t.subject,
+														emailBody: t.body
+													});
+												}
+											}}
+										>
+											<option value="">None – write subject and body below</option>
+											{#each templates as t}
+												<option value={t.id}>{t.name}</option>
+											{/each}
+										</select>
+										<p class="text-xs text-gray-400 mt-1">Optional. Selecting a template fills subject and body; you can still edit them.</p>
+									</div>
 									<div>
 										<div class="flex items-center justify-between gap-2 mb-1">
 											<label for="email-to" class="text-xs font-medium text-gray-500">To (recipient)</label>
