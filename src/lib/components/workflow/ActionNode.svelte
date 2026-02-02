@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Handle, Position } from '@xyflow/svelte';
 	import type { NodeProps } from '@xyflow/svelte';
-	import { FileText, Mail, Webhook, Sparkles } from '@lucide/svelte';
+	import { FileText, Mail, Webhook, Sparkles, Send } from '@lucide/svelte';
 
 	let { data }: NodeProps = $props();
 	const label = $derived(data?.label ?? 'Action');
@@ -11,6 +11,7 @@
 	const ActionIcon = $derived(
 		actionType === 'Outbound webhook' ? Webhook
 			: actionType === 'Send email' ? Mail
+			: actionType === 'Send message (chat)' ? Send
 			: actionType === 'AI' ? Sparkles
 			: FileText
 	);

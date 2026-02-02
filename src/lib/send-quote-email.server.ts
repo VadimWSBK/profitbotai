@@ -74,26 +74,32 @@ export async function sendQuoteEmail(
 	}
 	let from = fromName ? `${fromName} <${fromEmail}>` : fromEmail;
 
-	let subject: string;
-	let html: string;
-	const useCustomContent = typeof customBody === 'string' && customBody.trim();
-	if (useCustomContent) {
-		// Use workflow-configured subject and body (placeholders already substituted by caller)
-		subject = (typeof customSubject === 'string' && customSubject.trim()) ? customSubject.trim() : 'Your quote is ready';
-		// Support [[link text]] → <a href="quoteDownloadUrl">link text</a> for custom link text
-		const linkTexts: string[] = [];
-		let bodyProcessed = customBody.trim().replace(/\[\[([^\]]*)\]\]/g, (_, text: string) => {
-			linkTexts.push(escapeHtml(text));
-			return `\x00L${linkTexts.length - 1}\x00`;
-		});
-		bodyProcessed = escapeHtml(bodyProcessed).replaceAll(/\n/g, '<br>\n');
-		bodyProcessed = linkify(bodyProcessed);
-		bodyProcessed = bodyProcessed.replace(/\x00L(\d+)\x00/g, (_, i: string) =>
-			`<a href="${escapeHtml(quoteDownloadUrl)}" style="color: #b45309; font-weight: 600;">${linkTexts[Number(i)]}</a>`
-		);
-		const bodyWithLinks = bodyProcessed;
-		const hasLink = bodyWithLinks.includes('href=');
-		html = `
+	// Quote emails are only sent from workflows; require subject and body from the workflow's Send email action (no hardcoded default).
+	const hasCustomBody = typeof customBody === 'string' && customBody.trim();
+	if (!hasCustomBody) {
+		return {
+			sent: false,
+			error:
+				'Configure the email subject and body in your workflow\'s Send email action (or choose a template). Quote emails are no longer sent with a default message.'
+		};
+	}
+
+	const subject =
+		typeof customSubject === 'string' && customSubject.trim() ? customSubject.trim() : 'Your quote';
+	// Support [[link text]] → <a href="quoteDownloadUrl">link text</a> for custom link text
+	const linkTexts: string[] = [];
+	let bodyProcessed = customBody!.trim().replace(/\[\[([^\]]*)\]\]/g, (_, text: string) => {
+		linkTexts.push(escapeHtml(text));
+		return `\x00L${linkTexts.length - 1}\x00`;
+	});
+	bodyProcessed = escapeHtml(bodyProcessed).replaceAll(/\n/g, '<br>\n');
+	bodyProcessed = linkify(bodyProcessed);
+	bodyProcessed = bodyProcessed.replace(/\x00L(\d+)\x00/g, (_, i: string) =>
+		`<a href="${escapeHtml(quoteDownloadUrl)}" style="color: #b45309; font-weight: 600;">${linkTexts[Number(i)]}</a>`
+	);
+	const bodyWithLinks = bodyProcessed;
+	const hasLink = bodyWithLinks.includes('href=');
+	const html = `
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
@@ -103,25 +109,6 @@ export async function sendQuoteEmail(
   <p style="color: #6b7280; font-size: 14px;">— ${escapeHtml(fromName)}</p>
 </body>
 </html>`;
-	} else {
-		const greeting = customerName?.trim() ? `Hi ${customerName.trim()},` : 'Hi,';
-		subject = 'Your quote is ready';
-		const bodyCopy = hasAttachment
-			? 'Your quote PDF is attached to this email. You can also download it using the link below:'
-			: 'Your quote is ready. Click the link below to download your PDF:';
-		html = `
-<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
-<body style="font-family: system-ui, -apple-system, sans-serif; line-height: 1.5; color: #1f2937; max-width: 560px; margin: 0 auto; padding: 24px;">
-  <p>${greeting}</p>
-  <p>${bodyCopy}</p>
-  <p><a href="${escapeHtml(quoteDownloadUrl)}" style="color: #b45309; font-weight: 600;">Download your quote</a></p>
-  <p>This link will expire in 1 hour. If you have any questions, just reply to this email.</p>
-  <p style="color: #6b7280; font-size: 14px;">— ${escapeHtml(fromName)}</p>
-</body>
-</html>`;
-	}
 
 	if (integration.type === 'resend') {
 		const result = await sendEmailWithResend(integration.apiKey, {
@@ -134,7 +121,7 @@ export async function sendQuoteEmail(
 		});
 		if (result.ok) {
 			if (opts.contactId && result.id) {
-				const bodyPreview = opts.customBody ?? 'Your quote is ready. Click the link to download.';
+				const bodyPreview = opts.customBody ?? '';
 				await storeContactEmail(supabase, {
 					contactId: opts.contactId,
 					conversationId: opts.conversationId,

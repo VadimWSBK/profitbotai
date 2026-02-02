@@ -4,7 +4,7 @@
 	import { SvelteFlow, Background, BackgroundVariant, Controls, Panel } from '@xyflow/svelte';
 	import { addEdge } from '@xyflow/svelte';
 	import '@xyflow/svelte/dist/style.css';
-	import { ClipboardList, Webhook, MessageCircle, Zap, CircleCheck, GitBranch, FileText, Mail, Sparkles } from '@lucide/svelte';
+	import { ClipboardList, Webhook, MessageCircle, Zap, CircleCheck, GitBranch, FileText, Mail, Sparkles, Send } from '@lucide/svelte';
 	import TriggerNode from '$lib/components/workflow/TriggerNode.svelte';
 	import ActionNode from '$lib/components/workflow/ActionNode.svelte';
 	import ConditionNode from '$lib/components/workflow/ConditionNode.svelte';
@@ -22,6 +22,7 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 	const ACTION_OPTIONS = [
 		{ value: 'Generate quote', label: 'Generate quote', description: 'Create a PDF quote from the conversation and attach it.', Icon: FileText },
 		{ value: 'Send email', label: 'Send email', description: 'Send an email (e.g. with the quote) to the contact.', Icon: Mail },
+		{ value: 'Send message (chat)', label: 'Send message (chat)', description: 'Post a message as the bot in the chat widget.', Icon: Send },
 		{ value: 'Outbound webhook', label: 'Outbound webhook', description: 'Call an external URL with a custom HTTP request.', Icon: Webhook },
 		{ value: 'AI', label: 'AI', description: 'Run an AI model with a custom prompt using your API key or integrated connection.', Icon: Sparkles }
 	] as const;
@@ -39,8 +40,11 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 		{ group: 'Quote', fields: [{ key: 'total', label: 'Total' }, { key: 'items', label: 'Items' }, { key: 'downloadUrl', label: 'Quote link' }] }
 	];
 
-	type EmailVarField = 'emailTo' | 'emailSubject' | 'emailBody' | 'emailCopyTo';
+	type EmailVarField = 'emailTo' | 'emailSubject' | 'emailBody' | 'emailCopyTo' | 'chatMessage';
 	let activeEmailVarField = $state<EmailVarField | null>(null);
+
+	const CHAT_MESSAGE_PLACEHOLDER = 'e.g. Hi {{contact.first_name}}, your quote is ready! [[Download your quote]]';
+	const CHAT_MESSAGE_HINT = 'Use placeholders like {{contact.name}}, {{contact.email}}, or {{quote.downloadUrl}}. Use [[link text]] for a clickable link.';
 
 	function insertEmailVariable(field: EmailVarField, groupKey: string, fieldKey: string) {
 		const tag = `{{${groupKey.toLowerCase()}.${fieldKey}}}`;
@@ -76,6 +80,93 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 	let lastSavedSnapshot = $state<string | null>(null);
 	let showExitConfirm = $state(false);
 	let notificationMessage = $state<string | null>(null);
+	type Tab = 'editor' | 'executions';
+	let activeTab = $state<Tab>('editor');
+	type ExecutionRow = {
+		id: string;
+		workflow_id: string;
+		trigger_type: string;
+		trigger_payload: Record<string, unknown>;
+		status: string;
+		error_message: string | null;
+		started_at: string;
+		finished_at: string | null;
+		step_count: number;
+	};
+	let executions = $state<ExecutionRow[]>([]);
+	let executionsLoading = $state(false);
+	let selectedExecutionId = $state<string | null>(null);
+	type ExecutionStep = {
+		id: string;
+		node_id: string;
+		node_label: string | null;
+		action_type: string | null;
+		status: string;
+		error_message: string | null;
+		output: Record<string, unknown> | null;
+		started_at: string;
+		finished_at: string | null;
+	};
+	type ExecutionDetail = ExecutionRow & { steps: ExecutionStep[] };
+	let executionDetail = $state<ExecutionDetail | null>(null);
+	let executionDetailLoading = $state(false);
+
+	async function loadExecutions() {
+		if (!workflowId || workflowId === 'new') return;
+		executionsLoading = true;
+		try {
+			const r = await fetch(`/api/workflows/${workflowId}/executions?limit=50`, { credentials: 'include' });
+			const data = await r.json();
+			executions = Array.isArray(data?.executions) ? data.executions : [];
+		} catch {
+			executions = [];
+		} finally {
+			executionsLoading = false;
+		}
+	}
+
+	async function loadExecutionDetail(execId: string) {
+		if (!workflowId || !execId) return;
+		selectedExecutionId = execId;
+		executionDetailLoading = true;
+		executionDetail = null;
+		try {
+			const r = await fetch(`/api/workflows/${workflowId}/executions/${execId}`, { credentials: 'include' });
+			const data = await r.json();
+			executionDetail = data?.execution ?? null;
+		} catch {
+			executionDetail = null;
+		} finally {
+			executionDetailLoading = false;
+		}
+	}
+
+	function closeExecutionDetail() {
+		selectedExecutionId = null;
+		executionDetail = null;
+	}
+
+	function formatTriggerType(t: string): string {
+		return t === 'form_submit' ? 'Form submit' : t === 'message_in_chat' ? 'Message in chat' : t;
+	}
+
+	function formatDate(iso: string): string {
+		try {
+			const d = new Date(iso);
+			return d.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+		} catch {
+			return iso;
+		}
+	}
+
+	function durationMs(start: string, end: string | null): number | null {
+		if (!end) return null;
+		try {
+			return new Date(end).getTime() - new Date(start).getTime();
+		} catch {
+			return null;
+		}
+	}
 
 	function showNotification(message: string) {
 		notificationMessage = message;
@@ -440,8 +531,30 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 			Live
 		</button>
 	</div>
+	<span class="text-gray-300" aria-hidden="true">|</span>
+	<div class="flex rounded-lg border border-gray-200 p-0.5 bg-gray-100 shrink-0" role="tablist" aria-label="Workflow view">
+		<button
+			type="button"
+			role="tab"
+			aria-selected={activeTab === 'editor'}
+			class="px-3 py-1.5 text-sm font-medium rounded-md transition-colors {activeTab === 'editor' ? 'bg-white border border-gray-200 shadow-sm text-gray-900' : 'text-gray-600 hover:text-gray-900'}"
+			onclick={() => { activeTab = 'editor'; }}
+		>
+			Editor
+		</button>
+		<button
+			type="button"
+			role="tab"
+			aria-selected={activeTab === 'executions'}
+			class="px-3 py-1.5 text-sm font-medium rounded-md transition-colors {activeTab === 'executions' ? 'bg-white border border-gray-200 shadow-sm text-gray-900' : 'text-gray-600 hover:text-gray-900'}"
+			onclick={() => { activeTab = 'executions'; loadExecutions(); }}
+		>
+			Executions
+		</button>
+	</div>
 	</header>
 
+	{#if activeTab === 'editor'}
 	<div class="flex flex-1 min-h-0 rounded-b-xl overflow-hidden border border-gray-200 border-t-0 bg-white">
 	<!-- Sidebar: node palette -->
 	<aside class="w-56 shrink-0 border-r border-gray-200 bg-gray-50 flex flex-col">
@@ -562,10 +675,7 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 								{#each TRIGGER_OPTIONS as { value, label, description, Icon }}
 									<button
 										type="button"
-										onclick={() => updateNodeData(selectedNode.id, {
-											triggerType: value,
-											...(value === 'Message in the chat' ? { messageIntent: 'When customer requests quote' } : {})
-										})}
+										onclick={() => updateNodeData(selectedNode.id, { triggerType: value })}
 										class="w-full flex items-center gap-3 px-3 py-3 rounded-lg border-2 border-gray-200 bg-white text-left hover:border-emerald-300 hover:bg-emerald-50/50 transition-colors"
 									>
 										<span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700">
@@ -596,9 +706,10 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 								<select
 									id="form-trigger-form"
 									class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 bg-white"
-									value={data.formId ?? (forms[0]?.id ?? '')}
+									value={data.formId ?? ''}
 									onchange={(e) => updateNodeData(selectedNode.id, { formId: (e.currentTarget as HTMLSelectElement).value })}
 								>
+									<option value="">Select a form</option>
 									{#each forms as f}
 										<option value={f.id}>{f.name ?? f.title ?? f.id}</option>
 									{/each}
@@ -609,18 +720,20 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 							<select
 								id="chat-trigger-when"
 								class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 bg-white"
-								value={data.messageIntent ?? 'When customer requests quote'}
+								value={data.messageIntent ?? ''}
 								onchange={(e) => updateNodeData(selectedNode.id, { messageIntent: (e.currentTarget as HTMLSelectElement).value })}
 							>
+								<option value="">Select when</option>
 								<option value="When customer requests quote">When customer requests quote</option>
 							</select>
 							<label for="chat-trigger-widget" class="block text-xs font-medium text-gray-500">Chat widget</label>
 							<select
 								id="chat-trigger-widget"
 								class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 bg-white"
-								value={data.widgetId ?? (widgets[0]?.id ?? '')}
+								value={data.widgetId ?? ''}
 								onchange={(e) => updateNodeData(selectedNode.id, { widgetId: (e.currentTarget as HTMLSelectElement).value })}
 							>
+								<option value="">Select a widget</option>
 								{#each widgets as w}
 									<option value={w.id}>{w.name}</option>
 								{/each}
@@ -696,6 +809,42 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 							</div>
 							{#if actionType === 'Generate quote'}
 								<p class="text-xs text-gray-500">Creates a PDF quote from the conversation. No extra settings.</p>
+							{:else if actionType === 'Send message (chat)'}
+								<div class="space-y-3">
+									<div>
+										<div class="flex items-center justify-between gap-2 mb-1">
+											<label for="chat-message" class="text-xs font-medium text-gray-500">Message</label>
+											<div class="relative">
+												<button
+													type="button"
+													onclick={() => activeEmailVarField = activeEmailVarField === 'chatMessage' ? null : 'chatMessage'}
+													class="text-xs font-medium text-amber-600 hover:text-amber-700"
+												>
+													Add variable
+												</button>
+												{#if activeEmailVarField === 'chatMessage'}
+													<div class="absolute right-0 top-full mt-1 z-10 w-48 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+														{#each EMAIL_VARIABLE_GROUPS as { group, fields }}
+															<p class="px-2 py-1 text-xs font-semibold text-gray-500 uppercase tracking-wider">{group}</p>
+															{#each fields as { key, label }}
+																<button type="button" class="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-amber-50" onclick={() => insertEmailVariable('chatMessage', group, key)}>{label}</button>
+															{/each}
+														{/each}
+													</div>
+												{/if}
+											</div>
+										</div>
+										<textarea
+											id="chat-message"
+											placeholder={CHAT_MESSAGE_PLACEHOLDER}
+											value={typeof data.chatMessage === 'string' ? data.chatMessage : ''}
+											oninput={(e) => updateNodeData(selectedNode.id, { chatMessage: (e.currentTarget as HTMLTextAreaElement).value })}
+											class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 bg-white placeholder:text-gray-400 min-h-[100px]"
+											rows={4}
+										></textarea>
+										<p class="text-xs text-gray-400 mt-1">{CHAT_MESSAGE_HINT}</p>
+									</div>
+								</div>
 							{:else if actionType === 'Send email'}
 								<div class="space-y-3">
 									<div>
@@ -1106,6 +1255,136 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 		</aside>
 		{/if}
 	</div>
+
+	{:else}
+	<!-- Executions tab -->
+	<div class="flex flex-1 min-h-0 flex-col rounded-b-xl overflow-hidden border border-gray-200 border-t-0 bg-white">
+		<div class="p-4 border-b border-gray-200 flex items-center justify-between">
+			<h2 class="text-sm font-semibold text-gray-900">Execution history</h2>
+			<button
+				type="button"
+				class="text-sm font-medium text-amber-600 hover:text-amber-700"
+				onclick={() => loadExecutions()}
+				disabled={executionsLoading}
+			>
+				{executionsLoading ? 'Loading…' : 'Refresh'}
+			</button>
+		</div>
+		<div class="flex-1 overflow-auto p-4">
+			{#if executionsLoading && executions.length === 0}
+				<p class="text-sm text-gray-500">Loading executions…</p>
+			{:else if executions.length === 0}
+				<p class="text-sm text-gray-500">No executions yet. Run this workflow (e.g. submit the form or request a quote in chat) to see runs here.</p>
+			{:else}
+				<div class="overflow-x-auto">
+					<table class="min-w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
+						<thead class="bg-gray-50 border-b border-gray-200">
+							<tr>
+								<th class="text-left px-4 py-2 font-medium text-gray-700">Started</th>
+								<th class="text-left px-4 py-2 font-medium text-gray-700">Trigger</th>
+								<th class="text-left px-4 py-2 font-medium text-gray-700">Status</th>
+								<th class="text-left px-4 py-2 font-medium text-gray-700">Steps</th>
+								<th class="text-left px-4 py-2 font-medium text-gray-700">Duration</th>
+								<th class="text-left px-4 py-2 font-medium text-gray-700">Error</th>
+								<th class="text-left px-4 py-2 font-medium text-gray-700"></th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each executions as exec}
+								<tr class="border-b border-gray-100 hover:bg-gray-50/50">
+									<td class="px-4 py-2 text-gray-900">{formatDate(exec.started_at)}</td>
+									<td class="px-4 py-2 text-gray-700">{formatTriggerType(exec.trigger_type)}</td>
+									<td class="px-4 py-2">
+										<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium {exec.status === 'success' ? 'bg-green-100 text-green-800' : exec.status === 'error' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'}">
+											{exec.status}
+										</span>
+									</td>
+									<td class="px-4 py-2 text-gray-700">{exec.step_count}</td>
+									<td class="px-4 py-2 text-gray-700">
+										{#if durationMs(exec.started_at, exec.finished_at) != null}
+											{durationMs(exec.started_at, exec.finished_at)!} ms
+										{:else}
+											—
+										{/if}
+									</td>
+									<td class="px-4 py-2 text-red-600 max-w-[200px] truncate" title={exec.error_message ?? ''}>{exec.error_message ?? '—'}</td>
+									<td class="px-4 py-2">
+										<button
+											type="button"
+											class="text-amber-600 hover:text-amber-700 font-medium"
+											onclick={() => loadExecutionDetail(exec.id)}
+										>
+											View steps
+										</button>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{/if}
+		</div>
+	</div>
+
+	{#if selectedExecutionId}
+		<div
+			class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+			role="dialog"
+			aria-modal="true"
+			aria-labelledby="execution-detail-title"
+		>
+			<div class="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col border border-gray-200">
+				<div class="px-4 py-3 border-b border-gray-200 flex items-center justify-between shrink-0">
+					<h3 id="execution-detail-title" class="font-semibold text-gray-900">Execution details</h3>
+					<button
+						type="button"
+						class="p-1 rounded text-gray-500 hover:bg-gray-100"
+						aria-label="Close"
+						onclick={closeExecutionDetail}
+					>
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+					</button>
+				</div>
+				<div class="flex-1 overflow-auto p-4">
+					{#if executionDetailLoading}
+						<p class="text-sm text-gray-500">Loading…</p>
+					{:else if executionDetail}
+						<div class="space-y-3">
+							<p class="text-sm text-gray-600">
+								<strong>Trigger:</strong> {formatTriggerType(executionDetail.trigger_type)}
+								<span class="ml-2"><strong>Status:</strong></span>
+								<span class="inline-flex ml-1 items-center px-2 py-0.5 rounded text-xs font-medium {executionDetail.status === 'success' ? 'bg-green-100 text-green-800' : executionDetail.status === 'error' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'}">{executionDetail.status}</span>
+							</p>
+							{#if executionDetail.error_message}
+								<p class="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{executionDetail.error_message}</p>
+							{/if}
+							<p class="text-sm font-medium text-gray-700">Steps</p>
+							<ul class="space-y-2 border border-gray-200 rounded-lg divide-y divide-gray-100 overflow-hidden">
+								{#each executionDetail.steps as step, i}
+									<li class="px-3 py-2 flex items-start gap-2">
+										<span class="text-gray-400 font-mono text-xs shrink-0">{i + 1}.</span>
+										<div class="min-w-0">
+											<p class="font-medium text-gray-900">{step.node_label ?? step.node_id}</p>
+											{#if step.action_type}
+												<p class="text-xs text-gray-500">{step.action_type}</p>
+											{/if}
+											<span class="inline-flex items-center mt-1 px-2 py-0.5 rounded text-xs font-medium {step.status === 'success' ? 'bg-green-100 text-green-800' : step.status === 'error' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'}">{step.status}</span>
+											{#if step.error_message}
+												<p class="text-xs text-red-600 mt-1">{step.error_message}</p>
+											{/if}
+										</div>
+									</li>
+								{/each}
+							</ul>
+						</div>
+					{:else}
+						<p class="text-sm text-gray-500">Could not load execution details.</p>
+					{/if}
+				</div>
+			</div>
+		</div>
+	{/if}
+	{/if}
 
 	{#if showExitConfirm}
 		<div
