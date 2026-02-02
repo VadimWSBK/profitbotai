@@ -81,6 +81,8 @@ export async function generateQuoteForConversation(
 		logo_url: settingsRow.logo_url,
 		barcode_url: settingsRow.barcode_url,
 		barcode_title: settingsRow.barcode_title ?? 'Call Us or Visit Website',
+		logo_size: settingsRow.logo_size != null ? Number(settingsRow.logo_size) : 120,
+		qr_size: settingsRow.qr_size != null ? Number(settingsRow.qr_size) : 80,
 		currency: settingsRow.currency ?? 'USD'
 	};
 
@@ -169,6 +171,8 @@ export async function generateQuoteForForm(
 		logo_url: settingsRow.logo_url,
 		barcode_url: settingsRow.barcode_url,
 		barcode_title: settingsRow.barcode_title ?? 'Call Us or Visit Website',
+		logo_size: settingsRow.logo_size != null ? Number(settingsRow.logo_size) : 120,
+		qr_size: settingsRow.qr_size != null ? Number(settingsRow.qr_size) : 80,
 		currency: settingsRow.currency ?? 'USD'
 	};
 

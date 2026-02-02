@@ -37,6 +37,10 @@ export type QuoteSettings = {
 	logo_base64?: string | null;
 	/** Resolved base64 data URL for PDF (server fills from barcode_url). */
 	barcode_base64?: string | null;
+	/** Logo width in points in the quote PDF (default 120). */
+	logo_size?: number | null;
+	/** QR code width in points in the quote PDF (default 80). */
+	qr_size?: number | null;
 	currency: string;
 };
 

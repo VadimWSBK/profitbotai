@@ -17,6 +17,8 @@
 		logo_url: data?.settings?.logo_url ?? '',
 		barcode_url: data?.settings?.barcode_url ?? '',
 		barcode_title: data?.settings?.barcode_title ?? 'Call Us or Visit Website',
+		logo_size: data?.settings?.logo_size ?? 120,
+		qr_size: data?.settings?.qr_size ?? 80,
 		currency: data?.settings?.currency ?? 'USD'
 	});
 	let saving = $state(false);
@@ -71,6 +73,8 @@
 					logo_url: settings.logo_url || null,
 					barcode_url: settings.barcode_url || null,
 					barcode_title: settings.barcode_title || null,
+					logo_size: settings.logo_size,
+					qr_size: settings.qr_size,
 					currency: settings.currency
 				})
 			});
@@ -94,6 +98,8 @@
 			logo_url: settings.logo_url || null,
 			barcode_url: settings.barcode_url || null,
 			barcode_title: settings.barcode_title || null,
+			logo_size: settings.logo_size,
+			qr_size: settings.qr_size,
 			currency: settings.currency
 		};
 		const roofSize = 100;
@@ -201,8 +207,13 @@
 								}}
 							/>
 						</label>
+						<div class="flex items-center gap-2">
+							<label class="text-sm text-gray-600">Size in PDF:</label>
+							<input type="number" min="20" max="400" bind:value={settings.logo_size} class="w-20 rounded border border-gray-300 px-2 py-1.5 text-sm text-gray-900" title="Width in points (20–400)" />
+							<span class="text-xs text-gray-500">pt</span>
+						</div>
 					</div>
-					<p class="text-xs text-gray-500 mt-1">PNG, JPEG, GIF, WebP or SVG. Max 2MB.</p>
+					<p class="text-xs text-gray-500 mt-1">PNG, JPEG, GIF, WebP or SVG. Max 2MB. Size sets width in the quote PDF (points).</p>
 				</div>
 			</div>
 		</section>
@@ -252,8 +263,13 @@
 								}}
 							/>
 						</label>
+						<div class="flex items-center gap-2">
+							<label class="text-sm text-gray-600">Size in PDF:</label>
+							<input type="number" min="20" max="300" bind:value={settings.qr_size} class="w-20 rounded border border-gray-300 px-2 py-1.5 text-sm text-gray-900" title="Width in points (20–300)" />
+							<span class="text-xs text-gray-500">pt</span>
+						</div>
 					</div>
-					<p class="text-xs text-gray-500 mt-1">PNG, JPEG, GIF, WebP or SVG. Max 2MB.</p>
+					<p class="text-xs text-gray-500 mt-1">PNG, JPEG, GIF, WebP or SVG. Max 2MB. Size sets width in the quote PDF (points).</p>
 				</div>
 				<div>
 					<label class="block text-sm font-medium text-gray-700 mb-1">QR code title</label>

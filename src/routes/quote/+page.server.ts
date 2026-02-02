@@ -6,7 +6,7 @@ export const load: PageServerLoad = async (event) => {
 	const supabase = getSupabaseClient(event);
 	const { data } = await supabase
 		.from('quote_settings')
-		.select('company, bank_details, line_items, deposit_percent, tax_percent, valid_days, logo_url, barcode_url, barcode_title, currency')
+		.select('company, bank_details, line_items, deposit_percent, tax_percent, valid_days, logo_url, barcode_url, barcode_title, logo_size, qr_size, currency')
 		.eq('user_id', event.locals.user.id)
 		.maybeSingle();
 	if (!data) {
@@ -21,6 +21,8 @@ export const load: PageServerLoad = async (event) => {
 				logo_url: null,
 				barcode_url: null,
 				barcode_title: 'Call Us or Visit Website',
+				logo_size: 120,
+				qr_size: 80,
 				currency: 'USD'
 			}
 		};
@@ -36,6 +38,8 @@ export const load: PageServerLoad = async (event) => {
 			logo_url: data.logo_url,
 			barcode_url: data.barcode_url,
 			barcode_title: data.barcode_title ?? 'Call Us or Visit Website',
+			logo_size: data.logo_size != null ? Number(data.logo_size) : 120,
+			qr_size: data.qr_size != null ? Number(data.qr_size) : 80,
 			currency: data.currency ?? 'USD'
 		}
 	};
