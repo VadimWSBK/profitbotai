@@ -239,7 +239,14 @@
 			if (res.ok) {
 				await refreshMessages();
 			} else {
-				emailError = (data.error as string) ?? 'Failed to sync inbox';
+				const raw = (data.error as string) ?? 'Failed to sync inbox';
+				// Resend returns this when the API key is send-only
+				if (/restricted.*send|only send/i.test(raw)) {
+					emailError =
+						'Your Resend API key can only send emails. To sync inbound replies, create an API key with Inbound permission at resend.com/api-keys and update it in Integrations.';
+				} else {
+					emailError = raw;
+				}
 			}
 		} catch {
 			emailError = 'Failed to sync inbox';
@@ -362,6 +369,47 @@
 	function formatDate(iso: string) {
 		const d = new Date(iso);
 		return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: d.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined });
+	}
+
+	/** Format message/email content: bold subject, clickable URLs, styled quoted blocks. */
+	function formatMessageContent(content: string): string {
+		const escape = (s: string) =>
+			String(s)
+				.replace(/&/g, '&amp;')
+				.replace(/</g, '&lt;')
+				.replace(/>/g, '&gt;')
+				.replace(/"/g, '&quot;')
+				.replace(/'/g, '&#39;');
+		let out = escape(content);
+		// Bold **subject** (API sends email as **Subject**\n\nbody)
+		out = out.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+		// Clickable URLs (don't include trailing punctuation)
+		out = out.replace(
+			/(https?:\/\/[^\s<\[\]()"']+)/g,
+			(url) => `<a href="${escape(url)}" target="_blank" rel="noopener noreferrer" class="text-amber-600 hover:text-amber-700 underline break-all">${escape(url)}</a>`
+		);
+		// Quoted lines (> prefix): style as block, remove the > from display
+		const lines = out.split('\n');
+		const parts: string[] = [];
+		let inQuote = false;
+		for (const line of lines) {
+			const isQuote = line.startsWith('&gt;') || line.startsWith('>');
+			if (isQuote) {
+				if (!inQuote) {
+					parts.push('<div class="email-quote border-l-2 border-gray-300 pl-3 my-2 text-gray-600 text-xs space-y-0.5">');
+					inQuote = true;
+				}
+				parts.push(line.replace(/^(&gt;|>)\s?/, '') + '<br>');
+			} else {
+				if (inQuote) {
+					parts.push('</div>');
+					inQuote = false;
+				}
+				parts.push(line + '<br>');
+			}
+		}
+		if (inQuote) parts.push('</div>');
+		return parts.join('').replace(/<br>$/, '');
 	}
 </script>
 
@@ -568,7 +616,7 @@
 											<span class="text-xs text-gray-400">via email</span>
 										{/if}
 									</div>
-									<div class="whitespace-pre-wrap break-words">{msg.content.replace(/\*\*(.+?)\*\*/g, '$1')}</div>
+									<div class="whitespace-pre-wrap break-words [&_.email-quote]:whitespace-normal [&_a]:break-all">{@html formatMessageContent(msg.content)}</div>
 									<div class="flex items-center gap-2 mt-1">
 										<span class="text-xs text-gray-500">{formatTime(msg.createdAt)}</span>
 										{#if msg.channel === 'email'}
@@ -618,8 +666,7 @@
 
 					<!-- Send email - Email tab -->
 					{#if channelFilter === 'email' && currentConv?.contactEmail}
-						<div class="shrink-0 flex items-center justify-between gap-2 px-4 py-2 border-t border-gray-200 bg-gray-50/80">
-							<p class="text-xs text-gray-500">Inbound emails are synced from Resend. If replies are missing, sync now.</p>
+						<div class="shrink-0 flex justify-end px-4 py-2 border-t border-gray-200 bg-gray-50/80">
 							<button
 								type="button"
 								onclick={syncInbox}
