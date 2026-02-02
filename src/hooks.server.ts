@@ -20,25 +20,37 @@ function isPublicPath(pathname: string): boolean {
 	if (/^\/api\/widgets\/[^/]+\/chat$/.test(pathname)) return true;
 	// Allow anonymous GET for widget messages (embed polls for human agent replies)
 	if (/^\/api\/widgets\/[^/]+\/messages$/.test(pathname)) return true;
+	// Allow anonymous GET for quote form config (embed form page fetches this)
+	if (/^\/api\/forms\/[^/]+$/.test(pathname)) return true;
+	// Allow anonymous POST for quote form submit (embed form submission)
+	if (/^\/api\/forms\/[^/]+\/submit$/.test(pathname)) return true;
 	return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'));
 }
 
 export const handle: Handle = async ({ event, resolve }) => {
-	const supabase = getSupabaseClient(event);
-	const {
-		data: { session }
-	} = await supabase.auth.getSession();
+	const pathname = event.url.pathname;
 
-	event.locals.user = session?.user ?? null;
-	event.locals.role = null;
+	// For public paths (embed, login, etc.) skip Supabase session to avoid 500s in iframes
+	if (isPublicPath(pathname)) {
+		event.locals.user = null;
+		event.locals.role = null;
+	} else {
+		const supabase = getSupabaseClient(event);
+		const {
+			data: { session }
+		} = await supabase.auth.getSession();
 
-	if (session?.user) {
-		const { data: profile } = await supabase
-			.from('profiles')
-			.select('role')
-			.eq('user_id', session.user.id)
-			.single();
-		event.locals.role = (profile?.role as 'admin' | 'user') ?? null;
+		event.locals.user = session?.user ?? null;
+		event.locals.role = null;
+
+		if (session?.user) {
+			const { data: profile } = await supabase
+				.from('profiles')
+				.select('role')
+				.eq('user_id', session.user.id)
+				.single();
+			event.locals.role = (profile?.role as 'admin' | 'user') ?? null;
+		}
 	}
 
 	// Allow API key auth for server-to-server (e.g. n8n)
