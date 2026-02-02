@@ -28,6 +28,20 @@ export const GET: RequestHandler = async (event) => {
 		.single();
 	if (convError || !conv) return json({ error: 'Conversation not found' }, { status: 404 });
 
+	// Get contact for this conversation (for contact-centric display)
+	const { data: contactRow } = await supabase
+		.from('contacts')
+		.select('id, name, email')
+		.eq('conversation_id', id)
+		.maybeSingle();
+	const contact = contactRow
+		? {
+				id: (contactRow as { id: string }).id,
+				name: (contactRow as { name: string | null }).name ?? null,
+				email: (contactRow as { email: string | null }).email ?? null
+			}
+		: null;
+
 	// Mark user messages as read
 	await supabase
 		.from('widget_conversation_messages')
@@ -36,11 +50,10 @@ export const GET: RequestHandler = async (event) => {
 		.eq('role', 'user')
 		.is('read_at', null);
 
-	let messages: { id: string; role: string; content: string; read_at: string | null; created_at: string }[] = [];
+	let chatMessages: { id: string; role: string; content: string; read_at: string | null; created_at: string }[] = [];
 	let hasMore = false;
 
 	if (since) {
-		// Polling: messages created after this date (order asc)
 		const { data: rows, error: msgError } = await supabase
 			.from('widget_conversation_messages')
 			.select('id, role, content, read_at, created_at')
@@ -48,9 +61,8 @@ export const GET: RequestHandler = async (event) => {
 			.gt('created_at', since)
 			.order('created_at', { ascending: true });
 		if (msgError) return json({ error: msgError.message }, { status: 500 });
-		messages = (rows ?? []) as typeof messages;
+		chatMessages = (rows ?? []) as typeof chatMessages;
 	} else {
-		// Latest page or "load more": order desc, then reverse for asc response
 		let query = supabase
 			.from('widget_conversation_messages')
 			.select('id, role, content, read_at, created_at')
@@ -60,10 +72,46 @@ export const GET: RequestHandler = async (event) => {
 		if (before) query = query.lt('created_at', before);
 		const { data: rows, error: msgError } = await query;
 		if (msgError) return json({ error: msgError.message }, { status: 500 });
-		const raw = (rows ?? []) as typeof messages;
+		const raw = (rows ?? []) as typeof chatMessages;
 		hasMore = raw.length > limit;
-		messages = raw.slice(0, limit).reverse();
+		chatMessages = raw.slice(0, limit).reverse();
 	}
+
+	// Fetch contact emails for unified view
+	let emailRows: { id: string; subject: string; body_preview: string | null; created_at: string; status: string }[] = [];
+	if (contact?.id) {
+		let emailQuery = supabase
+			.from('contact_emails')
+			.select('id, subject, body_preview, created_at, status')
+			.eq('contact_id', contact.id)
+			.eq('direction', 'outbound');
+		if (since) emailQuery = emailQuery.gt('created_at', since);
+		else if (before) emailQuery = emailQuery.lt('created_at', before);
+		const { data: emails } = await emailQuery.order('created_at', { ascending: !!since }).limit(100);
+		emailRows = (emails ?? []) as typeof emailRows;
+	}
+
+	type UnifiedMessage = { id: string; role: string; content: string; readAt: string | null; createdAt: string; channel: 'chat' | 'email'; status?: string };
+	const chatUnified: UnifiedMessage[] = chatMessages.map((m) => ({
+		id: m.id,
+		role: m.role,
+		content: m.content,
+		readAt: m.read_at,
+		createdAt: m.created_at,
+		channel: 'chat' as const
+	}));
+	const emailUnified: UnifiedMessage[] = emailRows.map((e) => ({
+		id: e.id,
+		role: 'assistant',
+		content: `**${e.subject}**\n\n${e.body_preview ?? ''}`.trim(),
+		readAt: null,
+		createdAt: e.created_at,
+		channel: 'email' as const,
+		status: e.status
+	}));
+	const merged = [...chatUnified, ...emailUnified].sort(
+		(a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+	);
 
 	const widget = Array.isArray(conv.widgets) ? conv.widgets[0] : conv.widgets;
 	return json({
@@ -74,14 +122,19 @@ export const GET: RequestHandler = async (event) => {
 			sessionId: conv.session_id,
 			isAiActive: conv.is_ai_active,
 			createdAt: conv.created_at,
-			updatedAt: conv.updated_at
+			updatedAt: conv.updated_at,
+			contactId: contact?.id ?? null,
+			contactName: contact?.name ?? null,
+			contactEmail: contact?.email ?? null
 		},
-		messages: messages.map((m) => ({
+		messages: merged.map((m) => ({
 			id: m.id,
 			role: m.role,
 			content: m.content,
-			readAt: m.read_at,
-			createdAt: m.created_at
+			readAt: m.readAt,
+			createdAt: m.createdAt,
+			channel: m.channel,
+			...(m.status && { status: m.status })
 		})),
 		hasMore
 	});

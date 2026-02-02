@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy, tick } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
+	import { page } from '$app/stores';
 
 	let { data } = $props();
 
@@ -14,6 +15,9 @@
 		createdAt: string;
 		updatedAt: string;
 		unreadCount: number;
+		contactId?: string | null;
+		contactName?: string | null;
+		contactEmail?: string | null;
 	};
 	type Message = {
 		id: string;
@@ -21,7 +25,27 @@
 		content: string;
 		readAt: string | null;
 		createdAt: string;
+		channel?: 'chat' | 'email';
+		status?: string;
 	};
+	type ConversationDetail = {
+		id: string;
+		widgetId: string;
+		widgetName: string;
+		sessionId: string;
+		isAiActive: boolean;
+		createdAt: string;
+		updatedAt: string;
+		contactId?: string | null;
+		contactName?: string | null;
+		contactEmail?: string | null;
+	};
+
+	const CHANNELS: { id: 'all' | 'chat' | 'email'; label: string; disabled?: boolean }[] = [
+		{ id: 'all', label: 'All' },
+		{ id: 'chat', label: 'Chat' },
+		{ id: 'email', label: 'Email' }
+	];
 
 	const widgets = $derived((data?.widgets ?? []) as Widget[]);
 
@@ -29,8 +53,13 @@
 	let conversations = $state<Conversation[]>([]);
 	let selectedConversation = $state<Conversation | null>(null);
 	let messages = $state<Message[]>([]);
-	let conversationDetail = $state<{ id: string; widgetId: string; widgetName: string; sessionId: string; isAiActive: boolean; createdAt: string; updatedAt: string } | null>(null);
+	let conversationDetail = $state<ConversationDetail | null>(null);
+	let channelFilter = $state<'all' | 'chat' | 'email'>('all');
 	let humanReply = $state('');
+	let emailSubject = $state('');
+	let emailBody = $state('');
+	let sendingEmail = $state(false);
+	let emailError = $state<string | null>(null);
 	let loading = $state(false);
 	let sending = $state(false);
 	let hasMoreMessages = $state(false);
@@ -44,6 +73,29 @@
 	const widgetFilterLabel = $derived(
 		selectedWidgetId ? widgets.find((w) => w.id === selectedWidgetId)?.name ?? 'All widgets' : 'All widgets'
 	);
+
+	function displayContactLabel(conv: Conversation | ConversationDetail | null): string {
+		if (!conv) return 'Unknown';
+		const name = conv.contactName ?? conv.contactEmail;
+		if (name?.trim()) return name.trim();
+		return conv.widgetName ?? 'Unknown contact';
+	}
+
+	function contactInitial(conv: Conversation | ConversationDetail | null): string {
+		return displayContactLabel(conv).charAt(0).toUpperCase() || '?';
+	}
+
+	function contactUrl(conv: Conversation | ConversationDetail | null): string {
+		if (!conv) return '/contacts';
+		const id = conv.contactId;
+		return id ? `/contacts?contact=${encodeURIComponent(id)}` : '/contacts';
+	}
+
+	const filteredMessages = $derived(
+		channelFilter === 'all' ? messages : messages.filter((m) => (m.channel ?? 'chat') === channelFilter)
+	);
+
+	const currentConv = $derived(conversationDetail ?? selectedConversation);
 
 	async function fetchConversations() {
 		loading = true;
@@ -71,6 +123,10 @@
 		conversationDetail = null;
 		messages = [];
 		hasMoreMessages = false;
+		channelFilter = 'all';
+		emailSubject = '';
+		emailBody = '';
+		emailError = null;
 		try {
 			const res = await fetch(`/api/conversations/${conv.id}?limit=${MESSAGES_PAGE_SIZE}`);
 			const json = await res.json().catch(() => ({}));
@@ -142,6 +198,32 @@
 			}
 		} finally {
 			sending = false;
+		}
+	}
+
+	async function sendEmail() {
+		const subject = emailSubject.trim();
+		const body = emailBody.trim();
+		if (!subject || !body || !selectedConversation) return;
+		emailError = null;
+		sendingEmail = true;
+		try {
+			const res = await fetch(`/api/conversations/${selectedConversation.id}/send-email`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ subject, body })
+			});
+			const json = await res.json().catch(() => ({}));
+			if (res.ok && json.sent) {
+				emailSubject = '';
+				emailBody = '';
+				await refreshMessages();
+				scrollToBottom();
+			} else {
+				emailError = json.error ?? 'Failed to send email';
+			}
+		} finally {
+			sendingEmail = false;
 		}
 	}
 
@@ -234,6 +316,15 @@
 		fetchConversations();
 	});
 
+	// Deep-link: select conversation from URL ?conversation=id (e.g. from Contacts page)
+	$effect(() => {
+		const convId = $page.url.searchParams.get('conversation');
+		if (convId && conversations.length > 0 && (!selectedConversation || selectedConversation.id !== convId)) {
+			const conv = conversations.find((c) => c.id === convId);
+			if (conv) selectConversation(conv);
+		}
+	});
+
 	onDestroy(() => {
 		stopPolling();
 		if (typingTimeout) {
@@ -288,29 +379,50 @@
 					<div class="p-4 text-center text-gray-500 text-sm">No conversations yet.</div>
 				{:else}
 					{#each conversations as conv}
-						<button
-							type="button"
-							class="w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 focus:bg-gray-50 focus:outline-none {selectedConversation?.id === conv.id ? 'bg-amber-50 border-l-4 border-l-amber-500' : ''}"
+						<div
+							role="button"
+							tabindex="0"
+							class="w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 focus:bg-gray-50 focus:outline-none cursor-pointer {selectedConversation?.id === conv.id ? 'bg-amber-50 border-l-4 border-l-amber-500' : ''}"
 							onclick={() => selectConversation(conv)}
+							onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && selectConversation(conv)}
 						>
-							<div class="flex items-center justify-between gap-2">
-								<span class="font-medium text-gray-800 truncate">{conv.widgetName}</span>
-								{#if conv.unreadCount > 0}
-									<span class="shrink-0 rounded-full bg-amber-500 text-white text-xs font-medium min-w-5 h-5 flex items-center justify-center px-1.5">
-										{conv.unreadCount}
-									</span>
-								{/if}
+							<div class="flex items-center gap-2">
+								<a
+									href={contactUrl(conv)}
+									onclick={(e) => e.stopPropagation()}
+									class="shrink-0 w-9 h-9 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-sm font-semibold hover:bg-amber-200 transition-colors no-underline"
+									title="Open contact"
+								>
+									{contactInitial(conv)}
+								</a>
+								<div class="min-w-0 flex-1">
+									<div class="flex items-center justify-between gap-2">
+										<a
+											href={contactUrl(conv)}
+											onclick={(e) => e.stopPropagation()}
+											class="font-medium text-gray-800 truncate hover:text-amber-600 transition-colors no-underline"
+											title="Open contact"
+										>
+											{displayContactLabel(conv)}
+										</a>
+										{#if conv.unreadCount > 0}
+											<span class="shrink-0 rounded-full bg-amber-500 text-white text-xs font-medium min-w-5 h-5 flex items-center justify-center px-1.5">
+												{conv.unreadCount}
+											</span>
+										{/if}
+									</div>
+									<div class="text-xs text-gray-500 mt-0.5">
+										{conv.widgetName} · Session: {conv.sessionId.slice(0, 12)}…
+									</div>
+									<div class="flex items-center gap-2 mt-1">
+										<span class="text-xs {conv.isAiActive ? 'text-green-600' : 'text-amber-600'}">
+											{conv.isAiActive ? 'AI active' : 'Human takeover'}
+										</span>
+										<span class="text-xs text-gray-400">{formatDate(conv.updatedAt)}</span>
+									</div>
+								</div>
 							</div>
-							<div class="text-xs text-gray-500 mt-0.5">
-								Session: {conv.sessionId.slice(0, 12)}…
-							</div>
-							<div class="flex items-center gap-2 mt-1">
-								<span class="text-xs {conv.isAiActive ? 'text-green-600' : 'text-amber-600'}">
-									{conv.isAiActive ? 'AI active' : 'Human takeover'}
-								</span>
-								<span class="text-xs text-gray-400">{formatDate(conv.updatedAt)}</span>
-							</div>
-						</button>
+						</div>
 					{/each}
 				{/if}
 			</div>
@@ -324,32 +436,67 @@
 				</div>
 			{:else}
 				<div class="flex flex-col h-full">
-					<!-- Header: widget name, session, Take over / Start AI -->
-					<div class="shrink-0 flex items-center justify-between gap-4 p-4 border-b border-gray-200 bg-gray-50">
-						<div>
-							<h2 class="font-medium text-gray-800">{conversationDetail?.widgetName ?? selectedConversation.widgetName}</h2>
-							<p class="text-sm text-gray-500">Session: {selectedConversation.sessionId}</p>
+					<!-- Header: contact name, session, Take over / Start AI -->
+					<div class="shrink-0 flex flex-col border-b border-gray-200 bg-gray-50">
+						<div class="flex items-center justify-between gap-4 p-4">
+							<div class="flex items-center gap-3">
+								<a
+									href={contactUrl(currentConv)}
+									class="shrink-0 w-10 h-10 rounded-full bg-amber-500 text-white flex items-center justify-center text-base font-semibold hover:bg-amber-600 transition-colors no-underline"
+									title="Open contact"
+								>
+									{contactInitial(currentConv)}
+								</a>
+								<div>
+									<a
+										href={contactUrl(currentConv)}
+										class="font-medium text-gray-800 hover:text-amber-600 transition-colors no-underline"
+										title="Open contact"
+									>
+										{displayContactLabel(currentConv)}
+									</a>
+									<p class="text-sm text-gray-500">
+										{selectedConversation.widgetName} · Session: {selectedConversation.sessionId}
+									</p>
+								</div>
+							</div>
+							<div class="flex items-center gap-2">
+								{#if conversationDetail?.isAiActive}
+									<button
+										type="button"
+										class="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+										disabled={sending}
+										onclick={() => setAiActive(false)}
+									>
+										Take over
+									</button>
+								{:else}
+									<button
+										type="button"
+										class="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+										disabled={sending}
+										onclick={() => setAiActive(true)}
+									>
+										Start AI
+									</button>
+								{/if}
+							</div>
 						</div>
-						<div class="flex items-center gap-2">
-							{#if conversationDetail?.isAiActive}
+						<!-- Channel filter tabs -->
+						<div class="flex gap-0 px-4 border-t border-gray-200">
+							{#each CHANNELS as ch}
 								<button
 									type="button"
-									class="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
-									disabled={sending}
-									onclick={() => setAiActive(false)}
+									class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors {channelFilter === ch.id
+										? 'border-amber-500 text-amber-600'
+										: 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} {ch.disabled ? 'opacity-50 cursor-not-allowed' : ''}"
+									disabled={ch.disabled}
+									onclick={() => !ch.disabled && (channelFilter = ch.id)}
+									title={ch.disabled ? 'Coming soon' : ''}
 								>
-									Take over
+									{ch.label}
 								</button>
-							{:else}
-								<button
-									type="button"
-									class="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
-									disabled={sending}
-									onclick={() => setAiActive(true)}
-								>
-									Start AI
-								</button>
-							{/if}
+							{/each}
 						</div>
 					</div>
 
@@ -370,7 +517,12 @@
 								</button>
 							</div>
 						{/if}
-						{#each messages as msg}
+						{#if channelFilter !== 'all' && filteredMessages.length === 0}
+							<div class="flex-1 flex items-center justify-center py-8 text-gray-500 text-sm">
+								{channelFilter === 'email' ? 'No email messages yet. Send one below.' : `No ${channelFilter} messages.`}
+							</div>
+						{:else}
+							{#each filteredMessages as msg}
 							<div
 								class="flex {msg.role === 'user' ? 'justify-end' : msg.role === 'human_agent' ? 'justify-end' : 'justify-start'}"
 							>
@@ -381,22 +533,35 @@
 											? 'bg-blue-100 text-gray-900'
 											: 'bg-gray-100 text-gray-900'}"
 								>
-									{#if msg.role === 'human_agent'}
-										<span class="text-xs font-medium text-blue-700 block mb-1">You (agent)</span>
-									{:else if msg.role === 'user'}
-										<span class="text-xs font-medium text-amber-700 block mb-1">Visitor</span>
-									{:else}
-										<span class="text-xs font-medium text-gray-600 block mb-1">AI</span>
-									{/if}
-									<div class="whitespace-pre-wrap">{msg.content}</div>
-									<div class="text-xs text-gray-500 mt-1">{formatTime(msg.createdAt)}</div>
+									<div class="flex items-center gap-2 mb-1 flex-wrap">
+										{#if msg.role === 'human_agent'}
+											<span class="text-xs font-medium text-blue-700">You (agent)</span>
+										{:else if msg.role === 'user'}
+											<span class="text-xs font-medium text-amber-700">Visitor</span>
+										{:else}
+											<span class="text-xs font-medium text-gray-600">AI</span>
+										{/if}
+										{#if channelFilter === 'all' && (msg.channel ?? 'chat') === 'email'}
+											<span class="text-xs text-gray-400">via email</span>
+										{/if}
+									</div>
+									<div class="whitespace-pre-wrap">{msg.content.replace(/\*\*(.+?)\*\*/g, '$1')}</div>
+									<div class="flex items-center gap-2 mt-1">
+										<span class="text-xs text-gray-500">{formatTime(msg.createdAt)}</span>
+										{#if msg.channel === 'email' && msg.status}
+											<span class="text-xs {msg.status === 'opened' ? 'text-green-600' : msg.status === 'delivered' ? 'text-blue-600' : msg.status === 'bounced' || msg.status === 'failed' ? 'text-red-600' : 'text-gray-400'}">
+												({msg.status})
+											</span>
+										{/if}
+									</div>
 								</div>
 							</div>
-						{/each}
+							{/each}
+						{/if}
 					</div>
 
-					<!-- Human reply (when takeover) -->
-					{#if conversationDetail && !conversationDetail.isAiActive}
+					<!-- Human reply (when takeover) - Chat/All -->
+					{#if conversationDetail && !conversationDetail.isAiActive && channelFilter !== 'email'}
 						<form
 							class="shrink-0 flex gap-2 p-4 border-t border-gray-200 bg-gray-50"
 							onsubmit={(e) => {
@@ -422,6 +587,45 @@
 								Send
 							</button>
 						</form>
+					{/if}
+
+					<!-- Send email - Email tab -->
+					{#if channelFilter === 'email' && currentConv?.contactEmail}
+						<form
+							class="shrink-0 flex flex-col gap-3 p-4 border-t border-gray-200 bg-gray-50"
+							onsubmit={(e) => {
+								e.preventDefault();
+								sendEmail();
+							}}
+						>
+							<input
+								type="text"
+								class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm text-gray-800 placeholder-gray-400 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+								placeholder="Subject"
+								bind:value={emailSubject}
+								disabled={sendingEmail}
+							/>
+							<textarea
+								class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm text-gray-800 placeholder-gray-400 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 min-h-[80px] resize-y"
+								placeholder="Message…"
+								bind:value={emailBody}
+								disabled={sendingEmail}
+							></textarea>
+							{#if emailError}
+								<p class="text-sm text-red-600">{emailError}</p>
+							{/if}
+							<button
+								type="submit"
+								class="self-end rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+								disabled={sendingEmail || !emailSubject.trim() || !emailBody.trim()}
+							>
+								{sendingEmail ? 'Sending…' : 'Send email'}
+							</button>
+						</form>
+					{:else if channelFilter === 'email' && !currentConv?.contactEmail}
+						<div class="shrink-0 p-4 border-t border-gray-200 bg-gray-50 text-sm text-gray-500">
+							Contact has no email address. Add one in the Contacts page.
+						</div>
 					{/if}
 				</div>
 			{/if}

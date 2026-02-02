@@ -33,8 +33,24 @@ export const GET: RequestHandler = async (event) => {
 		return json({ error: error.message, conversations: [] }, { status: 500 });
 	}
 
-	// Get unread count per conversation (user messages with read_at null)
 	const convIds = (rows ?? []).map((r: { id: string }) => r.id);
+
+	// Get contacts for these conversations (for contact-centric display)
+	const { data: contactRows } = await supabase
+		.from('contacts')
+		.select('id, conversation_id, name, email')
+		.in('conversation_id', convIds);
+	const contactByConvId: Record<string, { id: string; name: string | null; email: string | null }> = {};
+	for (const c of contactRows ?? []) {
+		const convId = (c as { conversation_id: string }).conversation_id;
+		contactByConvId[convId] = {
+			id: (c as { id: string }).id,
+			name: (c as { name: string | null }).name ?? null,
+			email: (c as { email: string | null }).email ?? null
+		};
+	}
+
+	// Get unread count per conversation (user messages with read_at null)
 	const { data: unreadRows } = await supabase
 		.from('widget_conversation_messages')
 		.select('conversation_id')
@@ -47,16 +63,22 @@ export const GET: RequestHandler = async (event) => {
 		unreadByConv[cid] = (unreadByConv[cid] ?? 0) + 1;
 	}
 
-	const conversations = (rows ?? []).map((r: { id: string; widget_id: string; widgets: { name: string } | { name: string }[]; session_id: string; is_ai_active: boolean; created_at: string; updated_at: string }) => ({
-		id: r.id,
-		widgetId: r.widget_id,
-		widgetName: Array.isArray(r.widgets) ? (r.widgets[0]?.name ?? '') : (r.widgets as { name: string })?.name ?? '',
-		sessionId: r.session_id,
-		isAiActive: r.is_ai_active,
-		createdAt: r.created_at,
-		updatedAt: r.updated_at,
-		unreadCount: unreadByConv[r.id] ?? 0
-	}));
+	const conversations = (rows ?? []).map((r: { id: string; widget_id: string; widgets: { name: string } | { name: string }[]; session_id: string; is_ai_active: boolean; created_at: string; updated_at: string }) => {
+		const contact = contactByConvId[r.id];
+		return {
+			id: r.id,
+			widgetId: r.widget_id,
+			widgetName: Array.isArray(r.widgets) ? (r.widgets[0]?.name ?? '') : (r.widgets as { name: string })?.name ?? '',
+			sessionId: r.session_id,
+			isAiActive: r.is_ai_active,
+			createdAt: r.created_at,
+			updatedAt: r.updated_at,
+			unreadCount: unreadByConv[r.id] ?? 0,
+			contactId: contact?.id ?? null,
+			contactName: contact?.name ?? null,
+			contactEmail: contact?.email ?? null
+		};
+	});
 
 	return json({ conversations });
 };

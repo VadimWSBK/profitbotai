@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { page } from '$app/stores';
+
 	let { data } = $props();
 
 	type Widget = { id: string; name: string };
@@ -99,6 +101,15 @@
 		const w = selectedWidgetId;
 		const q = searchQ;
 		fetchContacts();
+	});
+
+	// Deep-link: select contact from URL ?contact=id (e.g. from Messages page)
+	$effect(() => {
+		const contactId = $page.url.searchParams.get('contact');
+		if (contactId && contacts.length > 0 && (!selectedContact || selectedContact.id !== contactId)) {
+			const c = contacts.find((c) => c.id === contactId);
+			if (c) selectContact(c);
+		}
 	});
 </script>
 
@@ -255,7 +266,7 @@
 							</div>
 							{#if contactDetail.conversationId}
 								<a
-									href="/messages"
+									href="/messages?conversation={contactDetail.conversationId}"
 									class="shrink-0 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 transition-colors text-center"
 								>
 									View conversation

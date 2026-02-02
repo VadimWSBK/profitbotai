@@ -174,12 +174,15 @@ export async function runQuoteWorkflow(
 				const bodyRaw = (data.emailBody as string) ?? '';
 				const subject = subjectRaw.trim() ? substitutePrompt(subjectRaw, contact, { 'quote.downloadUrl': signedUrl }) : undefined;
 				const body = bodyRaw.trim() ? substitutePrompt(bodyRaw, contact, { 'quote.downloadUrl': signedUrl }) : undefined;
+				const { data: contactRow } = await admin.from('contacts').select('id').eq('conversation_id', ctx.conversationId).maybeSingle();
 				const emailResult = await sendQuoteEmail(admin, ctx.ownerId, {
 					toEmail,
 					quoteDownloadUrl: signedUrl,
 					customerName: contact?.name ?? null,
 					customSubject: subject,
-					customBody: body
+					customBody: body,
+					contactId: contactRow?.id ?? null,
+					conversationId: ctx.conversationId
 				});
 				quoteEmailSent = emailResult.sent;
 			}
@@ -203,6 +206,7 @@ export type FormRunContext = {
 	formId: string;
 	ownerId: string;
 	contact: { name?: string | null; email?: string | null; phone?: string | null; address?: string | null };
+	contactId?: string | null;
 	roofSize?: number;
 };
 
@@ -282,7 +286,9 @@ export async function runFormWorkflow(
 					quoteDownloadUrl: signedUrl,
 					customerName: contact?.name ?? null,
 					customSubject: subject,
-					customBody: body
+					customBody: body,
+					contactId: ctx.contactId ?? null,
+					conversationId: null
 				});
 			}
 		}

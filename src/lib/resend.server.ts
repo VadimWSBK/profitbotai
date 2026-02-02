@@ -58,6 +58,7 @@ export async function getResendConfigForUser(
 /**
  * Send an email via Resend API.
  * Optional attachments: array of { filename, content: Buffer }.
+ * Returns Resend email id for webhook correlation when successful.
  */
 export async function sendEmailWithResend(
 	apiKey: string,
@@ -69,7 +70,7 @@ export async function sendEmailWithResend(
 		replyTo?: string;
 		attachments?: { filename: string; content: Buffer }[];
 	}
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; id?: string; error?: string }> {
 	try {
 		const resend = new Resend(apiKey);
 		const { data, error } = await resend.emails.send({
@@ -83,7 +84,7 @@ export async function sendEmailWithResend(
 			})
 		});
 		if (error) return { ok: false, error: error.message };
-		if (data?.id) return { ok: true };
+		if (data?.id) return { ok: true, id: data.id };
 		return { ok: false, error: 'No message id returned' };
 	} catch (e) {
 		return { ok: false, error: e instanceof Error ? e.message : 'Failed to send email' };

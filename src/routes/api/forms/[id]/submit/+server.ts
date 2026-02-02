@@ -54,12 +54,13 @@ export const POST: RequestHandler = async (event) => {
 	].filter(Boolean);
 	const fullAddress = addressParts.join(', ') || undefined;
 
-	await admin.rpc('upsert_contact_by_email', {
+	const { data: upsertResult } = await admin.rpc('upsert_contact_by_email', {
 		p_email: email,
 		p_name: name,
 		p_phone: phone,
 		p_address: fullAddress
 	});
+	const contactId = upsertResult && typeof upsertResult === 'object' && 'id' in upsertResult ? (upsertResult as { id: string }).id : null;
 
 	let pdfUrl: string | undefined;
 	const workflow = await getFormWorkflow(admin, formId);
@@ -68,6 +69,7 @@ export const POST: RequestHandler = async (event) => {
 			formId,
 			ownerId,
 			contact: { name, email, phone, address: fullAddress ?? null },
+			contactId,
 			roofSize: Math.max(0, Number(body?.roofSize) ?? 0) || undefined
 		});
 		pdfUrl = result.pdfUrl;
