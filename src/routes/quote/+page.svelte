@@ -17,7 +17,7 @@
 		logo_url: data?.settings?.logo_url ?? '',
 		barcode_url: data?.settings?.barcode_url ?? '',
 		barcode_title: data?.settings?.barcode_title ?? 'Call Us or Visit Website',
-		logo_size: data?.settings?.logo_size ?? 120,
+		logo_size: data?.settings?.logo_size ?? 80,
 		qr_size: data?.settings?.qr_size ?? 80,
 		currency: data?.settings?.currency ?? 'USD'
 	});
@@ -209,7 +209,7 @@
 						</label>
 						<div class="flex items-center gap-2">
 							<label class="text-sm text-gray-600">Size in PDF:</label>
-							<input type="number" min="20" max="400" bind:value={settings.logo_size} class="w-20 rounded border border-gray-300 px-2 py-1.5 text-sm text-gray-900" title="Width in points (20–400)" />
+							<input type="number" min="20" max="120" bind:value={settings.logo_size} class="w-20 rounded border border-gray-300 px-2 py-1.5 text-sm text-gray-900" title="Width in points (20–120)" />
 							<span class="text-xs text-gray-500">pt</span>
 						</div>
 					</div>

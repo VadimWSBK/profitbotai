@@ -37,7 +37,7 @@ export function buildQuoteDocDefinition(settings: QuoteSettings, payload: QuoteP
 	// A4 width 595pt minus left/right margins 36*2 (same for body and footer)
 	const contentWidth = 595 - 36 * 2;
 	const pageMarginH = 36;
-	const logoWidth = Math.max(20, Math.min(400, Number(settings.logo_size) ?? 120));
+	const logoWidth = Math.max(20, Math.min(120, Number(settings.logo_size) ?? 80));
 	const qrWidth = Math.max(20, Math.min(300, Number(settings.qr_size) ?? 80));
 
 	const content: unknown[] = [

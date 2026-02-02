@@ -43,7 +43,7 @@ export const GET: RequestHandler = async (event) => {
 			logo_url: null,
 			barcode_url: null,
 			barcode_title: 'Call Us or Visit Website',
-			logo_size: 120,
+			logo_size: 80,
 			qr_size: 80,
 			currency: 'USD'
 		});
@@ -58,7 +58,7 @@ export const GET: RequestHandler = async (event) => {
 		logo_url: data.logo_url,
 		barcode_url: data.barcode_url,
 		barcode_title: data.barcode_title ?? 'Call Us or Visit Website',
-		logo_size: data.logo_size != null ? Number(data.logo_size) : 120,
+		logo_size: data.logo_size != null ? Math.min(120, Number(data.logo_size)) : 80,
 		qr_size: data.qr_size != null ? Number(data.qr_size) : 80,
 		currency: data.currency ?? 'USD'
 	});
@@ -78,7 +78,7 @@ export const PUT: RequestHandler = async (event) => {
 	const supabase = getSupabaseClient(event);
 	const userId = event.locals.user.id;
 
-	const logoSize = Math.max(20, Math.min(400, Number(body.logo_size) || 120));
+	const logoSize = Math.max(20, Math.min(120, Number(body.logo_size) || 80));
 	const qrSize = Math.max(20, Math.min(300, Number(body.qr_size) || 80));
 
 	const row = {
