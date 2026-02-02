@@ -1,11 +1,11 @@
 /**
- * Run a workflow server-side (e.g. when "Message in the chat" / "Customer requests quote" trigger fires).
+ * Run a workflow server-side (e.g. when "Message in the chat" / "Customer requests quote" or "Form submit" trigger fires).
  * Executes actions in order: Generate quote → Send email, etc.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { chatWithLlm } from '$lib/chat-llm.server';
-import { generateQuoteForConversation } from '$lib/quote-pdf.server';
+import { generateQuoteForConversation, generateQuoteForForm } from '$lib/quote-pdf.server';
 import { sendQuoteEmail } from '$lib/send-quote-email.server';
 
 export type WorkflowNode = {
@@ -176,4 +176,86 @@ export async function runQuoteWorkflow(
 
 	// Use 'quote' / 'Quote' so chat prompt treats this as quote result (instruction with download link, etc.)
 	return { webhookResult, quoteEmailSent, triggerId: 'quote', triggerName: 'Quote' };
+}
+
+export type FormRunContext = {
+	formId: string;
+	ownerId: string;
+	contact: { name?: string | null; email?: string | null; phone?: string | null; address?: string | null };
+	roofSize?: number;
+};
+
+export type FormRunResult = { pdfUrl?: string };
+
+/**
+ * Find a live workflow whose trigger is "Form submit" and formId matches.
+ */
+export async function getFormWorkflow(
+	admin: SupabaseClient,
+	formId: string
+): Promise<{ id: string; name: string; nodes: WorkflowNode[]; edges: WorkflowEdge[]; widgetId: string } | null> {
+	const { data: formRow } = await admin.from('quote_forms').select('user_id').eq('id', formId).single();
+	if (!formRow?.user_id) return null;
+	const ownerId = formRow.user_id as string;
+	const { data: widgets } = await admin.from('widgets').select('id').eq('created_by', ownerId);
+	if (!widgets?.length) return null;
+	const widgetIds = widgets.map((w) => w.id);
+	const { data: rows } = await admin.from('workflows').select('id, name, widget_id, nodes, edges').eq('status', 'live').in('widget_id', widgetIds);
+	if (!rows?.length) return null;
+	for (const row of rows) {
+		const nodes = (row.nodes as WorkflowNode[]) ?? [];
+		const trigger = nodes.find((n) => n.type === 'trigger');
+		if (!trigger) continue;
+		const data = trigger.data ?? {};
+		const triggerType = (data.triggerType as string) ?? '';
+		const triggerFormId = (data.formId as string) ?? '';
+		if (triggerType === 'Form submit' && triggerFormId === formId) {
+			return {
+				id: row.id,
+				name: row.name ?? 'Workflow',
+				nodes,
+				edges: (row.edges as WorkflowEdge[]) ?? [],
+				widgetId: row.widget_id as string
+			};
+		}
+	}
+	return null;
+}
+
+/**
+ * Run a form-triggered workflow: execute actions in order (e.g. Generate quote, Send email).
+ */
+export async function runFormWorkflow(
+	admin: SupabaseClient,
+	workflow: { nodes: WorkflowNode[]; edges: WorkflowEdge[] },
+	ctx: FormRunContext
+): Promise<FormRunResult> {
+	const actions = getActionNodesInOrder(workflow.nodes, workflow.edges);
+	let signedUrl: string | undefined;
+	const contact = ctx.contact;
+
+	for (const node of actions) {
+		const actionType = (node.data?.actionType as string) ?? '';
+		if (actionType === 'Generate quote') {
+			const gen = await generateQuoteForForm(
+				admin,
+				ctx.formId,
+				ctx.ownerId,
+				contact,
+				ctx.roofSize
+			);
+			if (gen.signedUrl) signedUrl = gen.signedUrl;
+		} else if (actionType === 'Send email' && signedUrl) {
+			const toEmail = (contact?.email ?? '').trim().toLowerCase();
+			if (toEmail) {
+				await sendQuoteEmail(admin, ctx.ownerId, {
+					toEmail,
+					quoteDownloadUrl: signedUrl,
+					customerName: contact?.name ?? null
+				});
+			}
+		}
+	}
+
+	return { pdfUrl: signedUrl };
 }

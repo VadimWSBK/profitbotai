@@ -35,7 +35,7 @@
 		{@render children()}
 	</div>
 {:else}
-<div class="flex h-screen min-h-0 bg-gray-50">
+<div class="app-layout flex h-screen min-h-0 overflow-hidden bg-gray-50">
 	<!-- Sidebar: fixed height, scrollable nav, expand/collapse -->
 	<aside
 		class="flex h-screen flex-col bg-gray-900 text-gray-400 shrink-0 transition-[width] duration-200 ease-out {sidebarExpanded ? 'w-52' : 'w-16'}"
@@ -111,8 +111,8 @@
 		</button>
 	</aside>
 
-	<!-- Main content wrapper -->
-	<div class="flex-1 flex flex-col min-w-0 min-h-0">
+	<!-- Main content wrapper: overflow-hidden so it never extends past viewport -->
+	<div class="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
 		<!-- Header -->
 		<header class="flex items-center justify-between px-6 py-4 bg-white border-b border-gray-200 shrink-0">
 			<h2 class="text-lg font-medium text-gray-800">
@@ -137,8 +137,8 @@
 			</div>
 		</header>
 
-		<!-- Page content -->
-		<main class="flex-1 overflow-auto p-6">
+		<!-- Page content: min-h-0 so flex child shrinks and scrolls inside viewport -->
+		<main class="flex-1 min-h-0 overflow-auto p-6">
 			{@render children()}
 		</main>
 	</div>

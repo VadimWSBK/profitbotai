@@ -6,7 +6,8 @@
 
 	let { data } = $props();
 	const formId = $derived((data?.formId as string) ?? '');
-	const initialForm = $derived((data?.form as { name: string; title: string; steps: Step[]; colors: Record<string, string>; success_title?: string | null; success_message?: string | null }) ?? { name: '', title: '', steps: [], colors: {} });
+	type SuccessButton = { label: string; url: string; linkToQuote?: boolean };
+	const initialForm = $derived((data?.form as { name: string; title: string; steps: Step[]; colors: Record<string, string>; success_title?: string | null; success_message?: string | null; success_buttons?: SuccessButton[] }) ?? { name: '', title: '', steps: [], colors: {}, success_buttons: [] });
 
 	const defaultSteps: Step[] = [
 		{ title: 'Contact information', description: 'Please provide your contact information to receive your instant quote.', fields: [
@@ -28,6 +29,7 @@
 	let primaryColor = $state('#D4AF37');
 	let successTitle = $state('');
 	let successMessage = $state('');
+	let successButtons = $state<SuccessButton[]>([]);
 
 	$effect(() => {
 		const f = initialForm;
@@ -37,6 +39,9 @@
 		primaryColor = f.colors?.primary ?? '#D4AF37';
 		successTitle = f.success_title ?? '';
 		successMessage = f.success_message ?? '';
+		successButtons = Array.isArray(f.success_buttons) && f.success_buttons.length
+			? f.success_buttons.map((b) => ({ label: b.label || 'Button', url: b.url || '', linkToQuote: !!b.linkToQuote }))
+			: [];
 	});
 
 	// Keep preview step in bounds when steps are edited
@@ -101,7 +106,7 @@
 			const res = await fetch(`/api/forms/${formId}`, {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ name, title, steps, colors: { primary: primaryColor }, success_title: successTitle || null, success_message: successMessage || null })
+				body: JSON.stringify({ name, title, steps, colors: { primary: primaryColor }, success_title: successTitle || null, success_message: successMessage || null, success_buttons: successButtons })
 			});
 			const result = await res.json().catch(() => ({}));
 			if (!res.ok) throw new Error(result.error || 'Failed to save');
@@ -182,7 +187,7 @@
 	<title>Form builder – ProfitBot</title>
 </svelte:head>
 
-<div class="max-w-4xl mx-auto">
+<div class="max-w-4xl mx-auto pb-8">
 	<div class="flex items-center gap-4 mb-6">
 		<a href="/forms" class="text-gray-500 hover:text-gray-700" title="Back to forms" aria-label="Back to forms">
 			<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
@@ -220,15 +225,47 @@
 		<!-- Success page -->
 		<section class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
 			<h2 class="text-lg font-semibold text-gray-900 mb-2">Success page</h2>
-			<p class="text-sm text-gray-500 mb-4">Text shown after the quote is generated. Leave blank to use defaults.</p>
+			<p class="text-sm text-gray-500 mb-4">Text and buttons shown after the form is submitted. Configure a workflow (Form submit trigger) to generate quotes or send emails.</p>
 			<div class="grid gap-4">
 				<div>
 					<label for="success-title" class="block text-sm font-medium text-gray-700 mb-1">Heading</label>
-					<input id="success-title" type="text" bind:value={successTitle} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="Your quote is ready for download" />
+					<input id="success-title" type="text" bind:value={successTitle} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="Thank you" />
 				</div>
 				<div>
 					<label for="success-message" class="block text-sm font-medium text-gray-700 mb-1">Message (optional)</label>
-					<textarea id="success-message" bind:value={successMessage} rows="3" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="We have also sent a copy to your email."></textarea>
+					<textarea id="success-message" bind:value={successMessage} rows="3" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="We'll be in touch soon."></textarea>
+				</div>
+				<div>
+					<div class="flex items-center justify-between mb-2">
+						<label class="block text-sm font-medium text-gray-700">Buttons</label>
+						<button type="button" class="text-sm text-amber-600 hover:text-amber-800 font-medium" onclick={() => successButtons = [...successButtons, { label: 'Button', url: '', linkToQuote: false }]}>+ Add button</button>
+					</div>
+					<p class="text-xs text-gray-500 mb-2">Use "Quote PDF" to link to the generated quote (when your workflow has Generate quote). Use "Custom URL" for any other link.</p>
+					<div class="space-y-2">
+						{#each successButtons as btn, bi}
+							<div class="flex flex-wrap items-center gap-2 p-2 rounded-lg border border-gray-200 bg-gray-50/50">
+								<input type="text" bind:value={btn.label} class="w-32 rounded border border-gray-300 px-2 py-1.5 text-sm" placeholder="Label" />
+								<select
+									class="w-28 rounded border border-gray-300 px-2 py-1.5 text-sm bg-white"
+									aria-label="Button action"
+									value={btn.linkToQuote ? 'quote' : 'url'}
+									onchange={(e) => {
+										const v = (e.currentTarget as HTMLSelectElement).value === 'quote';
+										successButtons = successButtons.map((b, i) => (i === bi ? { ...b, linkToQuote: v } : b));
+									}}
+								>
+									<option value="url">Custom URL</option>
+									<option value="quote">Quote PDF</option>
+								</select>
+								{#if !btn.linkToQuote}
+									<input type="url" bind:value={btn.url} class="flex-1 min-w-[160px] rounded border border-gray-300 px-2 py-1.5 text-sm font-mono" placeholder="https://..." />
+								{:else}
+									<span class="flex-1 min-w-[160px] text-xs text-gray-500 py-1.5">Uses the quote link from the workflow</span>
+								{/if}
+								<button type="button" class="text-red-600 hover:text-red-800 text-sm" onclick={() => successButtons = successButtons.filter((_, i) => i !== bi)}>Remove</button>
+							</div>
+						{/each}
+					</div>
 				</div>
 			</div>
 		</section>
@@ -290,16 +327,29 @@
                 <div class="min-h-[320px] w-full max-w-lg p-6 bg-white rounded-2xl shadow-lg border border-gray-200" style="--primary: {primaryColor}">
                     {#if previewShowSuccess}
                         <div class="text-center py-6">
-                            <h3 class="text-xl font-bold text-gray-900 mb-2">{successTitle || 'Your quote is ready'} (preview)</h3>
-                            <p class="text-gray-500 text-sm mb-6 whitespace-pre-line">{successMessage || 'Download your PDF quote or request another one.'}</p>
+                            <h3 class="text-xl font-bold text-gray-900 mb-2">{successTitle || 'Thank you'} (preview)</h3>
+                            <p class="text-gray-500 text-sm mb-6 whitespace-pre-line">{successMessage || 'We\'ll be in touch soon.'}</p>
                             <div class="flex flex-wrap gap-3 justify-center">
-                                <button
-                                    type="button"
-                                    class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-white transition-colors"
-                                    style="background-color: var(--primary)"
-                                >
-                                    Download PDF Quote
-                                </button>
+                               	{#each successButtons.filter(b => b.linkToQuote || (b.url ?? '').trim()) as btn}
+									{#if btn.linkToQuote}
+										<span class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-white opacity-80" style="background-color: var(--primary)" title="Links to quote PDF when workflow generates one">
+											{btn.label || 'Download Quote'} (Quote PDF)
+										</span>
+									{:else}
+										<a
+											href={btn.url}
+											target="_blank"
+											rel="noopener"
+											class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-white transition-colors"
+											style="background-color: var(--primary)"
+										>
+											{btn.label || 'Button'}
+										</a>
+									{/if}
+								{/each}
+								{#if successButtons.length === 0}
+									<span class="text-gray-400 text-sm">Add buttons in Success page section</span>
+								{/if}
                                 <button
                                     type="button"
                                     onclick={previewStartOver}

@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/* When main app layout (sidebar + content) is shown, constrain body to viewport so only main content scrolls */
+body:has(.app-layout) {
+	height: 100vh;
+	overflow: hidden;
+}
+
 /* Hide scrollbar but keep scroll behaviour */
 .scrollbar-hide {
 	-ms-overflow-style: none;

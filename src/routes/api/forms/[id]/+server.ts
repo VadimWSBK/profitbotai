@@ -17,7 +17,7 @@ export const GET: RequestHandler = async (event) => {
 	}
 	const { data, error } = await supabase
 		.from('quote_forms')
-		.select('id, name, title, steps, colors, success_title, success_message, created_at, updated_at')
+		.select('id, name, title, steps, colors, success_title, success_message, success_buttons, created_at, updated_at')
 		.eq('id', id)
 		.single();
 
@@ -43,6 +43,7 @@ export const PUT: RequestHandler = async (event) => {
 		colors?: Record<string, string>;
 		success_title?: string | null;
 		success_message?: string | null;
+		success_buttons?: { label: string; url: string; linkToQuote?: boolean }[];
 	};
 	try {
 		body = await event.request.json().catch(() => ({}));
@@ -57,6 +58,7 @@ export const PUT: RequestHandler = async (event) => {
 	if (body?.colors && typeof body.colors === 'object' && body.colors !== null) updates.colors = body.colors;
 	if (body?.success_title !== undefined) updates.success_title = body.success_title === '' ? null : body.success_title;
 	if (body?.success_message !== undefined) updates.success_message = body.success_message === '' ? null : body.success_message;
+	if (body?.success_buttons !== undefined) updates.success_buttons = Array.isArray(body.success_buttons) ? body.success_buttons : [];
 
 	if (Object.keys(updates).length === 0) {
 		return json({ error: 'No fields to update' }, { status: 400 });
@@ -67,7 +69,7 @@ export const PUT: RequestHandler = async (event) => {
 		.update(updates)
 		.eq('id', id)
 		.eq('user_id', event.locals.user.id)
-		.select('id, name, title, steps, colors, success_title, success_message, created_at, updated_at')
+		.select('id, name, title, steps, colors, success_title, success_message, success_buttons, created_at, updated_at')
 		.single();
 
 	if (error) {

@@ -9,11 +9,12 @@ export const load: PageServerLoad = async (event) => {
 	const supabase = getSupabaseClient(event);
 	const { data, error: err } = await supabase
 		.from('quote_forms')
-		.select('id, name, title, steps, colors, success_title, success_message, created_at, updated_at')
+		.select('id, name, title, steps, colors, success_title, success_message, success_buttons, created_at, updated_at')
 		.eq('id', id)
 		.eq('user_id', event.locals.user.id)
 		.single();
 	if (err || !data) throw error(404, 'Form not found');
+	const successButtons = (data.success_buttons as { label: string; url: string }[] | null) ?? [];
 	return {
 		formId: data.id,
 		form: {
@@ -22,7 +23,8 @@ export const load: PageServerLoad = async (event) => {
 			steps: (data.steps as unknown[]) ?? [],
 			colors: (data.colors as Record<string, string>) ?? { primary: '#D4AF37' },
 			success_title: data.success_title ?? null,
-			success_message: data.success_message ?? null
+			success_message: data.success_message ?? null,
+			success_buttons: Array.isArray(successButtons) ? successButtons : []
 		}
 	};
 };

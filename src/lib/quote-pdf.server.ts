@@ -137,6 +137,85 @@ export async function generateQuoteForConversation(
 	return { signedUrl: signed?.signedUrl ?? undefined, storagePath: fileName };
 }
 
+/**
+ * Generate a quote PDF from form submission data (no conversation). Used when a workflow with
+ * "Form submit" trigger runs a "Generate quote" action. Uploads to roof_quotes and returns signed URL.
+ */
+export async function generateQuoteForForm(
+	admin: SupabaseClient,
+	formId: string,
+	ownerId: string,
+	contact: { name?: string | null; email?: string | null; phone?: string | null; address?: string | null },
+	roofSize?: number
+): Promise<{ signedUrl?: string; storagePath?: string; error?: string }> {
+	let settingsRow = (await admin.from('quote_settings').select('*').eq('user_id', ownerId).maybeSingle()).data;
+	if (!settingsRow) {
+		const { error: upsertErr } = await admin.from('quote_settings').upsert(
+			{ user_id: ownerId, company: {}, bank_details: {}, line_items: [], deposit_percent: 40, tax_percent: 10, valid_days: 30, currency: 'USD' },
+			{ onConflict: 'user_id' }
+		);
+		if (upsertErr) return { error: 'Quote settings not found. Configure your quote template first.' };
+		settingsRow = (await admin.from('quote_settings').select('*').eq('user_id', ownerId).single()).data ?? undefined;
+	}
+	if (!settingsRow) return { error: 'Quote settings not found' };
+
+	const settings: QuoteSettings = {
+		company: (settingsRow.company as QuoteSettings['company']) ?? {},
+		bank_details: (settingsRow.bank_details as QuoteSettings['bank_details']) ?? {},
+		line_items: (settingsRow.line_items as QuoteSettings['line_items']) ?? [],
+		deposit_percent: Number(settingsRow.deposit_percent) ?? 40,
+		tax_percent: Number(settingsRow.tax_percent) ?? 10,
+		valid_days: Number(settingsRow.valid_days) ?? 30,
+		logo_url: settingsRow.logo_url,
+		barcode_url: settingsRow.barcode_url,
+		barcode_title: settingsRow.barcode_title ?? 'Call Us or Visit Website',
+		currency: settingsRow.currency ?? 'USD'
+	};
+
+	const customer = { name: contact.name ?? '', email: contact.email ?? '', phone: contact.phone ?? '' };
+	const roof = Math.max(0, Number(roofSize) ?? 0);
+	const computed = computeQuoteFromSettings(settings, roof);
+	const payload = {
+		customer,
+		project: { roofSize: roof, fullAddress: contact.address ?? '' },
+		quote: {
+			quoteDate: computed.quoteDate,
+			validUntil: computed.validUntil,
+			breakdownTotals: computed.breakdownTotals,
+			subtotal: computed.subtotal,
+			gst: computed.gst,
+			total: computed.total
+		}
+	};
+
+	let pdfBuffer: Buffer;
+	try {
+		pdfBuffer = await generatePdfFromDocDefinition(settings, payload);
+	} catch (e) {
+		const errMsg = e instanceof Error ? e.message : 'PDF generation failed';
+		return { error: errMsg };
+	}
+
+	const { data: buckets } = await admin.storage.listBuckets();
+	if (!buckets?.some((b) => b.name === BUCKET)) {
+		const { error: createErr } = await admin.storage.createBucket(BUCKET, { public: false });
+		if (createErr) return { error: `Storage: ${createErr.message}` };
+	}
+
+	const email = (contact.email ?? '').replaceAll(/[@.]/g, '_');
+	const ts = new Date().toISOString().replaceAll(/\D/g, '').slice(0, 14);
+	const fileName = `form_${formId}/email_${email}_${ts}.pdf`;
+	const { error: uploadErr } = await admin.storage.from(BUCKET).upload(fileName, pdfBuffer, {
+		contentType: 'application/pdf',
+		upsert: true,
+		metadata: { email: contact.email ?? '', form_id: formId }
+	});
+	if (uploadErr) return { error: uploadErr.message };
+
+	const { data: signed } = await admin.storage.from(BUCKET).createSignedUrl(fileName, 3600);
+	return { signedUrl: signed?.signedUrl ?? undefined, storagePath: fileName };
+}
+
 const FONT_KEYS = {
 	normal: 'Roboto-Regular.ttf',
 	bold: 'Roboto-Medium.ttf',

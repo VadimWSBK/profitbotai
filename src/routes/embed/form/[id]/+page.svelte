@@ -4,18 +4,21 @@
 
 	let { data } = $props();
 	const formId = $derived((data?.formId as string) ?? '');
-	const form = $derived((data?.form as { name: string; title: string; steps: Step[]; colors: Record<string, string>; success_title?: string | null; success_message?: string | null }) ?? { title: 'Get Your Quote', steps: [], colors: {} });
+	type SuccessButton = { label: string; url: string; linkToQuote?: boolean };
+	const form = $derived((data?.form as { name: string; title: string; steps: Step[]; colors: Record<string, string>; success_title?: string | null; success_message?: string | null; success_buttons?: SuccessButton[] }) ?? { title: 'Get Your Quote', steps: [], colors: {}, success_buttons: [] });
 
 	const steps = $derived((form.steps ?? []) as Step[]);
 	const primaryColor = $derived(form.colors?.primary ?? '#D4AF37');
 	const title = $derived(form.title ?? 'Get Your Quote');
-	const successTitle = $derived(form.success_title?.trim() || 'Your quote is ready');
-	const successMessage = $derived(form.success_message?.trim() || 'Download your PDF quote or request another one.');
+	const successTitle = $derived(form.success_title?.trim() || 'Thank you');
+	const successMessage = $derived(form.success_message?.trim() || "We'll be in touch soon.");
+	const successButtons = $derived((form.success_buttons ?? []) as SuccessButton[]);
 
 	let currentStep = $state(0);
 	let values = $state<Record<string, string>>({});
 	let submitting = $state(false);
 	let error = $state('');
+	let showSuccess = $state(false);
 	let pdfUrl = $state<string | null>(null);
 
 	const totalSteps = $derived(steps.length);
@@ -70,10 +73,11 @@
 				body: JSON.stringify(body)
 			});
 			const result = await res.json().catch(() => ({}));
-			if (!res.ok) throw new Error(result.error || 'Failed to generate quote');
+			if (!res.ok) throw new Error(result.error || 'Failed to submit');
 			pdfUrl = result.pdfUrl ?? null;
+			showSuccess = true;
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to generate quote';
+			error = e instanceof Error ? e.message : 'Failed to submit';
 		} finally {
 			submitting = false;
 		}
@@ -83,6 +87,7 @@
 		currentStep = 0;
 		values = {};
 		error = '';
+		showSuccess = false;
 		pdfUrl = null;
 	}
 </script>
@@ -92,28 +97,42 @@
 </svelte:head>
 
 <div class="min-h-[400px] w-full max-w-lg mx-auto p-6 bg-white rounded-2xl shadow-lg flex flex-col" style="--primary: {primaryColor}">
-	{#if pdfUrl}
-		<!-- Success: download / get another -->
+	{#if showSuccess}
+		<!-- Success: optional download + configured buttons + start over -->
 		<div class="text-center py-6">
 			<h2 class="text-xl font-bold text-gray-900 mb-2">{successTitle}</h2>
 			<p class="text-gray-500 text-sm mb-6 whitespace-pre-line">{successMessage}</p>
 			<div class="flex flex-wrap gap-3 justify-center">
-				<a
-					href={pdfUrl}
-					target="_blank"
-					rel="noopener"
-					class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-white transition-colors"
-					style="background-color: var(--primary)"
-				>
-					Download PDF Quote
-				</a>
+				{#each successButtons as btn}
+					{#if btn.linkToQuote && pdfUrl}
+						<a
+							href={pdfUrl}
+							target="_blank"
+							rel="noopener"
+							class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-white transition-colors"
+							style="background-color: var(--primary)"
+						>
+							{btn.label || 'Download Quote'}
+						</a>
+					{:else if !btn.linkToQuote && (btn.url ?? '').trim()}
+						<a
+							href={btn.url}
+							target="_blank"
+							rel="noopener"
+							class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-white transition-colors"
+							style="background-color: var(--primary)"
+						>
+							{btn.label || 'Button'}
+						</a>
+					{/if}
+				{/each}
 				<button
 					type="button"
 					onclick={startOver}
 					class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold border-2 transition-colors"
 					style="border-color: var(--primary); color: var(--primary); background: transparent"
 				>
-					Get Another Quote
+					Submit again
 				</button>
 			</div>
 		</div>
@@ -127,7 +146,7 @@
 				aria-label="Generating quote"
 			></div>
 			<div class="text-center">
-				<h2 class="text-lg font-semibold text-gray-900 mb-1">Generating your quote…</h2>
+				<h2 class="text-lg font-semibold text-gray-900 mb-1">Submitting…</h2>
 				<p class="text-sm text-gray-500">Please wait a moment.</p>
 			</div>
 		</div>
@@ -235,7 +254,7 @@
 						class="px-5 py-2.5 rounded-lg font-semibold text-white transition-colors disabled:opacity-50"
 						style="background-color: var(--primary)"
 					>
-						{submitting ? 'Generating your quote…' : isLastStep ? 'Generate quote' : 'Next'}
+						{submitting ? 'Submitting…' : isLastStep ? 'Submit' : 'Next'}
 					</button>
 				</div>
 			{/if}

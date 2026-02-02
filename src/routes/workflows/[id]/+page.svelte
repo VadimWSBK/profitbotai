@@ -328,6 +328,9 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 			const data = await res.json();
 			const newId = data.workflow?.id;
 			if (newId) {
+				// Mark as server workflow so next Save does PUT, not another POST
+				isServerWorkflow = true;
+				widgetId = wId;
 				captureSavedSnapshot();
 				goto(`/workflows/${newId}`);
 			}

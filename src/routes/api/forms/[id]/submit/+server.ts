@@ -1,14 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSupabaseAdmin } from '$lib/supabase.server';
-import {
-	computeQuoteFromSettings,
-	generatePdfFromDocDefinition,
-	type QuoteSettings
-} from '$lib/quote-pdf.server';
-import { sendQuoteEmail } from '$lib/send-quote-email.server';
-
-const BUCKET = 'roof_quotes';
+import { getFormWorkflow, runFormWorkflow } from '$lib/run-workflow.server';
 
 export type SubmitBody = {
 	name?: string;
@@ -22,7 +15,8 @@ export type SubmitBody = {
 };
 
 /**
- * POST /api/forms/[id]/submit – public. Submit form data, upsert contact, generate quote PDF, return download URL.
+ * POST /api/forms/[id]/submit – public. Submit form data, upsert contact, run form workflow (if any).
+ * Quote generation and email are handled by the workflow (Form submit trigger + Generate quote / Send email actions).
  */
 export const POST: RequestHandler = async (event) => {
 	const formId = event.params.id;
@@ -50,7 +44,6 @@ export const POST: RequestHandler = async (event) => {
 	}
 	const ownerId = form.user_id as string;
 
-	// Upsert contact by email so PDF can be linked via storage trigger
 	const name = typeof body?.name === 'string' ? body.name.trim() : null;
 	const phone = typeof body?.phone === 'string' ? body.phone.trim() : null;
 	const addressParts = [
@@ -68,85 +61,17 @@ export const POST: RequestHandler = async (event) => {
 		p_address: fullAddress
 	});
 
-	// Load quote settings for form owner
-	const { data: settingsRow, error: settingsErr } = await admin
-		.from('quote_settings')
-		.select('*')
-		.eq('user_id', ownerId)
-		.maybeSingle();
-	if (settingsErr || !settingsRow) {
-		return json({
-			error: 'Quote settings not found. The form owner must configure their quote template in the Quote page first.'
-		}, { status: 400 });
+	let pdfUrl: string | undefined;
+	const workflow = await getFormWorkflow(admin, formId);
+	if (workflow) {
+		const result = await runFormWorkflow(admin, workflow, {
+			formId,
+			ownerId,
+			contact: { name, email, phone, address: fullAddress ?? null },
+			roofSize: Math.max(0, Number(body?.roofSize) ?? 0) || undefined
+		});
+		pdfUrl = result.pdfUrl;
 	}
 
-	const settings: QuoteSettings = {
-		company: (settingsRow.company as QuoteSettings['company']) ?? {},
-		bank_details: (settingsRow.bank_details as QuoteSettings['bank_details']) ?? {},
-		line_items: (settingsRow.line_items as QuoteSettings['line_items']) ?? [],
-		deposit_percent: Number(settingsRow.deposit_percent) ?? 40,
-		tax_percent: Number(settingsRow.tax_percent) ?? 10,
-		valid_days: Number(settingsRow.valid_days) ?? 30,
-		logo_url: settingsRow.logo_url,
-		barcode_url: settingsRow.barcode_url,
-		barcode_title: settingsRow.barcode_title ?? 'Call Us or Visit Website',
-		currency: settingsRow.currency ?? 'USD'
-	};
-
-	const customer = { name: name ?? '', email, phone: phone ?? '' };
-	const roofSize = Math.max(0, Number(body?.roofSize) ?? 0);
-	const computed = computeQuoteFromSettings(settings, roofSize);
-
-	const payload = {
-		customer,
-		project: { roofSize, fullAddress },
-		quote: {
-			quoteDate: computed.quoteDate,
-			validUntil: computed.validUntil,
-			breakdownTotals: computed.breakdownTotals,
-			subtotal: computed.subtotal,
-			gst: computed.gst,
-			total: computed.total
-		}
-	};
-
-	let pdfBuffer: Buffer;
-	try {
-		pdfBuffer = await generatePdfFromDocDefinition(settings, payload);
-	} catch (e) {
-		const msg = e instanceof Error ? e.message : 'PDF generation failed';
-		console.error('generatePdfFromDocDefinition:', e);
-		return json({ error: msg }, { status: 500 });
-	}
-
-	const ts = new Date().toISOString().replaceAll(/\D/g, '').slice(0, 14);
-	const fileName = `form_${formId}/email_${email.replaceAll(/[@.]/g, '_')}_${ts}.pdf`;
-
-	const { error: uploadErr } = await admin.storage.from(BUCKET).upload(fileName, pdfBuffer, {
-		contentType: 'application/pdf',
-		upsert: true,
-		metadata: { email, form_id: formId }
-	});
-	if (uploadErr) {
-		console.error('roof_quotes upload:', uploadErr);
-		return json({ error: uploadErr.message }, { status: 500 });
-	}
-
-	const { data: signed } = await admin.storage.from(BUCKET).createSignedUrl(fileName, 3600);
-	const pdfUrl = signed?.signedUrl ?? fileName;
-
-	// Send PDF by email when form owner has Resend connected (optional; don't fail the request if it fails)
-	const emailResult = await sendQuoteEmail(admin, ownerId, {
-		toEmail: email,
-		quoteDownloadUrl: pdfUrl,
-		customerName: name ?? undefined,
-		pdfBuffer
-	});
-	if (emailResult.sent) {
-		console.log('[forms/submit] Quote email sent to', email);
-	} else if (emailResult.error) {
-		console.warn('[forms/submit] Quote email not sent:', emailResult.error, '(to:', email + ')');
-	}
-
-	return json({ success: true, pdfUrl });
+	return json({ success: true, pdfUrl: pdfUrl ?? undefined });
 };
