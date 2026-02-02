@@ -11,7 +11,7 @@ const API_KEY_PATHS = ['/api/contacts/signed-url'];
 /** Paths that accept either session or X-API-Key (e.g. quote generate from dashboard or n8n) */
 const OPTIONAL_API_KEY_PATHS = ['/api/quote/generate'];
 
-function isPublicPath(pathname: string): boolean {
+function isPublicPath(pathname: string, method: string): boolean {
 	if (pathname.startsWith(EMBED_PREFIX)) return true;
 	if (pathname === API_EVENTS_PATH) return true;
 	// Allow anonymous GET for widget config (embed loads this to display the chat)
@@ -20,8 +20,8 @@ function isPublicPath(pathname: string): boolean {
 	if (/^\/api\/widgets\/[^/]+\/chat$/.test(pathname)) return true;
 	// Allow anonymous GET for widget messages (embed polls for human agent replies)
 	if (/^\/api\/widgets\/[^/]+\/messages$/.test(pathname)) return true;
-	// Allow anonymous GET for quote form config (embed form page fetches this)
-	if (/^\/api\/forms\/[^/]+$/.test(pathname)) return true;
+	// Allow anonymous GET only for quote form config (embed form page); PUT/DELETE require auth (form builder save)
+	if (/^\/api\/forms\/[^/]+$/.test(pathname)) return method === 'GET';
 	// Allow anonymous POST for quote form submit (embed form submission)
 	if (/^\/api\/forms\/[^/]+\/submit$/.test(pathname)) return true;
 	return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'));
@@ -29,9 +29,10 @@ function isPublicPath(pathname: string): boolean {
 
 export const handle: Handle = async ({ event, resolve }) => {
 	const pathname = event.url.pathname;
+	const method = event.request.method;
 
 	// For public paths (embed, login, etc.) skip Supabase session to avoid 500s in iframes
-	if (isPublicPath(pathname)) {
+	if (isPublicPath(pathname, method)) {
 		event.locals.user = null;
 		event.locals.role = null;
 	} else {
@@ -78,7 +79,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 
 	// Require auth for non-public routes (except embed and static)
-	if (!isPublicPath(event.url.pathname)) {
+	if (!isPublicPath(event.url.pathname, event.request.method)) {
 		if (!event.locals.user) {
 			return Response.redirect(new URL('/login', event.url.origin), 302);
 		}

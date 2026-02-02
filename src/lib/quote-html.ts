@@ -124,10 +124,10 @@ export function buildQuoteHtml(settings: QuoteSettings, payload: QuotePayload): 
     .totals { text-align: right; margin: 10px 0; font-size: 11px; }
     .totals .total { font-size: 14px; font-weight: bold; margin-top: 4px; }
     .deposit { font-size: 11px; margin: 8px 0; }
-    .bank-barcode-row { display: flex; justify-content: space-between; gap: 20px; margin-top: 12px; }
-    .bank-details, .barcode-block { flex: 1; }
-    .barcode-block { text-align: right; }
-    .barcode-block img { max-width: 80px; height: auto; display: block; margin-left: auto; }
+    .bank-qr-row { display: flex; justify-content: space-between; gap: 20px; margin-top: 12px; }
+    .bank-details, .qr-block { flex: 1; }
+    .qr-block { text-align: right; }
+    .qr-block img { max-width: 80px; height: auto; display: block; margin-left: auto; }
     .company-logo { max-height: 52px; width: auto; margin-bottom: 8px; display: block; }
     .footer { margin-top: 20px; padding-top: 10px; border-top: 1px solid #ccc; font-size: 10px; display: flex; justify-content: space-between; }
     @media print { body { padding: 36px 44px; } }
@@ -211,7 +211,7 @@ export function buildQuoteHtml(settings: QuoteSettings, payload: QuotePayload): 
     ${
 		(bankDetails && (bankDetails as QuoteBankDetails).name) || barcodeImageUrl
 			? `
-    <div class="bank-barcode-row">
+    <div class="bank-qr-row">
       <div class="bank-details">
         ${
 					bankDetails && (bankDetails as QuoteBankDetails).name
@@ -225,12 +225,12 @@ export function buildQuoteHtml(settings: QuoteSettings, payload: QuotePayload): 
 						: ''
 				}
       </div>
-      <div class="barcode-block">
+      <div class="qr-block">
         ${
 					barcodeImageUrl
 						? `
         <div class="section-title">${escapeHtml(barcodeTitle)}:</div>
-        <img src="${escapeAttr(barcodeImageUrl)}" alt="Barcode" />
+        <img src="${escapeAttr(barcodeImageUrl)}" alt="QR code" />
         `
 						: ''
 				}

@@ -147,18 +147,18 @@ export function buildQuoteDocDefinition(settings: QuoteSettings, payload: QuoteP
 				{ text: `Number: ${(bankDetails as QuoteBankDetails).accountNumber ?? ''}`, fontSize: 9 }
 			);
 		}
-		const barcodeStack: unknown[] = [];
-		// Barcode: pdfmake needs base64; URLs require fetch+convert (skip image for now)
+		const qrStack: unknown[] = [];
+		// QR code: pdfmake needs base64; URLs require fetch+convert (skip image for now)
 		if (settings.barcode_url) {
-			barcodeStack.push(
+			qrStack.push(
 				{ text: settings.barcode_title ?? 'Call Us or Visit Website', style: 'sectionTitle', margin: [0, 0, 0, 2] },
-				{ text: '(Barcode image – use Quote preview for full layout)', fontSize: 8, italics: true, color: '#666' }
+				{ text: '(QR code image – use Quote preview for full layout)', fontSize: 8, italics: true, color: '#666' }
 			);
 		}
 		content.push({
 			columns: [
 				{ width: '*', stack: bankStack },
-				{ width: 'auto', alignment: 'right', stack: barcodeStack }
+				{ width: 'auto', alignment: 'right', stack: qrStack }
 			],
 			margin: [0, 0, 0, 12]
 		});

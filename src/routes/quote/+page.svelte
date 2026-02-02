@@ -23,6 +23,28 @@
 	let generating = $state(false);
 	let samplePdfUrl = $state<string | null>(null);
 	let error = $state('');
+	let uploadingLogo = $state(false);
+	let uploadingQr = $state(false);
+
+	async function uploadFile(type: 'logo' | 'qr', file: File) {
+		const setUploading = type === 'logo' ? (v: boolean) => (uploadingLogo = v) : (v: boolean) => (uploadingQr = v);
+		setUploading(true);
+		error = '';
+		try {
+			const formData = new FormData();
+			formData.set('file', file);
+			formData.set('type', type);
+			const res = await fetch('/api/quote/upload', { method: 'POST', body: formData });
+			const result = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(result.error || 'Upload failed');
+			if (type === 'logo') settings.logo_url = result.url ?? '';
+			else settings.barcode_url = result.url ?? '';
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Upload failed';
+		} finally {
+			setUploading(false);
+		}
+	}
 
 	function addLineItem() {
 		settings.line_items = [...settings.line_items, { desc: '', price: 0, fixed: false }];
@@ -157,8 +179,30 @@
 					</div>
 				</div>
 				<div>
-					<label class="block text-sm font-medium text-gray-700 mb-1">Logo URL</label>
-					<input type="url" bind:value={settings.logo_url} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="https://..." />
+					<label class="block text-sm font-medium text-gray-700 mb-1">Logo</label>
+					<div class="flex flex-wrap items-center gap-3">
+						{#if settings.logo_url}
+							<img src={settings.logo_url} alt="Logo" class="h-12 object-contain rounded border border-gray-200" />
+							<button type="button" class="text-sm text-gray-500 hover:text-red-600" onclick={() => (settings.logo_url = '')}>Remove</button>
+						{/if}
+						<label class="cursor-pointer">
+							<span class="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 text-sm font-medium hover:bg-gray-50">
+								{uploadingLogo ? 'Uploading…' : settings.logo_url ? 'Replace' : 'Upload image'}
+							</span>
+							<input
+								type="file"
+								accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+								class="sr-only"
+								disabled={uploadingLogo}
+								onchange={(e) => {
+									const f = (e.target as HTMLInputElement).files?.[0];
+									if (f) uploadFile('logo', f);
+									(e.target as HTMLInputElement).value = '';
+								}}
+							/>
+						</label>
+					</div>
+					<p class="text-xs text-gray-500 mt-1">PNG, JPEG, GIF, WebP or SVG. Max 2MB.</p>
 				</div>
 			</div>
 		</section>
@@ -186,11 +230,33 @@
 					</div>
 				</div>
 				<div>
-					<label class="block text-sm font-medium text-gray-700 mb-1">Barcode image URL</label>
-					<input type="url" bind:value={settings.barcode_url} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="https://..." />
+					<label class="block text-sm font-medium text-gray-700 mb-1">QR code</label>
+					<div class="flex flex-wrap items-center gap-3">
+						{#if settings.barcode_url}
+							<img src={settings.barcode_url} alt="QR code" class="h-16 w-16 object-contain rounded border border-gray-200" />
+							<button type="button" class="text-sm text-gray-500 hover:text-red-600" onclick={() => (settings.barcode_url = '')}>Remove</button>
+						{/if}
+						<label class="cursor-pointer">
+							<span class="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 text-sm font-medium hover:bg-gray-50">
+								{uploadingQr ? 'Uploading…' : settings.barcode_url ? 'Replace' : 'Upload image'}
+							</span>
+							<input
+								type="file"
+								accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+								class="sr-only"
+								disabled={uploadingQr}
+								onchange={(e) => {
+									const f = (e.target as HTMLInputElement).files?.[0];
+									if (f) uploadFile('qr', f);
+									(e.target as HTMLInputElement).value = '';
+								}}
+							/>
+						</label>
+					</div>
+					<p class="text-xs text-gray-500 mt-1">PNG, JPEG, GIF, WebP or SVG. Max 2MB.</p>
 				</div>
 				<div>
-					<label class="block text-sm font-medium text-gray-700 mb-1">Barcode title</label>
+					<label class="block text-sm font-medium text-gray-700 mb-1">QR code title</label>
 					<input type="text" bind:value={settings.barcode_title} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="Call Us or Visit Website" />
 				</div>
 			</div>
