@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSupabaseClient } from '$lib/supabase.server';
+import { syncReceivedEmailsForUser } from '$lib/sync-received-emails.server';
 
 const MESSAGES_PAGE_SIZE = 20;
 
@@ -121,6 +122,11 @@ export const GET: RequestHandler = async (event) => {
 	const merged = [...chatUnified, ...emailUnified].sort(
 		(a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
 	);
+
+	// On initial load (no since), sync received emails from Resend so inbound show in Messages
+	if (!since) {
+		syncReceivedEmailsForUser(supabase, user.id).catch(() => {});
+	}
 
 	const widget = Array.isArray(conv.widgets) ? conv.widgets[0] : conv.widgets;
 	return json({

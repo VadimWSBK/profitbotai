@@ -61,6 +61,7 @@
 	let emailBody = $state('');
 	let sendingEmail = $state(false);
 	let emailError = $state<string | null>(null);
+	let syncInboxLoading = $state(false);
 	let loading = $state(false);
 	let sending = $state(false);
 	let hasMoreMessages = $state(false);
@@ -225,6 +226,25 @@
 			}
 		} finally {
 			sendingEmail = false;
+		}
+	}
+
+	async function syncInbox() {
+		if (syncInboxLoading) return;
+		syncInboxLoading = true;
+		emailError = null;
+		try {
+			const res = await fetch('/api/settings/integrations/resend/sync-received', { method: 'POST' });
+			const data = await res.json().catch(() => ({}));
+			if (res.ok) {
+				await refreshMessages();
+			} else {
+				emailError = (data.error as string) ?? 'Failed to sync inbox';
+			}
+		} catch {
+			emailError = 'Failed to sync inbox';
+		} finally {
+			syncInboxLoading = false;
 		}
 	}
 
@@ -598,6 +618,17 @@
 
 					<!-- Send email - Email tab -->
 					{#if channelFilter === 'email' && currentConv?.contactEmail}
+						<div class="shrink-0 flex items-center justify-between gap-2 px-4 py-2 border-t border-gray-200 bg-gray-50/80">
+							<p class="text-xs text-gray-500">Inbound emails are synced from Resend. If replies are missing, sync now.</p>
+							<button
+								type="button"
+								onclick={syncInbox}
+								disabled={syncInboxLoading}
+								class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+							>
+								{syncInboxLoading ? 'Syncing…' : 'Sync inbox'}
+							</button>
+						</div>
 						<form
 							class="shrink-0 flex flex-col gap-3 p-4 border-t border-gray-200 bg-gray-50"
 							onsubmit={(e) => {

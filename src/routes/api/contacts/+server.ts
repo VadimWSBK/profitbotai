@@ -46,8 +46,21 @@ export const GET: RequestHandler = async (event) => {
 		return json({ error: error.message, contacts: [] }, { status: 500 });
 	}
 
+	const rawRows = rows ?? [];
+	const contactIds = rawRows.map((r: { id: string }) => r.id);
+	let lastByContact: Record<string, string> = {};
+	if (contactIds.length > 0) {
+		const { data: lastContactRows } = await supabase.rpc('get_contact_last_contact_at', {
+			p_contact_ids: contactIds
+		});
+		for (const row of lastContactRows ?? []) {
+			const r = row as { contact_id: string; last_contact_at: string };
+			if (r.last_contact_at) lastByContact[r.contact_id] = r.last_contact_at;
+		}
+	}
+
 	const contacts = await Promise.all(
-		(rows ?? []).map(
+		rawRows.map(
 			async (r: {
 				id: string;
 				conversation_id: string | null;
@@ -75,7 +88,8 @@ export const GET: RequestHandler = async (event) => {
 				address: r.address ?? null,
 				pdfQuotes: await resolvePdfQuotesToSignedUrls(r.pdf_quotes),
 				createdAt: r.created_at,
-				updatedAt: r.updated_at
+				updatedAt: r.updated_at,
+				lastConversationAt: lastByContact[r.id] ?? null
 			})
 		)
 	);

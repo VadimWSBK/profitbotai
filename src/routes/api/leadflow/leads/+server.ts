@@ -70,7 +70,8 @@ export const GET: RequestHandler = async (event) => {
 						phone: contact.phone ?? null,
 						address: contact.address ?? null,
 						createdAt: contact.created_at,
-						updatedAt: contact.updated_at
+						updatedAt: contact.updated_at,
+						lastConversationAt: null as string | null
 					}
 				: null
 		};
@@ -78,6 +79,23 @@ export const GET: RequestHandler = async (event) => {
 
 	if (widgetId) {
 		leads = leads.filter((l) => l.contact?.widgetId === widgetId);
+	}
+
+	const contactIds = [...new Set(leads.map((l) => l.contact?.id).filter(Boolean) as string[])];
+	if (contactIds.length > 0) {
+		const { data: lastContactRows } = await supabase.rpc('get_contact_last_contact_at', {
+			p_contact_ids: contactIds
+		});
+		const lastByContact: Record<string, string> = {};
+		for (const row of lastContactRows ?? []) {
+			const r = row as { contact_id: string; last_contact_at: string };
+			if (r.last_contact_at) lastByContact[r.contact_id] = r.last_contact_at;
+		}
+		leads = leads.map((l) => {
+			if (!l.contact) return l;
+			const last = lastByContact[l.contact.id];
+			return { ...l, contact: { ...l.contact, lastConversationAt: last ?? null } };
+		});
 	}
 
 	return json({ leads });

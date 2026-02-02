@@ -13,6 +13,7 @@
 		phone: string | null;
 		createdAt: string;
 		updatedAt: string;
+		lastConversationAt?: string | null;
 	};
 	type Lead = {
 		id: string;
@@ -69,6 +70,29 @@
 
 	function formatDate(iso: string) {
 		return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+	}
+
+	/** First 3 days in hours, then days, weeks, months, years. */
+	function timeSinceLastConversation(iso: string | null | undefined): string {
+		if (!iso) return 'No contact yet';
+		const then = new Date(iso).getTime();
+		const now = Date.now();
+		const ms = now - then;
+		if (ms < 0) return 'Just now';
+		const minutes = Math.floor(ms / 60_000);
+		if (minutes < 1) return 'Just now';
+		if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
+		const hours = Math.floor(ms / 3_600_000);
+		const threeDaysHours = 72;
+		if (hours < threeDaysHours) return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
+		const days = Math.floor(ms / 86_400_000);
+		if (days < 14) return `${days} ${days === 1 ? 'day' : 'days'} ago`;
+		const weeks = Math.floor(days / 7);
+		if (weeks < 8) return `${weeks} ${weeks === 1 ? 'week' : 'weeks'} ago`;
+		const months = Math.floor(days / 30);
+		if (months < 24) return `${months} ${months === 1 ? 'month' : 'months'} ago`;
+		const years = Math.floor(days / 365);
+		return `${years} ${years === 1 ? 'year' : 'years'} ago`;
 	}
 
 	async function fetchStages() {
@@ -338,6 +362,9 @@
 										{#if contact.widgetName}
 											<div class="text-xs text-gray-400 mt-0.5">{contact.widgetName}</div>
 										{/if}
+										<div class="text-xs text-gray-500 mt-0.5" title={contact.lastConversationAt ? formatDate(contact.lastConversationAt) : ''}>
+											Last contact: {timeSinceLastConversation(contact.lastConversationAt)}
+										</div>
 									</div>
 								</div>
 								{#if stages.length > 0}
@@ -408,19 +435,15 @@
 												{#if contact.widgetName}
 													<div class="text-xs text-gray-400 mt-0.5">{contact.widgetName}</div>
 												{/if}
-												<div class="text-xs text-gray-400 mt-0.5">{formatDate(lead.updatedAt)}</div>
+												<div class="text-xs text-gray-500 mt-0.5" title={contact.lastConversationAt ? formatDate(contact.lastConversationAt) : ''}>
+													Last contact: {timeSinceLastConversation(contact.lastConversationAt)}
+												</div>
 											</div>
 										</div>
-										<div class="mt-2 pt-2 border-t border-gray-100 flex gap-2">
-											<a
-												href={contactUrl(contact.id)}
-												class="text-xs font-medium text-amber-600 hover:text-amber-700"
-											>
-												View contact
-											</a>
-											{#if stages.length > 1}
+										{#if stages.length > 1}
+											<div class="mt-2 pt-2 border-t border-gray-100">
 												<select
-													class="flex-1 min-w-0 rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:border-amber-500 focus:outline-none"
+													class="w-full rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:border-amber-500 focus:outline-none"
 													onchange={(e) => {
 														const sid = (e.currentTarget as HTMLSelectElement).value;
 														if (sid && sid !== stage.id) moveLead(lead.id, sid);
@@ -434,8 +457,8 @@
 														{/if}
 													{/each}
 												</select>
-											{/if}
-										</div>
+											</div>
+										{/if}
 									</div>
 								{/if}
 							{/each}
