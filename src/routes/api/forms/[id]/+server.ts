@@ -8,7 +8,13 @@ import { getSupabase, getSupabaseClient } from '$lib/supabase.server';
 export const GET: RequestHandler = async (event) => {
 	const id = event.params.id;
 	if (!id) return json({ error: 'Missing id' }, { status: 400 });
-	const supabase = event.locals.user ? getSupabaseClient(event) : getSupabase();
+	let supabase;
+	try {
+		supabase = event.locals.user ? getSupabaseClient(event) : getSupabase();
+	} catch (e) {
+		console.error('GET /api/forms/[id]: Supabase init failed', e);
+		return json({ error: 'Server misconfigured' }, { status: 503 });
+	}
 	const { data, error } = await supabase
 		.from('quote_forms')
 		.select('id, name, title, steps, colors, success_title, success_message, created_at, updated_at')
