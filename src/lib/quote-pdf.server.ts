@@ -230,23 +230,53 @@ const FONT_IMPORTS = [
 	robotoMediumItalic
 ] as const;
 
+/** Mime types that pdfmake does not support; we rasterize these to PNG. */
+const UNSUPPORTED_MIMES = new Set(['image/svg+xml', 'image/svg', 'image/webp']);
+
+function isSvgBuffer(buf: Buffer): boolean {
+	const start = buf.subarray(0, 1024).toString('utf8').trimStart();
+	return start.startsWith('<?xml') || start.startsWith('<svg');
+}
+
 /**
  * Fetch image URL and return a data URL (base64) for embedding in pdfmake.
- * Returns null on failure or if url is empty. Passes through data URLs as-is.
+ * pdfmake only supports raster formats (PNG, JPEG, GIF). SVG and WebP are converted to PNG.
+ * Returns null on failure or if url is empty. Passes through existing data URLs (raster only).
  */
 async function urlToBase64DataUrl(url: string | null | undefined): Promise<string | null> {
 	if (!url || typeof url !== 'string') return null;
 	const trimmed = url.trim();
 	if (!trimmed) return null;
-	if (trimmed.startsWith('data:')) return trimmed;
 	try {
-		const res = await fetch(trimmed, { cache: 'no-store' });
-		if (!res.ok) return null;
-		const blob = await res.blob();
-		const buf = await blob.arrayBuffer();
-		const base64 = Buffer.from(buf).toString('base64');
-		const mime = blob.type || 'image/png';
-		return `data:${mime};base64,${base64}`;
+		let buf: Buffer;
+		let mime: string;
+
+		if (trimmed.startsWith('data:')) {
+			const match = /^data:([^;]+);base64,(.+)$/.exec(trimmed);
+			if (!match) return null;
+			mime = match[1].toLowerCase();
+			buf = Buffer.from(match[2], 'base64');
+		} else {
+			const res = await fetch(trimmed, { cache: 'no-store' });
+			if (!res.ok) return null;
+			const blob = await res.blob();
+			buf = Buffer.from(await blob.arrayBuffer());
+			mime = (blob.type || 'image/png').toLowerCase();
+		}
+
+		// pdfmake does not support SVG or WebP; rasterize to PNG
+		const needsRaster =
+			UNSUPPORTED_MIMES.has(mime) || mime === 'image/svg+xml' || isSvgBuffer(buf);
+		if (needsRaster && buf.length > 0) {
+			const sharp = (await import('sharp')).default;
+			const png = await sharp(buf).png().toBuffer();
+			const base64 = png.toString('base64');
+			return `data:image/png;base64,${base64}`;
+		}
+
+		const base64 = buf.toString('base64');
+		const outMime = mime || 'image/png';
+		return `data:${outMime};base64,${base64}`;
 	} catch {
 		return null;
 	}
