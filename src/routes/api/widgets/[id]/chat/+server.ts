@@ -1,7 +1,8 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { streamText } from 'ai';
+import { streamText, stepCountIs } from 'ai';
 import { getSupabase, getSupabaseAdmin } from '$lib/supabase.server';
+import { createAgentTools } from '$lib/agent-tools.server';
 import { getAISdkModel } from '$lib/ai-sdk-model.server';
 import { getConversationContextForLlm } from '$lib/conversation-context.server';
 import { getTriggerResultIfAny } from '$lib/trigger-webhook.server';
@@ -324,11 +325,32 @@ export const POST: RequestHandler = async (event) => {
 			}
 		}
 
+		const agentAutonomy = Boolean(config.agentAutonomy);
+		const agentId = typeof config.agentId === 'string' ? config.agentId.trim() : '';
+
 		const bot = (config.bot as Record<string, string> | undefined) ?? {};
 		const parts: string[] = [
 			'CRITICAL: Reply only with natural conversational text. Never output technical strings, commands, codes, or syntax (e.g. workflow_start, contacts_query, or similar). Speak like a human to a human. Your entire reply must be readable by the customer with no internal jargon.',
 			'For quotes: we only generate a quote once we have the customer\'s name, email, and roof size (square metres). If the user asks for a quote before we have all three, politely ask for the missing piece(s) only. Do not say the quote is being generated or will arrive by email until we actually have name, email, and roof size.'
 		];
+		if (agentAutonomy) {
+			parts.push(
+				'You have access to tools. Use them when appropriate: search_contacts to look up contacts by name or email; get_current_contact to see what we have on file for this chat; generate_quote to create a quote PDF (need name, email, roof size in sqm); send_email to send an email (e.g. with the quote link). Use the tools, then reply naturally to the customer. Do not mention "calling a tool" or technical names—just do the action and respond in plain language.'
+			);
+		}
+		let agentAllowedTools: string[] | null = null;
+		if (agentAutonomy && agentId) {
+			const adminForAgent = getSupabaseAdmin();
+			const { data: agentRow } = await adminForAgent
+				.from('agents')
+				.select('system_prompt, name, allowed_tools')
+				.eq('id', agentId)
+				.maybeSingle();
+			if (agentRow?.system_prompt?.trim()) {
+				parts.push(`Agent instructions (${agentRow.name ?? 'Agent'}):\n${agentRow.system_prompt.trim()}`);
+			}
+			if (Array.isArray(agentRow?.allowed_tools)) agentAllowedTools = agentRow.allowed_tools as string[];
+		}
 		if (bot.role?.trim()) parts.push(bot.role.trim());
 		if (bot.tone?.trim()) parts.push(`Tone: ${bot.tone.trim()}`);
 		if (bot.instructions?.trim()) parts.push(bot.instructions.trim());
@@ -420,6 +442,17 @@ export const POST: RequestHandler = async (event) => {
 			content: m.content
 		}));
 
+		const agentContext = agentAutonomy
+			? {
+					conversationId: conv.id,
+					widgetId,
+					ownerId: ownerId ?? '',
+					contact: contactForPrompt ?? null,
+					extractedRoofSize:
+						extractedContact.roofSize != null ? Number(extractedContact.roofSize) : undefined
+				}
+			: null;
+
 		async function clearAiTyping() {
 			await adminSupabaseForTyping
 				.from('widget_conversations')
@@ -429,12 +462,12 @@ export const POST: RequestHandler = async (event) => {
 
 		async function runStream(provider: string, model: string, key: string) {
 			const modelInstance = getAISdkModel(provider, model, key);
-			return streamText({
+			const baseOptions = {
 				model: modelInstance,
 				system: systemPrompt,
 				messages: modelMessages,
 				maxOutputTokens: 1024,
-				onFinish: async ({ text }) => {
+				onFinish: async ({ text }: { text: string }) => {
 					await clearAiTyping();
 					if (text) {
 						const { error: insertErr } = await supabase
@@ -443,7 +476,17 @@ export const POST: RequestHandler = async (event) => {
 						if (insertErr) console.error('Failed to persist assistant message:', insertErr);
 					}
 				}
-			});
+			};
+			if (agentAutonomy && agentContext) {
+				const tools = createAgentTools(adminSupabaseForTyping, agentAllowedTools ?? undefined);
+				return streamText({
+					...baseOptions,
+					tools,
+					stopWhen: stepCountIs(5),
+					experimental_context: agentContext
+				});
+			}
+			return streamText(baseOptions);
 		}
 
 		try {

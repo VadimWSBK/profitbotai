@@ -95,6 +95,10 @@
 				<svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
 				{#if sidebarExpanded}<span class="text-sm font-medium truncate">Workflows</span>{/if}
 			</a>
+			<a href="/agents" class="flex items-center gap-3 rounded-lg py-3 mt-1 {sidebarExpanded ? 'px-3' : 'px-3 justify-center'} transition-colors {(($page.url.pathname as string).startsWith('/agents') ? 'bg-gray-800 text-white' : 'hover:bg-gray-800 hover:text-white')}" title="Agents">
+				<svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/></svg>
+				{#if sidebarExpanded}<span class="text-sm font-medium truncate">Agents</span>{/if}
+			</a>
 			<a href="/templates" class="flex items-center gap-3 rounded-lg py-3 mt-1 {sidebarExpanded ? 'px-3' : 'px-3 justify-center'} transition-colors {(($page.url.pathname as string).startsWith('/templates') ? 'bg-gray-800 text-white' : 'hover:bg-gray-800 hover:text-white')}" title="Templates">
 				<svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
 				{#if sidebarExpanded}<span class="text-sm font-medium truncate">Templates</span>{/if}

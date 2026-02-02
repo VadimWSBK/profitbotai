@@ -129,6 +129,10 @@ export interface WidgetConfig {
 	agentTakeoverTimeoutMinutes?: number;
 	/** Webhook triggers: when AI recognises intent, call the webhook and use the result in the reply (direct only). */
 	webhookTriggers?: WebhookTrigger[];
+	/** Optional agent id: use this agent's system prompt and training (direct only). */
+	agentId?: string;
+	/** When true, the agent can use tools: search contacts, generate quote, send email (direct only, no workflow required). */
+	agentAutonomy?: boolean;
 }
 
 export const defaultBubbleConfig: BubbleConfig = {
@@ -220,5 +224,7 @@ export const defaultWidgetConfig: WidgetConfig = {
 	llmFallbackProvider: '',
 	llmFallbackModel: '',
 	agentTakeoverTimeoutMinutes: 5,
-	webhookTriggers: []
+	webhookTriggers: [],
+	agentId: '',
+	agentAutonomy: false
 };

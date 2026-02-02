@@ -88,7 +88,9 @@
 						llmFallbackProvider: config.llmFallbackProvider ?? '',
 						llmFallbackModel: config.llmFallbackModel ?? '',
 						agentTakeoverTimeoutMinutes: config.agentTakeoverTimeoutMinutes ?? 5,
-						webhookTriggers: config.webhookTriggers ?? []
+						webhookTriggers: config.webhookTriggers ?? [],
+						agentId: config.agentId ?? '',
+						agentAutonomy: Boolean(config.agentAutonomy)
 					},
 					n8n_webhook_url: config.n8nWebhookUrl
 				})
@@ -574,6 +576,27 @@
 							<p class="text-xs text-gray-500 mb-1">If a live agent hasn&apos;t replied in this many minutes, the AI takes over again and apologizes for the delay.</p>
 							<input type="number" min="1" max="120" bind:value={config.agentTakeoverTimeoutMinutes} class="w-full max-w-[120px] px-3 py-2 border border-gray-300 rounded-lg text-sm" />
 						</label>
+
+						<div class="mt-6 pt-6 border-t border-gray-200">
+							<h4 class="text-sm font-semibold text-gray-900 mb-1">Agent (optional)</h4>
+							<p class="text-xs text-gray-500 mb-3">Use an agent from <a href="/agents" class="text-amber-600 hover:underline">Agents</a> for this widget. The agent&apos;s system prompt and training apply here.</p>
+							<label class="block mb-3">
+								<span class="text-sm font-medium text-gray-700 mb-1">Agent</span>
+								<select bind:value={config.agentId} class="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm">
+									<option value="">— None —</option>
+									{#each (data?.agents ?? []) as agent}
+										<option value={agent.id}>{agent.name}</option>
+									{/each}
+								</select>
+							</label>
+							<label class="flex items-start gap-2">
+								<input type="checkbox" bind:checked={config.agentAutonomy} class="mt-1 rounded border-gray-300 text-amber-600 focus:ring-amber-500" />
+								<div>
+									<span class="text-sm font-medium text-gray-700">Enable agent autonomy</span>
+									<p class="text-xs text-gray-500 mt-0.5">Let the agent use tools: search contacts, generate quote, send email—without creating workflows. The bot can look up contacts, create quotes, and send emails from conversation based on your training and system prompt.</p>
+								</div>
+							</label>
+						</div>
 
 						<div class="mt-6 pt-6 border-t border-gray-200">
 							<h4 class="text-sm font-semibold text-gray-900 mb-1">Webhook triggers</h4>
