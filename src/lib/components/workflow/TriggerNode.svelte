@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Handle, Position } from '@xyflow/svelte';
 	import type { NodeProps } from '@xyflow/svelte';
-	import { ClipboardList, Webhook, MessageCircle } from '@lucide/svelte';
+	import { ClipboardList, Webhook, MessageCircle, Mail } from '@lucide/svelte';
 
 	let { data }: NodeProps = $props();
 	const label = $derived(data?.label ?? 'Trigger');
@@ -15,6 +15,7 @@
 	const TriggerIcon = $derived(
 		triggerType === 'Inbound webhook' ? Webhook
 			: triggerType === 'Message in the chat' ? MessageCircle
+			: triggerType === 'Email received' ? Mail
 			: ClipboardList
 	);
 </script>

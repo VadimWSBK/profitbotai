@@ -158,7 +158,7 @@ export async function getQuoteWorkflowForWidget(
 async function startWorkflowExecution(
 	admin: SupabaseClient,
 	workflowId: string,
-	triggerType: 'form_submit' | 'message_in_chat',
+	triggerType: 'form_submit' | 'message_in_chat' | 'email_received',
 	triggerPayload: Record<string, unknown>
 ): Promise<string> {
 	const { data, error } = await admin
@@ -436,6 +436,240 @@ export async function getFormWorkflow(
 	return null;
 }
 
+export type EmailReceivedContext = {
+	widgetId: string;
+	ownerId: string;
+	contactId: string;
+	conversationId: string | null;
+	contact: { name?: string | null; email?: string | null; phone?: string | null; address?: string | null };
+	inboundSubject?: string;
+	inboundBody?: string;
+};
+
+/**
+ * Find live workflows whose trigger is "Email received" and widgetId matches.
+ */
+export async function getEmailReceivedWorkflows(
+	admin: SupabaseClient,
+	widgetId: string
+): Promise<{ id: string; name: string; nodes: WorkflowNode[]; edges: WorkflowEdge[]; widgetId: string }[]> {
+	const { data: rows } = await admin
+		.from('workflows')
+		.select('id, name, widget_id, nodes, edges')
+		.eq('widget_id', widgetId)
+		.eq('status', 'live');
+	if (!rows?.length) return [];
+	const out: { id: string; name: string; nodes: WorkflowNode[]; edges: WorkflowEdge[]; widgetId: string }[] = [];
+	for (const row of rows) {
+		const nodes = (row.nodes as WorkflowNode[]) ?? [];
+		const trigger = nodes.find((n) => n.type === 'trigger');
+		if (!trigger) continue;
+		const data = trigger.data ?? {};
+		const triggerType = (data.triggerType as string) ?? '';
+		const triggerWidgetId = (data.widgetId as string) ?? '';
+		if (triggerType === 'Email received' && triggerWidgetId === widgetId) {
+			out.push({
+				id: row.id,
+				name: (row.name as string) ?? 'Workflow',
+				nodes,
+				edges: (row.edges as WorkflowEdge[]) ?? [],
+				widgetId: row.widget_id as string
+			});
+		}
+	}
+	return out;
+}
+
+/**
+ * Run an email-received-triggered workflow: execute actions (Send email, Send message chat, AI, etc.).
+ */
+export async function runEmailReceivedWorkflow(
+	admin: SupabaseClient,
+	workflow: { id: string; widgetId: string; nodes: WorkflowNode[]; edges: WorkflowEdge[] },
+	ctx: EmailReceivedContext
+): Promise<{ success: boolean; error?: string }> {
+	const actions = getActionNodesInOrder(workflow.nodes, workflow.edges);
+	const contact = ctx.contact;
+	let signedUrl: string | undefined;
+	let lastAiResponse: string | undefined;
+
+	const executionId = await startWorkflowExecution(admin, workflow.id, 'email_received', {
+		contact_id: ctx.contactId,
+		conversation_id: ctx.conversationId,
+		widget_id: ctx.widgetId,
+		inbound_subject: ctx.inboundSubject ?? null,
+		inbound_body: ctx.inboundBody ?? null
+	});
+
+	let runError: string | null = null;
+	try {
+		for (const node of actions) {
+			const actionType = (node.data?.actionType as string) ?? '';
+			const nodeLabel = (node.data?.label as string) ?? node.id;
+			try {
+				if (actionType === 'Generate quote' && ctx.conversationId) {
+					const gen = await generateQuoteForConversation(
+						admin,
+						ctx.conversationId,
+						ctx.widgetId,
+						contact,
+						null,
+						ctx.ownerId
+					);
+					if (gen.signedUrl) signedUrl = gen.signedUrl;
+					await logWorkflowStep(admin, executionId, {
+						nodeId: node.id,
+						nodeLabel,
+						actionType: 'Generate quote',
+						status: gen.signedUrl ? 'success' : 'error',
+						errorMessage: gen.signedUrl ? null : gen.error ?? undefined,
+						output: gen.signedUrl ? { signedUrl: true } : undefined
+					});
+				} else if (actionType === 'Send email') {
+					const data = node.data ?? {};
+					const emailExtras: Record<string, string> = { 'quote.downloadUrl': signedUrl ?? '', 'ai.response': lastAiResponse ?? '' };
+					const emailToRaw = (data.emailTo as string) ?? '{{contact.email}}';
+					const toEmail = substitutePrompt(emailToRaw, contact, {}).trim().toLowerCase() || (contact?.email ?? '').trim().toLowerCase();
+					const subjectRaw = (data.emailSubject as string) ?? '';
+					const bodyRaw = (data.emailBody as string) ?? '';
+					const subject = subjectRaw.trim() ? substitutePrompt(subjectRaw, contact, emailExtras) : undefined;
+					const body = bodyRaw.trim() ? substitutePrompt(bodyRaw, contact, emailExtras) : undefined;
+					if (toEmail && body) {
+						const emailResult = await sendQuoteEmail(admin, ctx.ownerId, {
+							toEmail,
+							quoteDownloadUrl: signedUrl ?? '',
+							customerName: contact?.name ?? null,
+							customSubject: subject ?? '',
+							customBody: body,
+							contactId: ctx.contactId,
+							conversationId: ctx.conversationId ?? undefined
+						});
+						await logWorkflowStep(admin, executionId, {
+							nodeId: node.id,
+							nodeLabel,
+							actionType: 'Send email',
+							status: emailResult.sent ? 'success' : 'error',
+							errorMessage: emailResult.sent ? null : emailResult.error ?? undefined,
+							output: { emailSent: emailResult.sent }
+						});
+					} else {
+						await logWorkflowStep(admin, executionId, {
+							nodeId: node.id,
+							nodeLabel,
+							actionType: 'Send email',
+							status: 'skipped',
+							errorMessage: !toEmail ? 'No recipient' : 'No email body configured'
+						});
+					}
+				} else if (actionType === 'Send message (chat)' && ctx.conversationId) {
+					const chatMessageRaw = (node.data?.chatMessage as string) ?? '';
+					const messageTrimmed = chatMessageRaw.trim();
+					if (messageTrimmed) {
+						const chatExtras: Record<string, string> = { 'quote.downloadUrl': signedUrl ?? '', 'ai.response': lastAiResponse ?? '' };
+						const substituted = substitutePrompt(messageTrimmed, contact, chatExtras);
+						const content = replaceBracketLinks(substituted, signedUrl ?? '');
+						const { error: msgErr } = await admin.from('widget_conversation_messages').insert({
+							conversation_id: ctx.conversationId,
+							role: 'assistant',
+							content
+						});
+						await logWorkflowStep(admin, executionId, {
+							nodeId: node.id,
+							nodeLabel,
+							actionType: 'Send message (chat)',
+							status: msgErr ? 'error' : 'success',
+							errorMessage: msgErr?.message ?? null,
+							output: msgErr ? undefined : { sent: true }
+						});
+					} else {
+						await logWorkflowStep(admin, executionId, {
+							nodeId: node.id,
+							nodeLabel,
+							actionType: 'Send message (chat)',
+							status: 'skipped',
+							errorMessage: 'No message configured'
+						});
+					}
+				} else if (actionType === 'AI') {
+					// AI action: substitute placeholders, call LLM, store response for next steps ({{ai.response}})
+					const data = node.data ?? {};
+					const promptRaw = (data.aiPrompt as string) ?? '';
+					const extras: Record<string, string> = {
+						'inbound.subject': ctx.inboundSubject ?? '',
+						'inbound.body': (ctx.inboundBody ?? '').slice(0, 500)
+					};
+					const prompt = substitutePrompt(promptRaw, contact, extras);
+					const provider = (data.aiProvider as string)?.trim() || 'openai';
+					const model = (data.aiModel as string)?.trim() || (provider === 'google' ? 'gemini-2.5-flash' : provider === 'anthropic' ? 'claude-3-5-sonnet-20241022' : 'gpt-4o-mini');
+					const useIntegrated = (data.aiConnection as string) !== 'custom';
+					let apiKey: string | null = null;
+					if (useIntegrated) {
+						const { data: key } = await admin.rpc('get_owner_llm_key_for_chat', {
+							p_widget_id: ctx.widgetId,
+							p_provider: provider
+						});
+						apiKey = key as string | null;
+					} else {
+						apiKey = (data.aiApiKey as string)?.trim() || null;
+					}
+					if (prompt.trim() && apiKey) {
+						try {
+							const response = await chatWithLlm(provider, model, apiKey, [{ role: 'user', content: prompt }]);
+							lastAiResponse = (response ?? '').trim();
+							await logWorkflowStep(admin, executionId, {
+								nodeId: node.id,
+								nodeLabel,
+								actionType: 'AI',
+								status: 'success',
+								output: { responseLength: lastAiResponse.length }
+							});
+						} catch (aiErr) {
+							const errMsg = aiErr instanceof Error ? aiErr.message : String(aiErr);
+							runError = errMsg;
+							await logWorkflowStep(admin, executionId, {
+								nodeId: node.id,
+								nodeLabel,
+								actionType: 'AI',
+								status: 'error',
+								errorMessage: errMsg
+							});
+						}
+					} else {
+						await logWorkflowStep(admin, executionId, {
+							nodeId: node.id,
+							nodeLabel,
+							actionType: 'AI',
+							status: 'skipped',
+							errorMessage: !prompt.trim() ? 'No prompt configured' : 'No API key (add in Settings or use custom key)'
+						});
+					}
+				} else if (actionType === 'Generate quote' && !ctx.conversationId) {
+					await logWorkflowStep(admin, executionId, {
+						nodeId: node.id,
+						nodeLabel,
+						actionType: 'Generate quote',
+						status: 'skipped',
+						errorMessage: 'No conversation linked to contact'
+					});
+				}
+			} catch (stepErr) {
+				runError = stepErr instanceof Error ? stepErr.message : String(stepErr);
+				await logWorkflowStep(admin, executionId, {
+					nodeId: node.id,
+					nodeLabel,
+					actionType,
+					status: 'error',
+					errorMessage: runError
+				});
+			}
+		}
+	} catch (e) {
+		runError = e instanceof Error ? e.message : String(e);
+	}
+	await finishWorkflowExecution(admin, executionId, runError ? 'error' : 'success', runError ?? null);
+	return runError ? { success: false, error: runError } : { success: true };
+}
+
 /**
  * Run a form-triggered workflow: execute actions in order.
  * Email is only sent when the workflow explicitly contains a "Send email" action (no hardcoded email).
@@ -484,14 +718,14 @@ export async function runFormWorkflow(
 					const toEmail = substitutePrompt(emailToRaw, contact, {}).trim().toLowerCase() || (contact?.email ?? '').trim().toLowerCase();
 					const subjectRaw = (data.emailSubject as string) ?? '';
 					const bodyRaw = (data.emailBody as string) ?? '';
-					const subject = subjectRaw.trim() ? substitutePrompt(subjectRaw, contact, { 'quote.downloadUrl': signedUrl }) : undefined;
-					const body = bodyRaw.trim() ? substitutePrompt(bodyRaw, contact, { 'quote.downloadUrl': signedUrl }) : undefined;
+					const subject = subjectRaw.trim() ? substitutePrompt(subjectRaw, contact, { 'quote.downloadUrl': signedUrl ?? '' }) : undefined;
+					const body = bodyRaw.trim() ? substitutePrompt(bodyRaw, contact, { 'quote.downloadUrl': signedUrl ?? '' }) : undefined;
 					if (toEmail && signedUrl && body) {
 						const emailResult = await sendQuoteEmail(admin, ctx.ownerId, {
 							toEmail,
 							quoteDownloadUrl: signedUrl,
 							customerName: contact?.name ?? null,
-							customSubject: subject,
+							customSubject: subject ?? '',
 							customBody: body,
 							contactId: ctx.contactId ?? null,
 							conversationId: null

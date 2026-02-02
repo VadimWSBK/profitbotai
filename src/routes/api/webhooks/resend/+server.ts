@@ -12,7 +12,8 @@ import { Resend } from 'resend';
 import { getSupabaseAdmin } from '$lib/supabase.server';
 import { updateContactEmailStatus, storeContactEmail } from '$lib/contact-email.server';
 import { getResendConfigForUser, getReceivedEmail } from '$lib/resend.server';
-import { extractEmailFromAddress } from '$lib/sync-received-emails.server';
+import { extractEmailFromAddress, extractNameFromAddress } from '$lib/sync-received-emails.server';
+import { getEmailReceivedWorkflows, runEmailReceivedWorkflow } from '$lib/run-workflow.server';
 import { env } from '$env/dynamic/private';
 
 const WEBHOOK_SECRET = env.RESEND_WEBHOOK_SECRET ?? '';
@@ -112,13 +113,33 @@ export const POST: RequestHandler = async (event) => {
 						const widgetIds = (widgets ?? []).map((w: { id: string }) => w.id);
 
 						if (widgetIds.length > 0) {
-							const { data: contactRow } = await admin
+							const firstWidgetId = widgetIds[0];
+							let contactRow = await admin
 								.from('contacts')
-								.select('id, conversation_id')
+								.select('id, conversation_id, widget_id, name, email, phone')
 								.in('widget_id', widgetIds)
 								.ilike('email', senderEmail)
 								.limit(1)
-								.maybeSingle();
+								.maybeSingle()
+								.then((r) => r.data as { id: string; conversation_id: string | null; widget_id: string | null; name: string | null; email: string | null; phone: string | null } | null);
+
+							// If sender is not a contact yet, create one (name from "From" header) so workflows can run
+							if (!contactRow) {
+								const extractedName = extractNameFromAddress(fromRaw) || null;
+								const { data: newContact, error: insertErr } = await admin
+									.from('contacts')
+									.insert({
+										widget_id: firstWidgetId,
+										email: senderEmail,
+										name: extractedName,
+										conversation_id: null
+									})
+									.select('id, conversation_id, widget_id, name, email, phone')
+									.single();
+								if (!insertErr && newContact) {
+									contactRow = newContact as typeof contactRow;
+								}
+							}
 
 							if (contactRow) {
 								const bodyPreview = full.text ?? (full.html ? stripHtml(full.html) : null) ?? '';
@@ -136,6 +157,38 @@ export const POST: RequestHandler = async (event) => {
 									status: 'delivered',
 									sentAt: full.created_at ?? new Date().toISOString()
 								});
+
+								const widgetIdForWorkflows = contactRow.widget_id ?? firstWidgetId;
+								const convId = contactRow.conversation_id as string | null;
+								let runWorkflows = true;
+								if (convId) {
+									const { data: conv } = await admin
+										.from('widget_conversations')
+										.select('is_ai_email_active')
+										.eq('id', convId)
+										.single();
+									runWorkflows = (conv as { is_ai_email_active?: boolean } | null)?.is_ai_email_active !== false;
+								}
+								if (runWorkflows && widgetIdForWorkflows) {
+									const workflows = await getEmailReceivedWorkflows(admin, widgetIdForWorkflows);
+									const contact = {
+										name: contactRow.name ?? null,
+										email: contactRow.email ?? null,
+										phone: contactRow.phone ?? null,
+										address: null as string | null
+									};
+									for (const w of workflows) {
+										await runEmailReceivedWorkflow(admin, w, {
+											widgetId: widgetIdForWorkflows,
+											ownerId: matchedUserId,
+											contactId: contactRow.id,
+											conversationId: convId,
+											contact,
+											inboundSubject: full.subject ?? undefined,
+											inboundBody: bodyPreview || undefined
+										});
+									}
+								}
 							}
 						}
 					}

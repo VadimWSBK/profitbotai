@@ -35,6 +35,7 @@
 		widgetName: string;
 		sessionId: string;
 		isAiActive: boolean;
+		isAiEmailActive?: boolean;
 		createdAt: string;
 		updatedAt: string;
 		contactId?: string | null;
@@ -64,6 +65,7 @@
 	let syncInboxLoading = $state(false);
 	let loading = $state(false);
 	let sending = $state(false);
+	let sendingEmailAi = $state(false);
 	let hasMoreMessages = $state(false);
 	let loadingMore = $state(false);
 	let messagesContainerEl = $state<HTMLDivElement | undefined>(undefined);
@@ -200,6 +202,24 @@
 			}
 		} finally {
 			sending = false;
+		}
+	}
+
+	async function setAiEmailActive(active: boolean) {
+		if (!selectedConversation) return;
+		sendingEmailAi = true;
+		try {
+			const res = await fetch(`/api/conversations/${selectedConversation.id}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ is_ai_email_active: active })
+			});
+			const json = await res.json().catch(() => ({}));
+			if (res.ok && conversationDetail && json.conversation) {
+				conversationDetail = { ...conversationDetail, isAiEmailActive: json.conversation.isAiEmailActive };
+			}
+		} finally {
+			sendingEmailAi = false;
 		}
 	}
 
@@ -505,7 +525,7 @@
 				</div>
 			{:else}
 				<div class="flex flex-col h-full">
-					<!-- Header: contact name, session, Take over / Start AI -->
+					<!-- Header: contact name, session, STOP AI / Start AI, AI email -->
 					<div class="shrink-0 flex flex-col border-b border-gray-200 bg-gray-50">
 						<div class="flex items-center justify-between gap-4 p-4">
 							<div class="flex items-center gap-3">
@@ -537,7 +557,7 @@
 										disabled={sending}
 										onclick={() => setAiActive(false)}
 									>
-										Take over
+										STOP AI
 									</button>
 								{:else}
 									<button
@@ -547,6 +567,18 @@
 										onclick={() => setAiActive(true)}
 									>
 										Start AI
+									</button>
+								{/if}
+								{#if currentConv?.contactEmail}
+									<button
+										type="button"
+										class="rounded-lg px-4 py-2 text-sm font-medium border disabled:opacity-50 {conversationDetail?.isAiEmailActive !== false
+											? 'bg-amber-100 border-amber-300 text-amber-800 hover:bg-amber-200'
+											: 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'}"
+										disabled={sendingEmailAi}
+										onclick={() => setAiEmailActive(conversationDetail?.isAiEmailActive === false)}
+									>
+										{conversationDetail?.isAiEmailActive !== false ? 'AI email: On' : 'AI email: Off'}
 									</button>
 								{/if}
 							</div>

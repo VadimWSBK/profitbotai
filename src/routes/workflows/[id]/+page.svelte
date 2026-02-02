@@ -16,7 +16,8 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 	const TRIGGER_OPTIONS = [
 		{ value: 'Form submit', label: 'Form submit', description: 'Runs when a form is submitted on your site.', Icon: ClipboardList },
 		{ value: 'Inbound webhook', label: 'On webhook call', description: 'Runs the flow on receiving an HTTP request.', Icon: Webhook },
-		{ value: 'Message in the chat', label: 'On chat message', description: 'Runs when a user sends a chat message (e.g. when customer requests quote).', Icon: MessageCircle }
+		{ value: 'Message in the chat', label: 'On chat message', description: 'Runs when a user sends a chat message (e.g. when customer requests quote).', Icon: MessageCircle },
+		{ value: 'Email received', label: 'Email received', description: 'Runs when an email is received (inbound reply to your Resend inbox).', Icon: Mail }
 	] as const;
 
 	const ACTION_OPTIONS = [
@@ -32,12 +33,41 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 	const EMAIL_BODY_PLACEHOLDER = 'Hi {{contact.name}},\n\nPlease find your quote attached.\n\nBest regards';
 	const EMAIL_PLACEHOLDER_HINT = 'Use placeholders like {{contact.name}}, {{contact.email}}, or quote details.';
 	const AI_PROMPT_PLACEHOLDER = 'e.g. Summarize the conversation in one sentence. Or: Extract the customer\'s request and suggest a reply. Use {{contact.name}}, {{contact.email}} for context.';
-	const AI_PROMPT_HINT = 'Use placeholders: {{contact.name}}, {{contact.email}}, {{contact.phone}}, {{quote.total}}, etc.';
+	const AI_PROMPT_HINT = 'Use placeholders: {{contact.name}}, {{contact.email}}, {{contact.phone}}, {{quote.total}}. For Email received: {{inbound.subject}}, {{inbound.body}}. Use {{ai.response}} in the next step (e.g. Send email body) to send the AI reply.';
+	/** Suggested prompt for Email received → AI → Send email: draft a reply and use {{ai.response}} in the next step. */
+	const AI_EMAIL_REPLY_PROMPT = `You are replying to an inbound email on behalf of the business. Write a short, professional reply.
+
+Context:
+- Contact: {{contact.name}} ({{contact.email}})
+- Inbound subject: {{inbound.subject}}
+- Inbound message:
+{{inbound.body}}
+
+Instructions: Reply in 2–4 sentences. Be helpful and concise. Do not include a subject line or salutation—only the email body. Output nothing else.`;
+
+	const AI_VARIABLE_GROUPS: { group: string; label: string; fields: { key: string; label: string }[] }[] = [
+		{ group: 'contact', label: 'Contact', fields: [{ key: 'name', label: 'Name' }, { key: 'first_name', label: 'First name' }, { key: 'last_name', label: 'Last name' }, { key: 'email', label: 'Email' }, { key: 'phone', label: 'Phone' }] },
+		{ group: 'quote', label: 'Quote', fields: [{ key: 'total', label: 'Total' }, { key: 'items', label: 'Items' }, { key: 'downloadUrl', label: 'Quote link' }] }
+	];
+	const AI_INBOUND_FIELDS: { key: string; label: string }[] = [
+		{ key: 'subject', label: 'Subject' },
+		{ key: 'body', label: 'Body' }
+	];
+	let showAiPromptVarDropdown = $state(false);
+
+	function insertAiPromptVariable(tag: string) {
+		if (!selectedNode) return;
+		const data = selectedNode.data ?? {};
+		const current = typeof data.aiPrompt === 'string' ? data.aiPrompt : '';
+		updateNodeData(selectedNode.id, { aiPrompt: current + tag });
+		showAiPromptVarDropdown = false;
+	}
 
 	const EMAIL_VARIABLE_GROUPS: { group: string; fields: { key: string; label: string }[] }[] = [
 		{ group: 'Contact', fields: [{ key: 'name', label: 'Name' }, { key: 'first_name', label: 'First name' }, { key: 'last_name', label: 'Last name' }, { key: 'email', label: 'Email' }, { key: 'phone', label: 'Phone' }] },
 		{ group: 'Company', fields: [{ key: 'name', label: 'Name' }, { key: 'email', label: 'Email' }] },
-		{ group: 'Quote', fields: [{ key: 'total', label: 'Total' }, { key: 'items', label: 'Items' }, { key: 'downloadUrl', label: 'Quote link' }] }
+		{ group: 'Quote', fields: [{ key: 'total', label: 'Total' }, { key: 'items', label: 'Items' }, { key: 'downloadUrl', label: 'Quote link' }] },
+		{ group: 'AI', fields: [{ key: 'response', label: 'AI response (from previous step)' }] }
 	];
 
 	type EmailVarField = 'emailTo' | 'emailSubject' | 'emailBody' | 'emailCopyTo' | 'chatMessage';
@@ -147,7 +177,7 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 	}
 
 	function formatTriggerType(t: string): string {
-		return t === 'form_submit' ? 'Form submit' : t === 'message_in_chat' ? 'Message in chat' : t;
+		return t === 'form_submit' ? 'Form submit' : t === 'message_in_chat' ? 'Message in chat' : t === 'email_received' ? 'Email received' : t;
 	}
 
 	function formatDate(iso: string): string {
@@ -374,6 +404,12 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 				return { widgetId: null, error: 'Create at least one widget in your account to save this workflow.' };
 			}
 			return { widgetId: firstWidgetId, error: null };
+		}
+		if (triggerType === 'Email received') {
+			if (!widgetId) {
+				return { widgetId: null, error: 'Select a widget to save this workflow (runs when an email is received from a contact of that widget).' };
+			}
+			return { widgetId, error: null };
 		}
 		return { widgetId: null, error: 'Complete the trigger configuration to save this workflow.' };
 	}
@@ -739,6 +775,20 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 								{/each}
 							</select>
 							<p class="text-xs text-gray-500">Assign to a widget so this workflow runs when a customer sends a message in that widget’s chat.</p>
+						{:else if triggerType === 'Email received'}
+							<label for="email-received-widget" class="block text-xs font-medium text-gray-500">Widget</label>
+							<select
+								id="email-received-widget"
+								class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 bg-white"
+								value={data.widgetId ?? ''}
+								onchange={(e) => updateNodeData(selectedNode.id, { widgetId: (e.currentTarget as HTMLSelectElement).value })}
+							>
+								<option value="">Select a widget</option>
+								{#each widgets as w}
+									<option value={w.id}>{w.name}</option>
+								{/each}
+							</select>
+							<p class="text-xs text-gray-500">Runs when an inbound email is received for this widget (e.g. reply to a quote). New senders are matched to an existing contact or created automatically; use AI actions with {'{{inbound.subject}}'} and {'{{inbound.body}}'} to draft replies.</p>
 						{:else if triggerType === 'Inbound webhook'}
 							{@const webhookUrl = `${origin}/api/workflows/trigger/${workflowId}/${selectedNode.id}`}
 							<div class="space-y-2">
@@ -1233,7 +1283,45 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 										</select>
 									</div>
 									<div>
-										<label for="ai-prompt" class="block text-xs font-medium text-gray-500 mb-1">Prompt</label>
+										<div class="flex items-center justify-between gap-2 mb-1">
+											<label for="ai-prompt" class="text-xs font-medium text-gray-500">Prompt</label>
+											<div class="flex items-center gap-2">
+												{#if getTriggerData().triggerType === 'Email received'}
+													<button
+														type="button"
+														onclick={() => { updateNodeData(selectedNode.id, { aiPrompt: AI_EMAIL_REPLY_PROMPT }); }}
+														class="text-xs font-medium text-gray-600 hover:text-gray-800"
+													>
+														Use suggested prompt
+													</button>
+												{/if}
+												<div class="relative">
+													<button
+														type="button"
+														onclick={() => showAiPromptVarDropdown = !showAiPromptVarDropdown}
+														class="text-xs font-medium text-amber-600 hover:text-amber-700"
+													>
+														Add variable
+													</button>
+												{#if showAiPromptVarDropdown}
+													<div class="absolute right-0 top-full mt-1 z-10 w-48 rounded-lg border border-gray-200 bg-white py-1 shadow-lg max-h-64 overflow-y-auto">
+														{#each AI_VARIABLE_GROUPS as { group, label, fields }}
+															<p class="px-2 py-1 text-xs font-semibold text-gray-500 uppercase tracking-wider">{label}</p>
+															{#each fields as { key, label: fieldLabel }}
+																<button type="button" class="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-amber-50" onclick={() => insertAiPromptVariable(`{{${group}.${key}}}`)}>{fieldLabel}</button>
+															{/each}
+														{/each}
+														{#if getTriggerData().triggerType === 'Email received'}
+															<p class="px-2 py-1 text-xs font-semibold text-gray-500 uppercase tracking-wider mt-1">Inbound</p>
+															{#each AI_INBOUND_FIELDS as { key, label: fieldLabel }}
+																<button type="button" class="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-amber-50" onclick={() => insertAiPromptVariable(`{{inbound.${key}}}`)}>{fieldLabel}</button>
+															{/each}
+														{/if}
+													</div>
+												{/if}
+												</div>
+											</div>
+										</div>
 										<textarea
 											id="ai-prompt"
 											placeholder={AI_PROMPT_PLACEHOLDER}

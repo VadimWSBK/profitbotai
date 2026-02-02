@@ -24,7 +24,7 @@ export const GET: RequestHandler = async (event) => {
 	const supabase = getSupabaseClient(event);
 	const { data: conv, error: convError } = await supabase
 		.from('widget_conversations')
-		.select('id, widget_id, session_id, is_ai_active, created_at, updated_at, widgets(id, name)')
+		.select('id, widget_id, session_id, is_ai_active, is_ai_email_active, created_at, updated_at, widgets(id, name)')
 		.eq('id', id)
 		.single();
 	if (convError || !conv) return json({ error: 'Conversation not found' }, { status: 404 });
@@ -136,6 +136,7 @@ export const GET: RequestHandler = async (event) => {
 			widgetName: (widget as { name: string })?.name ?? '',
 			sessionId: conv.session_id,
 			isAiActive: conv.is_ai_active,
+			isAiEmailActive: (conv as { is_ai_email_active?: boolean }).is_ai_email_active ?? true,
 			createdAt: conv.created_at,
 			updatedAt: conv.updated_at,
 			contactId: contact?.id ?? null,
@@ -157,8 +158,8 @@ export const GET: RequestHandler = async (event) => {
 };
 
 /**
- * PATCH /api/conversations/[id] – set is_ai_active (take over = false, start AI = true).
- * Body: { is_ai_active: boolean }
+ * PATCH /api/conversations/[id] – set is_ai_active (STOP AI = false, Start AI = true) and/or is_ai_email_active.
+ * Body: { is_ai_active?: boolean, is_ai_email_active?: boolean } (at least one required)
  */
 export const PATCH: RequestHandler = async (event) => {
 	const user = event.locals.user;
@@ -167,24 +168,38 @@ export const PATCH: RequestHandler = async (event) => {
 	const id = event.params.id;
 	if (!id) return json({ error: 'Missing conversation id' }, { status: 400 });
 
-	let body: { is_ai_active?: boolean };
+	let body: { is_ai_active?: boolean; is_ai_email_active?: boolean };
 	try {
 		body = await event.request.json();
 	} catch {
 		return json({ error: 'Invalid JSON' }, { status: 400 });
 	}
 	const isAiActive = typeof body?.is_ai_active === 'boolean' ? body.is_ai_active : undefined;
-	if (isAiActive === undefined) return json({ error: 'is_ai_active boolean required' }, { status: 400 });
+	const isAiEmailActive = typeof body?.is_ai_email_active === 'boolean' ? body.is_ai_email_active : undefined;
+	if (isAiActive === undefined && isAiEmailActive === undefined) {
+		return json({ error: 'At least one of is_ai_active or is_ai_email_active boolean required' }, { status: 400 });
+	}
 
 	const supabase = getSupabaseClient(event);
+	const updates: { is_ai_active?: boolean; is_ai_email_active?: boolean } = {};
+	if (isAiActive !== undefined) updates.is_ai_active = isAiActive;
+	if (isAiEmailActive !== undefined) updates.is_ai_email_active = isAiEmailActive;
+
 	const { data, error } = await supabase
 		.from('widget_conversations')
-		.update({ is_ai_active: isAiActive })
+		.update(updates)
 		.eq('id', id)
-		.select('id, is_ai_active')
+		.select('id, is_ai_active, is_ai_email_active')
 		.single();
 	if (error) return json({ error: error.message }, { status: 500 });
 	if (!data) return json({ error: 'Conversation not found' }, { status: 404 });
 
-	return json({ conversation: { id: data.id, isAiActive: data.is_ai_active } });
+	const row = data as { id: string; is_ai_active: boolean; is_ai_email_active?: boolean };
+	return json({
+		conversation: {
+			id: row.id,
+			isAiActive: row.is_ai_active,
+			isAiEmailActive: row.is_ai_email_active ?? true
+		}
+	});
 };

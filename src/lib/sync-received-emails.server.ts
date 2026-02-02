@@ -17,6 +17,16 @@ export function extractEmailFromAddress(addr: string): string {
 	return s.toLowerCase();
 }
 
+/** Extract display name from "Name <email@example.com>" (returns "Name"); "email@example.com" returns "". */
+export function extractNameFromAddress(addr: string): string {
+	const s = (addr ?? '').trim();
+	const idx = s.indexOf('<');
+	if (idx <= 0) return '';
+	let name = s.slice(0, idx).trim();
+	if (name.startsWith('"') && name.endsWith('"')) name = name.slice(1, -1).trim();
+	return name || '';
+}
+
 function stripHtml(html: string): string {
 	return html.replaceAll(/<[^>]*>/g, ' ').replaceAll(/\s+/g, ' ').trim();
 }
