@@ -11,6 +11,9 @@ export interface SendQuoteEmailOptions {
 	customerName?: string | null;
 	/** When provided, the PDF is attached to the email. */
 	pdfBuffer?: Buffer;
+	/** When provided (e.g. from workflow Send email node), use instead of default subject/body. */
+	customSubject?: string;
+	customBody?: string;
 }
 
 /**
@@ -40,7 +43,7 @@ export async function sendQuoteEmail(
 		return { sent: false, error: 'No mailing integration connected' };
 	}
 
-	const { toEmail, quoteDownloadUrl, customerName, pdfBuffer } = opts;
+	const { toEmail, quoteDownloadUrl, customerName, pdfBuffer, customSubject, customBody } = opts;
 	const to = toEmail.trim().toLowerCase();
 	if (!to) {
 		return { sent: false, error: 'Missing recipient email' };
@@ -48,7 +51,6 @@ export async function sendQuoteEmail(
 	const hasAttachment = Boolean(pdfBuffer && pdfBuffer.length > 0);
 
 	// From address: Resend requires an email on your verified domain when sending to customers.
-	// Prefer integration.fromEmail (set in Settings → Integrations → Resend), then quote_settings.company.email.
 	const { data: quoteSettings } = await supabase
 		.from('quote_settings')
 		.select('company')
@@ -67,12 +69,32 @@ export async function sendQuoteEmail(
 	}
 	let from = fromName ? `${fromName} <${fromEmail}>` : fromEmail;
 
-	const greeting = customerName?.trim() ? `Hi ${customerName.trim()},` : 'Hi,';
-	const subject = 'Your quote is ready';
-	const bodyCopy = hasAttachment
-		? 'Your quote PDF is attached to this email. You can also download it using the link below:'
-		: 'Your quote is ready. Click the link below to download your PDF:';
-	const html = `
+	let subject: string;
+	let html: string;
+	const useCustomContent = typeof customBody === 'string' && customBody.trim();
+	if (useCustomContent) {
+		// Use workflow-configured subject and body (placeholders already substituted by caller)
+		subject = (typeof customSubject === 'string' && customSubject.trim()) ? customSubject.trim() : 'Your quote is ready';
+		const bodyEscaped = escapeHtml(customBody.trim()).replaceAll(/\n/g, '<br>\n');
+		const bodyWithLinks = linkify(bodyEscaped);
+		const hasLink = bodyWithLinks.includes('href=');
+		html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="font-family: system-ui, -apple-system, sans-serif; line-height: 1.5; color: #1f2937; max-width: 560px; margin: 0 auto; padding: 24px;">
+  <div style="white-space: pre-wrap;">${bodyWithLinks}</div>
+  ${!hasLink ? `<p><a href="${escapeHtml(quoteDownloadUrl)}" style="color: #b45309; font-weight: 600;">Download your quote</a></p><p style="color: #6b7280; font-size: 14px;">This link will expire in 1 hour.</p>` : ''}
+  <p style="color: #6b7280; font-size: 14px;">— ${escapeHtml(fromName)}</p>
+</body>
+</html>`;
+	} else {
+		const greeting = customerName?.trim() ? `Hi ${customerName.trim()},` : 'Hi,';
+		subject = 'Your quote is ready';
+		const bodyCopy = hasAttachment
+			? 'Your quote PDF is attached to this email. You can also download it using the link below:'
+			: 'Your quote is ready. Click the link below to download your PDF:';
+		html = `
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
@@ -84,6 +106,7 @@ export async function sendQuoteEmail(
   <p style="color: #6b7280; font-size: 14px;">— ${escapeHtml(fromName)}</p>
 </body>
 </html>`;
+	}
 
 	if (integration.type === 'resend') {
 		const result = await sendEmailWithResend(integration.apiKey, {
@@ -120,4 +143,12 @@ function escapeHtml(s: string): string {
 		.replaceAll('>', '&gt;')
 		.replaceAll('"', '&quot;')
 		.replaceAll("'", '&#39;');
+}
+
+/** Turn plain http(s) URLs in text into clickable links (text already escaped). */
+function linkify(text: string): string {
+	return text.replace(
+		/(https?:\/\/[^\s<]+)/g,
+		(url) => `<a href="${escapeHtml(url)}" style="color: #b45309; font-weight: 600;">${escapeHtml(url)}</a>`
+	);
 }

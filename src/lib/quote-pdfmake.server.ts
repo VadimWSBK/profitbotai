@@ -40,8 +40,7 @@ export function buildQuoteDocDefinition(settings: QuoteSettings, payload: QuoteP
 				{
 					width: '*',
 					stack: [
-						// Logo: pdfmake needs base64 or local path; URLs require fetch+convert (skip for now)
-							// ...(settings.logo_url ? [{ image: settings.logo_url, width: 120 }] : []),
+						...(settings.logo_base64 ? [{ image: settings.logo_base64, width: 120, margin: [0, 0, 0, 8] }] : []),
 						{ text: company.name ?? '', style: 'companyName' },
 						...(company.address
 							? [{ text: String(company.address).replace(/\n/g, '\n'), fontSize: 9, margin: [0, 2, 0, 0] }]
@@ -148,8 +147,12 @@ export function buildQuoteDocDefinition(settings: QuoteSettings, payload: QuoteP
 			);
 		}
 		const qrStack: unknown[] = [];
-		// QR code: pdfmake needs base64; URLs require fetch+convert (skip image for now)
-		if (settings.barcode_url) {
+		if (settings.barcode_base64) {
+			qrStack.push(
+				{ text: settings.barcode_title ?? 'Call Us or Visit Website', style: 'sectionTitle', margin: [0, 0, 0, 2] },
+				{ image: settings.barcode_base64, width: 80, margin: [0, 4, 0, 0] }
+			);
+		} else if (settings.barcode_url) {
 			qrStack.push(
 				{ text: settings.barcode_title ?? 'Call Us or Visit Website', style: 'sectionTitle', margin: [0, 0, 0, 2] },
 				{ text: '(QR code image – use Quote preview for full layout)', fontSize: 8, italics: true, color: '#666' }

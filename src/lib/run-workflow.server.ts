@@ -153,12 +153,20 @@ export async function runQuoteWorkflow(
 				if (appendErr) console.error('[run-workflow] append_pdf_quote_to_contact:', appendErr);
 			}
 		} else if (actionType === 'Send email' && signedUrl) {
-			const toEmail = (contact?.email ?? '').trim().toLowerCase();
+			const data = node.data ?? {};
+			const emailToRaw = (data.emailTo as string) ?? '{{contact.email}}';
+			const toEmail = substitutePrompt(emailToRaw, contact, {}).trim().toLowerCase() || (contact?.email ?? '').trim().toLowerCase();
 			if (toEmail) {
+				const subjectRaw = (data.emailSubject as string) ?? '';
+				const bodyRaw = (data.emailBody as string) ?? '';
+				const subject = subjectRaw.trim() ? substitutePrompt(subjectRaw, contact, { 'quote.downloadUrl': signedUrl }) : undefined;
+				const body = bodyRaw.trim() ? substitutePrompt(bodyRaw, contact, { 'quote.downloadUrl': signedUrl }) : undefined;
 				const emailResult = await sendQuoteEmail(admin, ctx.ownerId, {
 					toEmail,
 					quoteDownloadUrl: signedUrl,
-					customerName: contact?.name ?? null
+					customerName: contact?.name ?? null,
+					customSubject: subject,
+					customBody: body
 				});
 				quoteEmailSent = emailResult.sent;
 			}
@@ -223,7 +231,8 @@ export async function getFormWorkflow(
 }
 
 /**
- * Run a form-triggered workflow: execute actions in order (e.g. Generate quote, Send email).
+ * Run a form-triggered workflow: execute actions in order.
+ * Email is only sent when the workflow explicitly contains a "Send email" action (no hardcoded email).
  */
 export async function runFormWorkflow(
 	admin: SupabaseClient,
@@ -245,13 +254,22 @@ export async function runFormWorkflow(
 				ctx.roofSize
 			);
 			if (gen.signedUrl) signedUrl = gen.signedUrl;
-		} else if (actionType === 'Send email' && signedUrl) {
-			const toEmail = (contact?.email ?? '').trim().toLowerCase();
-			if (toEmail) {
+		} else if (actionType === 'Send email') {
+			// Only send when workflow has this action; use workflow node's To/Subject/Body when set
+			const data = node.data ?? {};
+			const emailToRaw = (data.emailTo as string) ?? '{{contact.email}}';
+			const toEmail = substitutePrompt(emailToRaw, contact, {}).trim().toLowerCase() || (contact?.email ?? '').trim().toLowerCase();
+			if (toEmail && signedUrl) {
+				const subjectRaw = (data.emailSubject as string) ?? '';
+				const bodyRaw = (data.emailBody as string) ?? '';
+				const subject = subjectRaw.trim() ? substitutePrompt(subjectRaw, contact, { 'quote.downloadUrl': signedUrl }) : undefined;
+				const body = bodyRaw.trim() ? substitutePrompt(bodyRaw, contact, { 'quote.downloadUrl': signedUrl }) : undefined;
 				await sendQuoteEmail(admin, ctx.ownerId, {
 					toEmail,
 					quoteDownloadUrl: signedUrl,
-					customerName: contact?.name ?? null
+					customerName: contact?.name ?? null,
+					customSubject: subject,
+					customBody: body
 				});
 			}
 		}

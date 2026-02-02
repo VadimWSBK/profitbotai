@@ -33,6 +33,10 @@ export type QuoteSettings = {
 	logo_url?: string | null;
 	barcode_url?: string | null;
 	barcode_title?: string | null;
+	/** Resolved base64 data URL for PDF (server fills from logo_url). */
+	logo_base64?: string | null;
+	/** Resolved base64 data URL for PDF (server fills from barcode_url). */
+	barcode_base64?: string | null;
 	currency: string;
 };
 

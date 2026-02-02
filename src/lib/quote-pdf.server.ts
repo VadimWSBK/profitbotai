@@ -231,8 +231,31 @@ const FONT_IMPORTS = [
 ] as const;
 
 /**
+ * Fetch image URL and return a data URL (base64) for embedding in pdfmake.
+ * Returns null on failure or if url is empty. Passes through data URLs as-is.
+ */
+async function urlToBase64DataUrl(url: string | null | undefined): Promise<string | null> {
+	if (!url || typeof url !== 'string') return null;
+	const trimmed = url.trim();
+	if (!trimmed) return null;
+	if (trimmed.startsWith('data:')) return trimmed;
+	try {
+		const res = await fetch(trimmed, { cache: 'no-store' });
+		if (!res.ok) return null;
+		const blob = await res.blob();
+		const buf = await blob.arrayBuffer();
+		const base64 = Buffer.from(buf).toString('base64');
+		const mime = blob.type || 'image/png';
+		return `data:${mime};base64,${base64}`;
+	} catch {
+		return null;
+	}
+}
+
+/**
  * Generate PDF buffer via pdfmake (pure JS, no Chromium).
  * Fonts are loaded via SvelteKit read() into pdfmake virtualfs so they work on Vercel (no filesystem).
+ * Resolves logo_url and barcode_url to base64 so they are embedded in the PDF.
  */
 export async function generatePdfFromDocDefinition(
 	settings: QuoteSettings,
@@ -257,7 +280,18 @@ export async function generatePdfFromDocDefinition(
 		}
 	});
 
-	const docDefinition = buildQuoteDocDefinition(settings, payload);
+	// Resolve logo and QR code URLs to base64 so pdfmake can embed them (it doesn't fetch URLs in Node)
+	const [logo_base64, barcode_base64] = await Promise.all([
+		urlToBase64DataUrl(settings.logo_url),
+		urlToBase64DataUrl(settings.barcode_url)
+	]);
+	const resolvedSettings: QuoteSettings = {
+		...settings,
+		logo_base64: logo_base64 ?? undefined,
+		barcode_base64: barcode_base64 ?? undefined
+	};
+
+	const docDefinition = buildQuoteDocDefinition(resolvedSettings, payload);
 	const pdfDoc = pdfmake.createPdf(docDefinition);
 	const buffer = await pdfDoc.getBuffer();
 	return Buffer.from(buffer);
