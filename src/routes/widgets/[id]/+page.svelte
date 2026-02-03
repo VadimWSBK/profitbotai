@@ -261,8 +261,8 @@
 					</label>
 					<label class="block">
 						<span class="text-sm font-medium text-gray-700 mb-1">Message ⓘ</span>
-						<input type="text" bind:value={config.tooltip.message} class="w-full px-3 py-2 border border-gray-300 rounded-lg" placeholder="Hi {first_name} 👋 Let's Chat." />
-						<p class="mt-1 text-xs text-gray-500">Use <code class="px-1 py-0.5 bg-gray-100 rounded">{first_name}</code> or <code class="px-1 py-0.5 bg-gray-100 rounded">{name}</code> to show the visitor's name when known.</p>
+						<input type="text" bind:value={config.tooltip.message} class="w-full px-3 py-2 border border-gray-300 rounded-lg" placeholder={'Hi {first_name} 👋 Let\'s Chat.'} />
+						<p class="mt-1 text-xs text-gray-500">Use <code class="px-1 py-0.5 bg-gray-100 rounded">{'{first_name}'}</code> or <code class="px-1 py-0.5 bg-gray-100 rounded">{'{name}'}</code> to show the visitor's name when known.</p>
 					</label>
 					<label class="block">
 						<span class="text-sm font-medium text-gray-700 mb-1">Background Color ⓘ</span>
