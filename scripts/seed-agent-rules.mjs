@@ -124,7 +124,7 @@ const RULES = [
 	},
 	{
 		content:
-			'BUCKET SIZES & PRICING: 15L covers 30 m² – $389.99. 10L covers 20 m² – $285.99. 5L covers 10 m² – $149.99.',
+			'BUCKET SIZES & PRICING: Use the Current product pricing provided in the system prompt (configured in Settings → Product Pricing). Default if not provided: 15L covers 30 m² – $389.99, 10L covers 20 m² – $285.99, 5L covers 10 m² – $149.99 AUD.',
 		tags: ['pricing', 'bucket', 'quote']
 	},
 	{

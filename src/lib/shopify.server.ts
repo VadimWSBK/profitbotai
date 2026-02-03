@@ -169,6 +169,77 @@ export async function searchOrders(
 	return { orders: res.data?.orders ?? [] };
 }
 
+export type ShopifyProductWithImage = {
+	id: number;
+	title: string;
+	imageSrc: string | null;
+	variants: Array<{ id: number; price: string }>;
+};
+
+/**
+ * Fetch products from Shopify with images. Used for DIY checkout preview.
+ * Returns products with id, title, featured image src, and variant prices.
+ */
+export async function listProductsWithImages(
+	config: ShopifyConfig,
+	limit = 100
+): Promise<{ products?: ShopifyProductWithImage[]; error?: string }> {
+	const res = await shopifyRequest<{ products?: Array<{
+		id: number;
+		title: string;
+		image?: { src?: string } | null;
+		variants?: Array<{ id: number; price: string }>;
+	}> }>(config, 'products.json', {
+		query: {
+			limit,
+			fields: 'id,title,image,variants'
+		}
+	});
+	if (!res.ok) return { error: res.error ?? 'Failed to fetch products' };
+	const raw = res.data?.products ?? [];
+	const products: ShopifyProductWithImage[] = raw.map((p) => ({
+		id: p.id,
+		title: p.title ?? '',
+		imageSrc: (p.image && typeof p.image === 'object' && p.image.src) ? p.image.src : null,
+		variants: Array.isArray(p.variants) ? p.variants.map((v) => ({ id: v.id, price: String(v.price ?? '') })) : []
+	}));
+	return { products };
+}
+
+/**
+ * Resolve image URLs for DIY buckets (15L, 10L, 5L) by matching Shopify products.
+ * Matches by title containing the size (e.g. "15L", "10L", "5L") and optionally by variant price.
+ */
+export async function getDiyProductImages(
+	config: ShopifyConfig,
+	bucketConfig: Array<{ size: number; price: string; title: string }>
+): Promise<Record<number, string>> {
+	const { products, error } = await listProductsWithImages(config, 100);
+	const result: Record<number, string> = {};
+	if (error || !products?.length) return result;
+
+	const sizePatterns: Record<number, RegExp> = {
+		15: /\b15\s*L\b|15L/i,
+		10: /\b10\s*L\b|10L/i,
+		5: /\b5\s*L\b|5L/i
+	};
+
+	for (const bucket of bucketConfig) {
+		const pattern = sizePatterns[bucket.size];
+		if (!pattern) continue;
+		const priceNum = Number.parseFloat(bucket.price);
+		const match = products.find((p) => {
+			if (!pattern.test(p.title)) return false;
+			const variantPrice = p.variants[0]?.price;
+			if (!variantPrice) return true;
+			const vp = Number.parseFloat(variantPrice);
+			return Number.isFinite(vp) && Math.abs(vp - priceNum) < 1;
+		}) ?? products.find((p) => pattern.test(p.title));
+		if (match?.imageSrc) result[bucket.size] = match.imageSrc;
+	}
+	return result;
+}
+
 export async function listRecentOrders(
 	config: ShopifyConfig,
 	limit = 5

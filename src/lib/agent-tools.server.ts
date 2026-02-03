@@ -5,15 +5,17 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { tool } from 'ai';
+import { tool, type Tool } from 'ai';
 import { z } from 'zod';
 import { env } from '$env/dynamic/private';
-import { generateQuoteForConversation } from '$lib/quote-pdf.server';
+import { generateQuoteForConversation, type GenerateQuoteForConversationResult } from '$lib/quote-pdf.server';
 import { sendQuoteEmail, sendContactEmail } from '$lib/send-quote-email.server';
 import { AGENT_TOOL_IDS, type AgentToolId } from '$lib/agent-tools';
+import { getProductPricingForOwner } from '$lib/product-pricing.server';
 import {
 	cancelOrder,
 	createDraftOrder,
+	getDiyProductImages,
 	getShopifyConfigForUser,
 	listRecentOrders,
 	refundOrderFull,
@@ -36,8 +38,8 @@ function getContext(ctx: unknown): AgentToolContext | null {
 	return null;
 }
 
-function buildTools(admin: SupabaseClient): Record<string, ReturnType<typeof tool>> {
-	const tools: Record<string, ReturnType<typeof tool>> = {};
+function buildTools(admin: SupabaseClient): Record<string, Tool> {
+	const tools: Record<string, Tool> = {};
 
 	tools.search_contacts = tool({
 		description:
@@ -200,7 +202,7 @@ function buildTools(admin: SupabaseClient): Record<string, ReturnType<typeof too
 			if (roofSize == null || Number(roofSize) < 0) {
 				return { error: 'Roof size (square metres) is required. Ask the user for their roof size or area.' };
 			}
-			const result = await generateQuoteForConversation(
+			const result: GenerateQuoteForConversationResult = await generateQuoteForConversation(
 				admin,
 				c.conversationId,
 				c.widgetId,
@@ -453,29 +455,28 @@ function buildTools(admin: SupabaseClient): Record<string, ReturnType<typeof too
 		}
 	});
 
-	/** NetZero bucket config: size in L, price AUD. Optional image URLs from env (DIY_PRODUCT_IMAGE_15L, etc.). */
-	const DIY_BUCKETS = [
-		{ size: 15, price: '389.99', title: 'NetZero UltraTherm 15L Bucket', imageUrl: env.DIY_PRODUCT_IMAGE_15L?.trim() || undefined },
-		{ size: 10, price: '285.99', title: 'NetZero UltraTherm 10L Bucket', imageUrl: env.DIY_PRODUCT_IMAGE_10L?.trim() || undefined },
-		{ size: 5, price: '149.99', title: 'NetZero UltraTherm 5L Bucket', imageUrl: env.DIY_PRODUCT_IMAGE_5L?.trim() || undefined }
-	] as const;
-
-	function calculateBucketsFromRoofSize(roofSqm: number): { count15: number; count10: number; count5: number; litres: number } {
+	/** Calculate bucket counts from roof size using dynamic products (sorted by size desc). */
+	function calculateBucketsFromRoofSize(
+		roofSqm: number,
+		products: Array<{ sizeLitres: number }>
+	): { countsBySize: Record<number, number>; litres: number } {
 		const litres = Math.ceil(roofSqm / 2);
+		const sorted = [...products].sort((a, b) => b.sizeLitres - a.sizeLitres);
+		const countsBySize: Record<number, number> = {};
 		let remaining = litres;
-		let count15 = 0;
-		let count10 = 0;
-		let count5 = 0;
-		for (const b of DIY_BUCKETS) {
-			while (remaining >= b.size) {
-				if (b.size === 15) count15++;
-				else if (b.size === 10) count10++;
-				else count5++;
-				remaining -= b.size;
+		for (const p of sorted) {
+			const size = p.sizeLitres;
+			countsBySize[size] = 0;
+			while (remaining >= size) {
+				countsBySize[size]++;
+				remaining -= size;
 			}
 		}
-		if (remaining > 0) count5++;
-		return { count15, count10, count5, litres };
+		if (remaining > 0 && sorted.length > 0) {
+			const smallest = sorted[sorted.length - 1].sizeLitres;
+			countsBySize[smallest] = (countsBySize[smallest] ?? 0) + 1;
+		}
+		return { countsBySize, litres };
 	}
 
 	tools.shopify_create_diy_checkout_link = tool({
@@ -508,36 +509,57 @@ function buildTools(admin: SupabaseClient): Record<string, ReturnType<typeof too
 			const config = await getShopifyConfigForUser(admin, c.ownerId);
 			if (!config) return { error: 'Shopify is not connected. Connect Shopify in Settings → Integrations.' };
 
-			let count15 = 0;
-			let count10 = 0;
-			let count5 = 0;
+			const products = await getProductPricingForOwner(c.ownerId);
+			if (!products.length) return { error: 'No product pricing configured. Add products in Settings → Product Pricing.' };
+
+			let countsBySize: Record<number, number> = {};
 			let litres = 0;
 
 			if (roof_size_sqm != null && roof_size_sqm >= 1) {
-				const calc = calculateBucketsFromRoofSize(Number(roof_size_sqm));
-				count15 = calc.count15;
-				count10 = calc.count10;
-				count5 = calc.count5;
+				const calc = calculateBucketsFromRoofSize(Number(roof_size_sqm), products);
+				countsBySize = calc.countsBySize;
 				litres = calc.litres;
 			} else if (
 				(count_15l ?? 0) > 0 ||
 				(count_10l ?? 0) > 0 ||
 				(count_5l ?? 0) > 0
 			) {
-				count15 = Math.max(0, count_15l ?? 0);
-				count10 = Math.max(0, count_10l ?? 0);
-				count5 = Math.max(0, count_5l ?? 0);
-				litres = count15 * 15 + count10 * 10 + count5 * 5;
+				const sorted = [...products].sort((a, b) => b.sizeLitres - a.sizeLitres);
+				const explicitCounts = [Math.max(0, count_15l ?? 0), Math.max(0, count_10l ?? 0), Math.max(0, count_5l ?? 0)];
+				sorted.forEach((p, i) => {
+					if (i < 3 && explicitCounts[i] > 0) countsBySize[p.sizeLitres] = explicitCounts[i];
+				});
+				litres = Object.entries(countsBySize).reduce((sum, [size, qty]) => sum + Number(size) * qty, 0);
 			} else {
 				return { error: 'Provide roof_size_sqm or at least one bucket count (count_15l, count_10l, count_5l).' };
 			}
 
+			// Resolve product images from Shopify (matches by title)
+			let imageBySize: Record<number, string> = {};
+			try {
+				imageBySize = await getDiyProductImages(config, products.map((p) => ({ size: p.sizeLitres, price: String(p.price), title: p.name })));
+			} catch {
+				// Ignore
+			}
+			if (!imageBySize[15] && env.DIY_PRODUCT_IMAGE_15L?.trim()) imageBySize[15] = env.DIY_PRODUCT_IMAGE_15L.trim();
+			if (!imageBySize[10] && env.DIY_PRODUCT_IMAGE_10L?.trim()) imageBySize[10] = env.DIY_PRODUCT_IMAGE_10L.trim();
+			if (!imageBySize[5] && env.DIY_PRODUCT_IMAGE_5L?.trim()) imageBySize[5] = env.DIY_PRODUCT_IMAGE_5L.trim();
+
 			const lineItems: Array<{ title: string; quantity: number; price: string; imageUrl?: string }> = [];
-			if (count15 > 0) lineItems.push({ title: DIY_BUCKETS[0].title, quantity: count15, price: DIY_BUCKETS[0].price, imageUrl: DIY_BUCKETS[0].imageUrl });
-			if (count10 > 0) lineItems.push({ title: DIY_BUCKETS[1].title, quantity: count10, price: DIY_BUCKETS[1].price, imageUrl: DIY_BUCKETS[1].imageUrl });
-			if (count5 > 0) lineItems.push({ title: DIY_BUCKETS[2].title, quantity: count5, price: DIY_BUCKETS[2].price, imageUrl: DIY_BUCKETS[2].imageUrl });
+			for (const p of products) {
+				const qty = countsBySize[p.sizeLitres] ?? 0;
+				if (qty > 0) {
+					lineItems.push({
+						title: p.name,
+						quantity: qty,
+						price: p.price.toFixed(2),
+						imageUrl: p.imageUrl ?? imageBySize[p.sizeLitres]
+					});
+				}
+			}
 			if (lineItems.length === 0) return { error: 'No items to add. Provide roof_size_sqm or bucket counts.' };
 
+			const currency = products[0]?.currency ?? 'AUD';
 			const subtotal = lineItems.reduce((sum, li) => sum + Number.parseFloat(li.price) * li.quantity, 0);
 			let appliedDiscount: { title: string; description: string; value_type: 'percentage'; value: string; amount: string } | undefined;
 			if (discount_percent != null && discount_percent >= 1 && discount_percent <= 20) {
@@ -553,12 +575,13 @@ function buildTools(admin: SupabaseClient): Record<string, ReturnType<typeof too
 			const discountAmount = appliedDiscount ? Number.parseFloat(appliedDiscount.amount) : 0;
 			const total = Math.round((subtotal - discountAmount) * 100) / 100;
 
+			const noteParts = lineItems.map((li) => `${li.quantity}× ${li.title}`).join(', ');
 			const result = await createDraftOrder(config, {
 				email: email?.trim() || c.contact?.email?.trim() || undefined,
 				line_items: lineItems.map((li) => ({ title: li.title, quantity: li.quantity, price: li.price })),
-				note: `DIY quote: ${litres}L total (${count15}x15L + ${count10}x10L + ${count5}x5L)`,
+				note: `DIY quote: ${litres}L total (${noteParts})`,
 				tags: 'diy,chat',
-				currency: 'AUD',
+				currency,
 				applied_discount: appliedDiscount
 			});
 
@@ -582,9 +605,9 @@ function buildTools(admin: SupabaseClient): Record<string, ReturnType<typeof too
 				'|---------|-----|------------|-------|',
 				...tableRows,
 				'',
-				`**Subtotal:** $${fmt(subtotal)} AUD`,
+				`**Subtotal:** $${fmt(subtotal)} ${currency}`,
 				...(appliedDiscount ? [`**Discount (${appliedDiscount.value}%):** -$${fmt(discountAmount)}`, ''] : []),
-				`**Total:** $${fmt(total)} AUD`,
+				`**Total:** $${fmt(total)} ${currency}`,
 				'',
 				`[Buy now – complete your purchase](${result.checkoutUrl})`
 			];
@@ -711,11 +734,11 @@ function buildTools(admin: SupabaseClient): Record<string, ReturnType<typeof too
 export function createAgentTools(
 	admin: SupabaseClient,
 	allowedTools?: AgentToolId[] | string[] | null
-): Record<string, ReturnType<typeof tool>> {
+): Record<string, Tool> {
 	const all = buildTools(admin);
 	if (!allowedTools || allowedTools.length === 0) return all;
 	const set = new Set(allowedTools as string[]);
-	const out: Record<string, ReturnType<typeof tool>> = {};
+	const out: Record<string, Tool> = {};
 	for (const id of AGENT_TOOL_IDS) {
 		if (set.has(id) && all[id]) out[id] = all[id];
 	}

@@ -20,6 +20,14 @@ export type { QuoteSettings, QuotePayload, QuoteCompany, QuoteBankDetails, Quote
 
 const BUCKET = 'roof_quotes';
 
+/** Result type for generateQuoteForConversation. Exported so callers can reference it. */
+export type GenerateQuoteForConversationResult = {
+	signedUrl?: string;
+	storagePath?: string;
+	total?: string;
+	error?: string;
+};
+
 /**
  * Generate a quote PDF for a conversation and upload to roof_quotes. Storage trigger will link to contact.
  * Returns signed URL and storage path for the new PDF, or an error message.
@@ -33,7 +41,7 @@ export async function generateQuoteForConversation(
 	contact: { name?: string | null; email?: string | null; phone?: string | null; address?: string | null; roof_size_sqm?: number | null },
 	extracted: { roofSize?: number } | null,
 	ownerIdFromCaller?: string
-): Promise<{ signedUrl?: string; storagePath?: string; error?: string }> {
+): Promise<GenerateQuoteForConversationResult> {
 	let ownerId: string | undefined = ownerIdFromCaller;
 	if (!ownerId) {
 		const row = (await admin.from('widgets').select('created_by').eq('id', widgetId).single()).data;

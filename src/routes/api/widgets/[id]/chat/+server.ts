@@ -10,6 +10,7 @@ import { extractContactFromMessage } from '$lib/extract-contact.server';
 import { generateQuoteForConversation } from '$lib/quote-pdf.server';
 import { getQuoteWorkflowForWidget, runQuoteWorkflow } from '$lib/run-workflow.server';
 import { getRelevantRulesForAgent } from '$lib/agent-rules.server';
+import { getProductPricingForOwner, formatProductPricingForAgent } from '$lib/product-pricing.server';
 import type { WebhookTrigger } from '$lib/widget-config';
 
 /**
@@ -486,6 +487,13 @@ export const POST: RequestHandler = async (event) => {
 		if (bot.role?.trim()) parts.push(bot.role.trim());
 		if (bot.tone?.trim()) parts.push(`Tone: ${bot.tone.trim()}`);
 		if (bot.instructions?.trim()) parts.push(bot.instructions.trim());
+		// Dynamic product pricing (overrides hardcoded values in agent rules)
+		if (ownerId) {
+			const products = await getProductPricingForOwner(ownerId);
+			if (products.length > 0) {
+				parts.push(`Current product pricing (use for DIY quotes): ${formatProductPricingForAgent(products)}`);
+			}
+		}
 		// RAG: retrieve relevant rules for this message (only when widget has an agent)
 		if (agentId && message) {
 			try {
