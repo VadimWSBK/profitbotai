@@ -196,31 +196,41 @@ export type ShopifyDraftOrderInput = {
 	note?: string;
 	tags?: string;
 	currency?: string;
+	/** Optional percentage discount (10 or 15) applied to the order */
+	applied_discount?: {
+		title?: string;
+		description?: string;
+		value_type: 'percentage';
+		value: string;
+		amount: string;
+	};
 };
 
 export async function createDraftOrder(
 	config: ShopifyConfig,
 	input: ShopifyDraftOrderInput
 ): Promise<{ ok: boolean; draftOrderId?: number; name?: string; checkoutUrl?: string; error?: string }> {
+	const draftOrderBody: Record<string, unknown> = {
+		email: input.email,
+		line_items: input.line_items.map((item) => ({
+			title: item.title,
+			variant_id: item.variant_id,
+			quantity: item.quantity,
+			price: item.price
+		})),
+		note: input.note,
+		tags: input.tags,
+		currency: input.currency
+	};
+	if (input.applied_discount) {
+		draftOrderBody.applied_discount = input.applied_discount;
+	}
 	const res = await shopifyRequest<{ draft_order?: { id: number; name: string; invoice_url?: string } }>(
 		config,
 		'draft_orders.json',
 		{
 			method: 'POST',
-			body: {
-				draft_order: {
-					email: input.email,
-					line_items: input.line_items.map((item) => ({
-						title: item.title,
-						variant_id: item.variant_id,
-						quantity: item.quantity,
-						price: item.price
-					})),
-					note: input.note,
-					tags: input.tags,
-					currency: input.currency
-				}
-			}
+			body: { draft_order: draftOrderBody }
 		}
 	);
 	if (!res.ok) return { ok: false, error: res.error ?? 'Failed to create draft order' };

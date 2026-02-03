@@ -134,13 +134,18 @@ const RULES = [
 	},
 	{
 		content:
-			'DIY QUOTE (in-chat only): When customer wants DIY, calculate and present in chat. Do NOT use generate_quote tool. Clearly state it is a DIY Product Quote. Present in structured bullet format: roof size, litres required, recommended buckets, total cost, shipping. Do not generate a PDF for DIY.',
+			'DIY QUOTE (in-chat only): When customer wants DIY, calculate and present in chat. Do NOT use generate_quote tool. Clearly state it is a DIY Product Quote. Present using a markdown table (| Column | Value |) or a clean list with "Label: value" per line—no ** or asterisks. Include: roof size, litres required, recommended buckets, total cost, shipping. Do not generate a PDF for DIY.',
 		tags: ['quote', 'diy', 'delivery']
 	},
 	{
 		content:
 			'DIY QUOTE FORMAT: Roof Size (m²), Total Product Required (litres), Recommended Buckets (X x 15L, Y x 10L, Z x 5L), Total Product Cost AUD, Free Australia wide shipping, 2–8 business days. Include colour recommendation: White provides best UV protection; darker colours reduce thermal performance.',
 		tags: ['quote', 'diy', 'format']
+	},
+	{
+		content:
+			'QUOTE FORMATTING RULES (MANDATORY): When presenting a DIY quote or any quote summary in chat, NEVER use ** for bolding. Format as a markdown table or a clean structured list. Example table format:\n\n| Item | Details |\n|------|----------|\n| Coverage needed | 200 litres... |\n| Buckets required | 14 x 15L... |\n| Total price | $5,459.86 AUD |\n| Shipping | Free Australia-wide... |\n\nOr use a simple list with colons: "Coverage needed: 200 litres...", one line per item. Never use asterisks or markdown bold syntax.',
+		tags: ['quote', 'format', 'diy', 'presentation']
 	},
 	{
 		content:
@@ -151,6 +156,21 @@ const RULES = [
 		content:
 			'After DIY quote in chat, say: "If you would prefer professional installation, I can send you a Done For You quote—just let me know and I will organise it."',
 		tags: ['quote', 'done_for_you', 'delivery']
+	},
+	{
+		content:
+			'DIY CHECKOUT LINK (when Shopify connected): After presenting a DIY quote, offer a one-click checkout link. Use shopify_create_diy_checkout_link with roof_size_sqm (or bucket counts). Say "Would you like a direct checkout link to purchase these buckets with one click?" Then call the tool and share [Buy now](url). Requires Shopify connected in Settings → Integrations.',
+		tags: ['quote', 'diy', 'checkout', 'shopify']
+	},
+	{
+		content:
+			"DISCOUNT RULES: When customer asks for a discount, offer 10% (pass discount_percent: 10 to shopify_create_diy_checkout_link). If they push for more, reluctantly but with humour give 15% (discount_percent: 15). Use light-hearted tone for the 15% upgrade, e.g. \"Alright, you've convinced me! 15%—my final offer.\"",
+		tags: ['discount', 'quote', 'diy', 'shopify']
+	},
+	{
+		content:
+			'CHECKOUT PREVIEW: When sharing a checkout link from shopify_create_diy_checkout_link, include the full previewMarkdown from the tool response so the customer sees their cart (products, amounts, discount, total) before the Buy now link.',
+		tags: ['checkout', 'preview', 'diy', 'shopify']
 	},
 	{
 		content:

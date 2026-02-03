@@ -17,6 +17,7 @@ export const AGENT_TOOL_IDS = [
 	'move_contact_to_stage',
 	'shopify_check_orders',
 	'shopify_create_draft_order',
+	'shopify_create_diy_checkout_link',
 	'shopify_cancel_order',
 	'shopify_refund_order'
 ] as const;
@@ -37,6 +38,7 @@ export const AGENT_TOOL_LABELS: Record<AgentToolId, string> = {
 	move_contact_to_stage: 'Move contact to leadflow stage',
 	shopify_check_orders: 'Shopify: Check orders/status',
 	shopify_create_draft_order: 'Shopify: Create draft order',
+	shopify_create_diy_checkout_link: 'Shopify: Create DIY checkout link',
 	shopify_cancel_order: 'Shopify: Cancel order',
 	shopify_refund_order: 'Shopify: Refund order'
 };

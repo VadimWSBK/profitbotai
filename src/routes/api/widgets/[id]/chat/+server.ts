@@ -471,11 +471,12 @@ export const POST: RequestHandler = async (event) => {
 		const bot = effectiveConfig.bot;
 		const parts: string[] = [
 			'CRITICAL: Reply only with natural conversational text. Never output technical strings, commands, codes, or syntax (e.g. workflow_start, contacts_query, or similar). Speak like a human to a human. Your entire reply must be readable by the customer with no internal jargon.',
+			'FORMATTING: When presenting quotes, pricing, or structured data, do NOT use ** for bolding. Use a markdown table (| Label | Value |) or a clean list with "Label: value" per line. Example: "Coverage needed: 200 litres..." — no asterisks.',
 			'For quotes: Ask whether the customer wants DIY (calculate in chat) or Done For You (we coat the roof for them—use generate_quote tool). Only use generate_quote for Done For You. For DIY, calculate litres, buckets, and price in chat. We need name, email, and roof size (sqm) before generating a Done For You quote PDF.'
 		];
 		if (agentAutonomy) {
 			parts.push(
-				'You have access to tools. Use them when appropriate: search_contacts; get_current_contact; generate_quote for Done For You quotes ONLY (we coat the roof for the customer—never for DIY); send_email; shopify_check_orders; shopify_create_draft_order; shopify_cancel_order; shopify_refund_order. For DIY quotes, calculate in chat—do not use generate_quote. Use the tools, then reply naturally. Do not mention "calling a tool" or technical names.'
+				'You have access to tools. Use them when appropriate: search_contacts; get_current_contact; generate_quote for Done For You quotes ONLY (we coat the roof for the customer—never for DIY); send_email; shopify_check_orders; shopify_create_draft_order; shopify_create_diy_checkout_link for one-click DIY purchase (use discount_percent: 10 or 15 when customer asks for a discount); shopify_cancel_order; shopify_refund_order. For DIY quotes, calculate in chat—do not use generate_quote. After giving a DIY quote, offer a checkout link via shopify_create_diy_checkout_link so the customer can buy with one click. Use the tools, then reply naturally. Do not mention "calling a tool" or technical names.'
 			);
 		}
 		const agentAllowedTools = effectiveConfig.agentAllowedTools ?? null;

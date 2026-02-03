@@ -7,6 +7,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { tool } from 'ai';
 import { z } from 'zod';
+import { env } from '$env/dynamic/private';
 import { generateQuoteForConversation } from '$lib/quote-pdf.server';
 import { sendQuoteEmail, sendContactEmail } from '$lib/send-quote-email.server';
 import { AGENT_TOOL_IDS, type AgentToolId } from '$lib/agent-tools';
@@ -452,9 +453,160 @@ function buildTools(admin: SupabaseClient): Record<string, ReturnType<typeof too
 		}
 	});
 
+	/** NetZero bucket config: size in L, price AUD. Optional image URLs from env (DIY_PRODUCT_IMAGE_15L, etc.). */
+	const DIY_BUCKETS = [
+		{ size: 15, price: '389.99', title: 'NetZero UltraTherm 15L Bucket', imageUrl: env.DIY_PRODUCT_IMAGE_15L?.trim() || undefined },
+		{ size: 10, price: '285.99', title: 'NetZero UltraTherm 10L Bucket', imageUrl: env.DIY_PRODUCT_IMAGE_10L?.trim() || undefined },
+		{ size: 5, price: '149.99', title: 'NetZero UltraTherm 5L Bucket', imageUrl: env.DIY_PRODUCT_IMAGE_5L?.trim() || undefined }
+	] as const;
+
+	function calculateBucketsFromRoofSize(roofSqm: number): { count15: number; count10: number; count5: number; litres: number } {
+		const litres = Math.ceil(roofSqm / 2);
+		let remaining = litres;
+		let count15 = 0;
+		let count10 = 0;
+		let count5 = 0;
+		for (const b of DIY_BUCKETS) {
+			while (remaining >= b.size) {
+				if (b.size === 15) count15++;
+				else if (b.size === 10) count10++;
+				else count5++;
+				remaining -= b.size;
+			}
+		}
+		if (remaining > 0) count5++;
+		return { count15, count10, count5, litres };
+	}
+
+	tools.shopify_create_diy_checkout_link = tool({
+		description:
+			'Create a one-click checkout link for DIY product (NetZero buckets). Returns previewMarkdown—you MUST include it in your reply so the customer sees a preview (product table, amounts, discount if any) before the Buy now link. When customer asks for discount: pass discount_percent 10 first, 15 if they push for more.',
+		inputSchema: z.object({
+			roof_size_sqm: z
+				.number()
+				.min(1)
+				.optional()
+				.describe('Roof size in square metres. Used to calculate litres and bucket quantities (1L covers 2m²).'),
+			count_15l: z.number().int().min(0).optional().describe('Number of 15L buckets (if not using roof_size_sqm).'),
+			count_10l: z.number().int().min(0).optional().describe('Number of 10L buckets (if not using roof_size_sqm).'),
+			count_5l: z.number().int().min(0).optional().describe('Number of 5L buckets (if not using roof_size_sqm).'),
+			discount_percent: z
+				.number()
+				.int()
+				.min(1)
+				.max(20)
+				.optional()
+				.describe('Discount percentage (10 for first request, 15 if customer asks for more). Pre-applied to checkout.'),
+			email: z.string().optional().describe('Customer email for pre-filling checkout (optional).')
+		}),
+		execute: async (
+			{ roof_size_sqm, count_15l, count_10l, count_5l, discount_percent, email },
+			{ experimental_context }: { experimental_context?: unknown }
+		) => {
+			const c = getContext(experimental_context);
+			if (!c) return { error: 'Missing context' };
+			const config = await getShopifyConfigForUser(admin, c.ownerId);
+			if (!config) return { error: 'Shopify is not connected. Connect Shopify in Settings → Integrations.' };
+
+			let count15 = 0;
+			let count10 = 0;
+			let count5 = 0;
+			let litres = 0;
+
+			if (roof_size_sqm != null && roof_size_sqm >= 1) {
+				const calc = calculateBucketsFromRoofSize(Number(roof_size_sqm));
+				count15 = calc.count15;
+				count10 = calc.count10;
+				count5 = calc.count5;
+				litres = calc.litres;
+			} else if (
+				(count_15l ?? 0) > 0 ||
+				(count_10l ?? 0) > 0 ||
+				(count_5l ?? 0) > 0
+			) {
+				count15 = Math.max(0, count_15l ?? 0);
+				count10 = Math.max(0, count_10l ?? 0);
+				count5 = Math.max(0, count_5l ?? 0);
+				litres = count15 * 15 + count10 * 10 + count5 * 5;
+			} else {
+				return { error: 'Provide roof_size_sqm or at least one bucket count (count_15l, count_10l, count_5l).' };
+			}
+
+			const lineItems: Array<{ title: string; quantity: number; price: string; imageUrl?: string }> = [];
+			if (count15 > 0) lineItems.push({ title: DIY_BUCKETS[0].title, quantity: count15, price: DIY_BUCKETS[0].price, imageUrl: DIY_BUCKETS[0].imageUrl });
+			if (count10 > 0) lineItems.push({ title: DIY_BUCKETS[1].title, quantity: count10, price: DIY_BUCKETS[1].price, imageUrl: DIY_BUCKETS[1].imageUrl });
+			if (count5 > 0) lineItems.push({ title: DIY_BUCKETS[2].title, quantity: count5, price: DIY_BUCKETS[2].price, imageUrl: DIY_BUCKETS[2].imageUrl });
+			if (lineItems.length === 0) return { error: 'No items to add. Provide roof_size_sqm or bucket counts.' };
+
+			const subtotal = lineItems.reduce((sum, li) => sum + Number.parseFloat(li.price) * li.quantity, 0);
+			let appliedDiscount: { title: string; description: string; value_type: 'percentage'; value: string; amount: string } | undefined;
+			if (discount_percent != null && discount_percent >= 1 && discount_percent <= 20) {
+				const amount = Math.round((subtotal * discount_percent) / 100 * 100) / 100;
+				appliedDiscount = {
+					title: `${discount_percent}% off`,
+					description: `Chat discount - ${discount_percent}% off`,
+					value_type: 'percentage',
+					value: String(discount_percent),
+					amount: amount.toFixed(2)
+				};
+			}
+			const discountAmount = appliedDiscount ? Number.parseFloat(appliedDiscount.amount) : 0;
+			const total = Math.round((subtotal - discountAmount) * 100) / 100;
+
+			const result = await createDraftOrder(config, {
+				email: email?.trim() || c.contact?.email?.trim() || undefined,
+				line_items: lineItems.map((li) => ({ title: li.title, quantity: li.quantity, price: li.price })),
+				note: `DIY quote: ${litres}L total (${count15}x15L + ${count10}x10L + ${count5}x5L)`,
+				tags: 'diy,chat',
+				currency: 'AUD',
+				applied_discount: appliedDiscount
+			});
+
+			if (!result.ok) return { error: result.error ?? 'Failed to create checkout link' };
+			if (!result.checkoutUrl) return { error: 'Checkout link was not returned by Shopify.' };
+
+			// Build checkout preview markdown: product images (if any), table with amounts, then link
+			const fmt = (n: number) => n.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+			const imageLines = lineItems
+				.filter((li) => li.imageUrl)
+				.map((li) => `![${li.title}](${li.imageUrl})`)
+				.join(' ');
+			const tableRows = lineItems.map(
+				(li) => `| ${li.title} | ${li.quantity} | $${li.price} | $${fmt(Number.parseFloat(li.price) * li.quantity)} |`
+			);
+			const previewParts: string[] = [
+				'**Your checkout preview**',
+				'',
+				imageLines ? imageLines + '\n' : '',
+				'| Product | Qty | Price each | Total |',
+				'|---------|-----|------------|-------|',
+				...tableRows,
+				'',
+				`**Subtotal:** $${fmt(subtotal)} AUD`,
+				...(appliedDiscount ? [`**Discount (${appliedDiscount.value}%):** -$${fmt(discountAmount)}`, ''] : []),
+				`**Total:** $${fmt(total)} AUD`,
+				'',
+				`[Buy now – complete your purchase](${result.checkoutUrl})`
+			];
+			const previewMarkdown = previewParts.filter(Boolean).join('\n');
+
+			return {
+				success: true,
+				checkoutUrl: result.checkoutUrl,
+				discountPercent: appliedDiscount ? Number(appliedDiscount.value) : null,
+				subtotal,
+				discountAmount,
+				total,
+				lineItems: lineItems.map((li) => `${li.quantity}× ${li.title} ($${li.price} each)`),
+				previewMarkdown,
+				message: `Checkout link created. You MUST include this exact preview in your reply so the customer sees their cart before clicking:\n\n${previewMarkdown}`
+			};
+		}
+	});
+
 	tools.shopify_create_draft_order = tool({
 		description:
-			'Create a Shopify draft order and return a checkout link. Use when the customer wants a draft order or checkout link.',
+			'Create a Shopify draft order and return a checkout link. Use when the customer wants a draft order or checkout link with custom products (not DIY buckets).',
 		inputSchema: z.object({
 			email: z.string().optional().describe('Customer email (optional).'),
 			line_items: z
