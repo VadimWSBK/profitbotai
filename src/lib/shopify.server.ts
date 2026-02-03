@@ -89,7 +89,7 @@ export async function shopifyRequest<T>(
 	config: ShopifyConfig,
 	path: string,
 	opts: ShopifyRequestOptions = {}
-): Promise<{ ok: boolean; data?: T; error?: string; status?: number }> {
+): Promise<{ ok: boolean; data?: T; error?: string; status?: number; link?: string }> {
 	try {
 		const url = buildUrl(config.shopDomain, config.apiVersion, path, opts.query);
 		const res = await fetch(url, {
@@ -102,6 +102,7 @@ export async function shopifyRequest<T>(
 		});
 		const status = res.status;
 		const text = await res.text();
+		const link = res.headers.get('link') ?? undefined;
 		let json: unknown = null;
 		if (text) {
 			try {
@@ -121,11 +122,17 @@ export async function shopifyRequest<T>(
 			}
 			return { ok: false, error: errorText, status };
 		}
-		return { ok: true, data: json as T, status };
+		return { ok: true, data: json as T, status, link };
 	} catch (e) {
 		return { ok: false, error: e instanceof Error ? e.message : 'Shopify request failed' };
 	}
 }
+
+export type ShopifyDiscountCode = {
+	code?: string | null;
+	type?: string | null;
+	amount?: string | null;
+};
 
 export type ShopifyOrderSummary = {
 	id: number;
@@ -139,6 +146,7 @@ export type ShopifyOrderSummary = {
 	total_price?: string | null;
 	currency?: string | null;
 	order_status_url?: string | null;
+	discount_codes?: ShopifyDiscountCode[] | null;
 };
 
 export async function searchOrders(
@@ -256,6 +264,69 @@ type ShopifyTransaction = {
 	gateway: string;
 	amount: string;
 };
+
+export type ShopifyCustomerSummary = {
+	id: number;
+	email: string | null;
+	first_name: string | null;
+	last_name: string | null;
+	phone: string | null;
+	default_address?: {
+		address1?: string | null;
+		address2?: string | null;
+		city?: string | null;
+		province?: string | null;
+		country?: string | null;
+		zip?: string | null;
+	} | null;
+};
+
+export async function listCustomers(
+	config: ShopifyConfig,
+	opts?: { limit?: number; pageInfo?: string }
+): Promise<{
+	customers?: ShopifyCustomerSummary[];
+	nextPageInfo?: string;
+	error?: string;
+}> {
+	const limit = Math.min(opts?.limit ?? 250, 250);
+	const query: Record<string, string | number | undefined> = {
+		limit,
+		fields: 'id,email,first_name,last_name,phone,default_address'
+	};
+	if (opts?.pageInfo) query.page_info = opts.pageInfo;
+	const res = await shopifyRequest<{ customers: ShopifyCustomerSummary[] }>(config, 'customers.json', {
+		query
+	});
+	if (!res.ok) return { error: res.error ?? 'Failed to list customers' };
+	const customers = res.data?.customers ?? [];
+	let nextPageInfo: string | undefined;
+	if (res.link) {
+		const nextMatch = res.link.match(/<[^>]*[?&]page_info=([^>&]+)>;\s*rel="next"/);
+		if (nextMatch) nextPageInfo = decodeURIComponent(nextMatch[1]);
+	}
+	return { customers, nextPageInfo };
+}
+
+export async function listOrdersForCustomer(
+	config: ShopifyConfig,
+	customerId: number
+): Promise<{ orders?: ShopifyOrderSummary[]; error?: string }> {
+	const res = await shopifyRequest<{ orders: ShopifyOrderSummary[] }>(
+		config,
+		`customers/${customerId}/orders.json`,
+		{
+			query: {
+				status: 'any',
+				limit: 250,
+				fields:
+					'id,name,email,created_at,financial_status,fulfillment_status,cancelled_at,cancel_reason,total_price,currency,order_status_url,discount_codes'
+			}
+		}
+	);
+	if (!res.ok) return { error: res.error ?? 'Failed to list orders for customer' };
+	return { orders: res.data?.orders ?? [] };
+}
 
 export async function refundOrderFull(
 	config: ShopifyConfig,

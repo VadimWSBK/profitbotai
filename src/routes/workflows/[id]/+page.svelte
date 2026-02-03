@@ -4,7 +4,7 @@
 	import { SvelteFlow, Background, BackgroundVariant, Controls, Panel } from '@xyflow/svelte';
 	import { addEdge } from '@xyflow/svelte';
 	import '@xyflow/svelte/dist/style.css';
-	import { ClipboardList, Webhook, MessageCircle, Zap, CircleCheck, GitBranch, FileText, Mail, Sparkles, Send } from '@lucide/svelte';
+	import { ClipboardList, Webhook, MessageCircle, Zap, CircleCheck, GitBranch, FileText, Mail, Sparkles, Send, Tag } from '@lucide/svelte';
 	import TriggerNode from '$lib/components/workflow/TriggerNode.svelte';
 	import ActionNode from '$lib/components/workflow/ActionNode.svelte';
 	import ConditionNode from '$lib/components/workflow/ConditionNode.svelte';
@@ -17,13 +17,15 @@ import type { Node, Edge, Connection } from '@xyflow/svelte';
 		{ value: 'Form submit', label: 'Form submit', description: 'Runs when a form is submitted on your site.', Icon: ClipboardList },
 		{ value: 'Inbound webhook', label: 'On webhook call', description: 'Runs the flow on receiving an HTTP request.', Icon: Webhook },
 		{ value: 'Message in the chat', label: 'On chat message', description: 'Runs when a user sends a chat message (e.g. when customer requests quote).', Icon: MessageCircle },
-		{ value: 'Email received', label: 'Email received', description: 'Runs when an email is received (inbound reply to your Resend inbox).', Icon: Mail }
+		{ value: 'Email received', label: 'Email received', description: 'Runs when an email is received (inbound reply to your Resend inbox).', Icon: Mail },
+		{ value: 'Tag added', label: 'Tag added', description: 'Runs when a tag is added to a contact.', Icon: Tag }
 	] as const;
 
 	const ACTION_OPTIONS = [
 		{ value: 'Generate quote', label: 'Generate quote', description: 'Create a PDF quote from the conversation and attach it.', Icon: FileText },
 		{ value: 'Send email', label: 'Send email', description: 'Send an email (e.g. with the quote) to the contact.', Icon: Mail },
 		{ value: 'Send message (chat)', label: 'Send message (chat)', description: 'Post a message as the bot in the chat widget.', Icon: Send },
+		{ value: 'Add tag', label: 'Add tag', description: 'Add a tag to the contact (e.g. after form submit or quote sent).', Icon: Tag },
 		{ value: 'Outbound webhook', label: 'Outbound webhook', description: 'Call an external URL with a custom HTTP request.', Icon: Webhook },
 		{ value: 'AI', label: 'AI', description: 'Run an AI model with a custom prompt using your API key or integrated connection.', Icon: Sparkles }
 	] as const;
@@ -102,6 +104,7 @@ Instructions: Reply in 2–4 sentences. Be helpful and concise. Do not include a
 	let widgets = $state<{ id: string; name: string }[]>([]);
 	let forms = $state<{ id: string; name: string; title?: string }[]>([]);
 	let templates = $state<{ id: string; name: string; subject: string; body: string }[]>([]);
+	let contactTags = $state<string[]>([]);
 	let llmProvidersWithKeys = $state<string[]>([]);
 	let saveToServerLoading = $state(false);
 	let workflowStatus = $state<'draft' | 'live'>('draft');
@@ -177,7 +180,7 @@ Instructions: Reply in 2–4 sentences. Be helpful and concise. Do not include a
 	}
 
 	function formatTriggerType(t: string): string {
-		return t === 'form_submit' ? 'Form submit' : t === 'message_in_chat' ? 'Message in chat' : t === 'email_received' ? 'Email received' : t;
+		return t === 'form_submit' ? 'Form submit' : t === 'message_in_chat' ? 'Message in chat' : t === 'email_received' ? 'Email received' : t === 'tag_added' ? 'Tag added' : t;
 	}
 
 	function formatDate(iso: string): string {
@@ -411,6 +414,12 @@ Instructions: Reply in 2–4 sentences. Be helpful and concise. Do not include a
 			}
 			return { widgetId, error: null };
 		}
+		if (triggerType === 'Tag added') {
+			if (!widgetId) {
+				return { widgetId: null, error: 'Select a widget to save this workflow (runs when a tag is added to a contact of that widget).' };
+			}
+			return { widgetId, error: null };
+		}
 		return { widgetId: null, error: 'Complete the trigger configuration to save this workflow.' };
 	}
 
@@ -496,6 +505,13 @@ Instructions: Reply in 2–4 sentences. Be helpful and concise. Do not include a
 			.then((r) => r.json())
 			.then((d) => {
 				llmProvidersWithKeys = (d.providers ?? []) as string[];
+			})
+			.catch(() => {});
+		// Load distinct contact tags (for "Tag added" trigger and "Add tag" action)
+		fetch('/api/contacts/tags', { credentials: 'include' })
+			.then((r) => r.json())
+			.then((d) => {
+				contactTags = Array.isArray(d?.tags) ? d.tags : [];
 			})
 			.catch(() => {});
 		const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -807,6 +823,32 @@ Instructions: Reply in 2–4 sentences. Be helpful and concise. Do not include a
 									class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 bg-white placeholder:text-gray-400"
 								/>
 							</div>
+						{:else if triggerType === 'Tag added'}
+							<label for="tag-added-widget" class="block text-xs font-medium text-gray-500">Widget</label>
+							<select
+								id="tag-added-widget"
+								class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 bg-white"
+								value={data.widgetId ?? ''}
+								onchange={(e) => updateNodeData(selectedNode.id, { widgetId: (e.currentTarget as HTMLSelectElement).value })}
+							>
+								<option value="">Select a widget</option>
+								{#each widgets as w}
+									<option value={w.id}>{w.name}</option>
+								{/each}
+							</select>
+							<label for="tag-added-filter" class="block text-xs font-medium text-gray-500 mt-2">When tag is (optional)</label>
+							<select
+								id="tag-added-filter"
+								class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 bg-white"
+								value={data.tagAddedFilter ?? ''}
+								onchange={(e) => updateNodeData(selectedNode.id, { tagAddedFilter: (e.currentTarget as HTMLSelectElement).value })}
+							>
+								<option value="">Any tag</option>
+								{#each contactTags as tag}
+									<option value={tag}>{tag}</option>
+								{/each}
+							</select>
+							<p class="text-xs text-gray-500 mt-1">Runs when a tag is added to a contact for this widget. Leave "Any tag" to run on any tag, or choose a specific tag.</p>
 						{/if}
 						</div>
 					{/if}
@@ -859,6 +901,32 @@ Instructions: Reply in 2–4 sentences. Be helpful and concise. Do not include a
 							</div>
 							{#if actionType === 'Generate quote'}
 								<p class="text-xs text-gray-500">Creates a PDF quote from the conversation. No extra settings.</p>
+							{:else if actionType === 'Add tag'}
+								<div class="space-y-3">
+									<label for="add-tag-name" class="block text-xs font-medium text-gray-500">Tag name</label>
+									<input
+										id="add-tag-name"
+										type="text"
+										placeholder="e.g. quote-sent, lead, vip"
+										value={typeof data.addTagName === 'string' ? data.addTagName : ''}
+										oninput={(e) => updateNodeData(selectedNode.id, { addTagName: (e.currentTarget as HTMLInputElement).value.trim() })}
+										class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 bg-white placeholder:text-gray-400"
+									/>
+									{#if contactTags.length > 0}
+										<p class="text-xs text-gray-500">Or pick an existing tag:</p>
+										<select
+											class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 bg-white"
+											value={typeof data.addTagName === 'string' ? data.addTagName : ''}
+											onchange={(e) => updateNodeData(selectedNode.id, { addTagName: (e.currentTarget as HTMLSelectElement).value })}
+										>
+											<option value="">— Type above or select —</option>
+											{#each contactTags as tag}
+												<option value={tag}>{tag}</option>
+											{/each}
+										</select>
+									{/if}
+									<p class="text-xs text-gray-500">Adds this tag to the contact in context (e.g. after form submit or when a quote is sent).</p>
+								</div>
 							{:else if actionType === 'Send message (chat)'}
 								<div class="space-y-3">
 									<div>

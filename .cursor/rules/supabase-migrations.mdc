@@ -1,0 +1,15 @@
+---
+description: Use MCP to apply Supabase migrations
+globs: supabase/**/*.sql,**/migrations/**
+alwaysApply: false
+---
+
+# Supabase migrations
+
+When creating or applying Supabase migrations, **always use the Supabase MCP** to run them.
+
+1. **Apply migrations via MCP** – Do not suggest `supabase db push`, `npx supabase migration up`, or pasting SQL in the Supabase dashboard. Use the MCP tool instead.
+2. **Tool**: Call the `apply_migration` tool on the **user-supabase** MCP server with:
+   - **name**: Migration name in `snake_case` (e.g. `contacts_shopify_orders` from a file like `20260203160000_contacts_shopify_orders.sql`)
+   - **query**: The full SQL contents of the migration file
+3. After adding a new migration file under `supabase/migrations/`, run it by reading the file and calling the MCP `apply_migration` with that SQL so the database is updated in the same session.

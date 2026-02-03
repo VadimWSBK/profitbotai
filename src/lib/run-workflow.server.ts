@@ -100,6 +100,33 @@ function replaceBracketLinks(text: string, url: string): string {
 }
 
 /**
+ * Add a tag to a contact's tags array (append if not already present).
+ */
+async function addTagToContact(
+	admin: SupabaseClient,
+	contactId: string,
+	tagName: string
+): Promise<{ ok: boolean; error?: string }> {
+	const trimmed = (tagName ?? '').trim();
+	if (!trimmed) return { ok: false, error: 'Tag name is empty' };
+	const { data: row, error: fetchErr } = await admin
+		.from('contacts')
+		.select('tags')
+		.eq('id', contactId)
+		.single();
+	if (fetchErr || !row) return { ok: false, error: fetchErr?.message ?? 'Contact not found' };
+	const raw = (row as { tags: unknown }).tags;
+	const tags: string[] = Array.isArray(raw) ? (raw as unknown[]).filter((t): t is string => typeof t === 'string') : [];
+	if (tags.includes(trimmed)) return { ok: true };
+	const { error: updateErr } = await admin
+		.from('contacts')
+		.update({ tags: [...tags, trimmed] })
+		.eq('id', contactId);
+	if (updateErr) return { ok: false, error: updateErr.message };
+	return { ok: true };
+}
+
+/**
  * Insert an assistant message into a conversation (for "Send message (chat)" action).
  */
 async function insertAssistantMessage(
@@ -155,10 +182,12 @@ export async function getQuoteWorkflowForWidget(
 /**
  * Start a workflow execution log row. Returns execution id.
  */
+type WorkflowTriggerType = 'form_submit' | 'message_in_chat' | 'email_received' | 'tag_added';
+
 async function startWorkflowExecution(
 	admin: SupabaseClient,
 	workflowId: string,
-	triggerType: 'form_submit' | 'message_in_chat' | 'email_received',
+	triggerType: WorkflowTriggerType,
 	triggerPayload: Record<string, unknown>
 ): Promise<string> {
 	const { data, error } = await admin
@@ -235,6 +264,14 @@ export async function runQuoteWorkflow(
 	let signedUrl: string | undefined;
 	let quoteEmailSent: boolean | null = null;
 	const contact = ctx.contact;
+	let contactId: string | null = null;
+	const { data: contactRow } = await admin
+		.from('contacts')
+		.select('id')
+		.eq('conversation_id', ctx.conversationId)
+		.eq('widget_id', ctx.widgetId)
+		.maybeSingle();
+	if (contactRow) contactId = (contactRow as { id: string }).id;
 
 	const executionId = await startWorkflowExecution(admin, workflow.id, 'message_in_chat', {
 		conversation_id: ctx.conversationId,
@@ -346,6 +383,27 @@ export async function runQuoteWorkflow(
 							actionType: 'Send message (chat)',
 							status: 'skipped',
 							errorMessage: 'No message configured'
+						});
+					}
+				} else if (actionType === 'Add tag' && contactId) {
+					const addTagName = ((node.data?.addTagName as string) ?? '').trim();
+					if (addTagName) {
+						const result = await addTagToContact(admin, contactId, addTagName);
+						await logWorkflowStep(admin, executionId, {
+							nodeId: node.id,
+							nodeLabel,
+							actionType: 'Add tag',
+							status: result.ok ? 'success' : 'error',
+							errorMessage: result.ok ? null : result.error ?? undefined,
+							output: result.ok ? { tag: addTagName } : undefined
+						});
+					} else {
+						await logWorkflowStep(admin, executionId, {
+							nodeId: node.id,
+							nodeLabel,
+							actionType: 'Add tag',
+							status: 'skipped',
+							errorMessage: 'No tag name configured'
 						});
 					}
 				} else {
@@ -479,6 +537,187 @@ export async function getEmailReceivedWorkflows(
 		}
 	}
 	return out;
+}
+
+export type TagAddedContext = {
+	widgetId: string;
+	ownerId: string;
+	contactId: string;
+	conversationId: string | null;
+	contact: { name?: string | null; email?: string | null; phone?: string | null; address?: string | null };
+	tagAdded: string;
+};
+
+/**
+ * Find live workflows whose trigger is "Tag added" and widgetId matches; optionally filter by tag.
+ */
+export async function getTagAddedWorkflows(
+	admin: SupabaseClient,
+	widgetId: string,
+	tagAdded?: string
+): Promise<{ id: string; name: string; nodes: WorkflowNode[]; edges: WorkflowEdge[]; widgetId: string }[]> {
+	const { data: rows } = await admin
+		.from('workflows')
+		.select('id, name, widget_id, nodes, edges')
+		.eq('widget_id', widgetId)
+		.eq('status', 'live');
+	if (!rows?.length) return [];
+	const out: { id: string; name: string; nodes: WorkflowNode[]; edges: WorkflowEdge[]; widgetId: string }[] = [];
+	for (const row of rows) {
+		const nodes = (row.nodes as WorkflowNode[]) ?? [];
+		const trigger = nodes.find((n) => n.type === 'trigger');
+		if (!trigger) continue;
+		const data = trigger.data ?? {};
+		const triggerType = (data.triggerType as string) ?? '';
+		const triggerWidgetId = (data.widgetId as string) ?? '';
+		const tagFilter = (data.tagAddedFilter as string) ?? '';
+		if (triggerType !== 'Tag added' || triggerWidgetId !== widgetId) continue;
+		if (tagFilter && tagAdded !== undefined && tagFilter !== tagAdded) continue;
+		out.push({
+			id: row.id,
+			name: (row.name as string) ?? 'Workflow',
+			nodes,
+			edges: (row.edges as WorkflowEdge[]) ?? [],
+			widgetId: row.widget_id as string
+		});
+	}
+	return out;
+}
+
+/**
+ * Run a tag-added-triggered workflow: execute actions (Add tag, Send email, etc.).
+ */
+export async function runTagAddedWorkflow(
+	admin: SupabaseClient,
+	workflow: { id: string; widgetId: string; nodes: WorkflowNode[]; edges: WorkflowEdge[] },
+	ctx: TagAddedContext
+): Promise<{ success: boolean; error?: string }> {
+	const actions = getActionNodesInOrder(workflow.nodes, workflow.edges);
+	const contact = ctx.contact;
+
+	const executionId = await startWorkflowExecution(admin, workflow.id, 'tag_added', {
+		contact_id: ctx.contactId,
+		conversation_id: ctx.conversationId,
+		widget_id: ctx.widgetId,
+		tag_added: ctx.tagAdded
+	});
+
+	let runError: string | null = null;
+	try {
+		for (const node of actions) {
+			const actionType = (node.data?.actionType as string) ?? '';
+			const nodeLabel = (node.data?.label as string) ?? node.id;
+			try {
+				if (actionType === 'Add tag') {
+					const addTagName = ((node.data?.addTagName as string) ?? '').trim();
+					if (addTagName) {
+						const result = await addTagToContact(admin, ctx.contactId, addTagName);
+						await logWorkflowStep(admin, executionId, {
+							nodeId: node.id,
+							nodeLabel,
+							actionType: 'Add tag',
+							status: result.ok ? 'success' : 'error',
+							errorMessage: result.ok ? null : result.error ?? undefined,
+							output: result.ok ? { tag: addTagName } : undefined
+						});
+					} else {
+						await logWorkflowStep(admin, executionId, {
+							nodeId: node.id,
+							nodeLabel,
+							actionType: 'Add tag',
+							status: 'skipped',
+							errorMessage: 'No tag name configured'
+						});
+					}
+				} else if (actionType === 'Send email') {
+					const data = node.data ?? {};
+					const emailToRaw = (data.emailTo as string) ?? '{{contact.email}}';
+					const toEmail = substitutePrompt(emailToRaw, contact, {}).trim().toLowerCase() || (contact?.email ?? '').trim().toLowerCase();
+					const subjectRaw = (data.emailSubject as string) ?? '';
+					const bodyRaw = (data.emailBody as string) ?? '';
+					const subject = subjectRaw.trim() ? substitutePrompt(subjectRaw, contact, {}) : undefined;
+					const body = bodyRaw.trim() ? substitutePrompt(bodyRaw, contact, {}) : undefined;
+					if (toEmail && body) {
+						const emailResult = await sendQuoteEmail(admin, ctx.ownerId, {
+							toEmail,
+							quoteDownloadUrl: '',
+							customerName: contact?.name ?? null,
+							customSubject: subject ?? '',
+							customBody: body,
+							contactId: ctx.contactId,
+							conversationId: ctx.conversationId ?? undefined
+						});
+						await logWorkflowStep(admin, executionId, {
+							nodeId: node.id,
+							nodeLabel,
+							actionType: 'Send email',
+							status: emailResult.sent ? 'success' : 'error',
+							errorMessage: emailResult.sent ? null : emailResult.error ?? undefined,
+							output: { emailSent: emailResult.sent }
+						});
+					} else {
+						await logWorkflowStep(admin, executionId, {
+							nodeId: node.id,
+							nodeLabel,
+							actionType: 'Send email',
+							status: 'skipped',
+							errorMessage: !toEmail ? 'No recipient' : 'No email body configured'
+						});
+					}
+				} else if (actionType === 'Send message (chat)' && ctx.conversationId) {
+					const chatMessageRaw = (node.data?.chatMessage as string) ?? '';
+					const messageTrimmed = chatMessageRaw.trim();
+					if (messageTrimmed) {
+						const substituted = substitutePrompt(messageTrimmed, contact, {});
+						const content = replaceBracketLinks(substituted, '');
+						const { error: msgErr } = await admin.from('widget_conversation_messages').insert({
+							conversation_id: ctx.conversationId,
+							role: 'assistant',
+							content
+						});
+						await logWorkflowStep(admin, executionId, {
+							nodeId: node.id,
+							nodeLabel,
+							actionType: 'Send message (chat)',
+							status: msgErr ? 'error' : 'success',
+							errorMessage: msgErr?.message ?? null,
+							output: msgErr ? undefined : { sent: true }
+						});
+					} else {
+						await logWorkflowStep(admin, executionId, {
+							nodeId: node.id,
+							nodeLabel,
+							actionType: 'Send message (chat)',
+							status: 'skipped',
+							errorMessage: !messageTrimmed ? 'No message configured' : 'No conversation linked to contact'
+						});
+					}
+				} else if (actionType !== 'Generate quote') {
+					// Log other action types as skipped for tag-added context (e.g. Generate quote, Outbound webhook, AI)
+					await logWorkflowStep(admin, executionId, {
+						nodeId: node.id,
+						nodeLabel,
+						actionType: actionType || undefined,
+						status: 'skipped',
+						errorMessage: null
+					});
+				}
+			} catch (stepErr) {
+				runError = stepErr instanceof Error ? stepErr.message : String(stepErr);
+				await logWorkflowStep(admin, executionId, {
+					nodeId: node.id,
+					nodeLabel,
+					actionType,
+					status: 'error',
+					errorMessage: runError
+				});
+			}
+		}
+	} catch (e) {
+		runError = e instanceof Error ? e.message : String(e);
+	}
+	await finishWorkflowExecution(admin, executionId, runError ? 'error' : 'success', runError ?? null);
+	return runError ? { success: false, error: runError } : { success: true };
 }
 
 /**
@@ -644,6 +883,27 @@ export async function runEmailReceivedWorkflow(
 							errorMessage: !prompt.trim() ? 'No prompt configured' : 'No API key (add in Settings or use custom key)'
 						});
 					}
+				} else if (actionType === 'Add tag') {
+					const addTagName = ((node.data?.addTagName as string) ?? '').trim();
+					if (addTagName) {
+						const result = await addTagToContact(admin, ctx.contactId, addTagName);
+						await logWorkflowStep(admin, executionId, {
+							nodeId: node.id,
+							nodeLabel,
+							actionType: 'Add tag',
+							status: result.ok ? 'success' : 'error',
+							errorMessage: result.ok ? null : result.error ?? undefined,
+							output: result.ok ? { tag: addTagName } : undefined
+						});
+					} else {
+						await logWorkflowStep(admin, executionId, {
+							nodeId: node.id,
+							nodeLabel,
+							actionType: 'Add tag',
+							status: 'skipped',
+							errorMessage: 'No tag name configured'
+						});
+					}
 				} else if (actionType === 'Generate quote' && !ctx.conversationId) {
 					await logWorkflowStep(admin, executionId, {
 						nodeId: node.id,
@@ -795,6 +1055,27 @@ export async function runFormWorkflow(
 								errorMessage: 'No chat conversation found for this contact'
 							});
 						}
+					}
+				} else if (actionType === 'Add tag' && ctx.contactId) {
+					const addTagName = ((node.data?.addTagName as string) ?? '').trim();
+					if (addTagName) {
+						const result = await addTagToContact(admin, ctx.contactId, addTagName);
+						await logWorkflowStep(admin, executionId, {
+							nodeId: node.id,
+							nodeLabel,
+							actionType: 'Add tag',
+							status: result.ok ? 'success' : 'error',
+							errorMessage: result.ok ? null : result.error ?? undefined,
+							output: result.ok ? { tag: addTagName } : undefined
+						});
+					} else {
+						await logWorkflowStep(admin, executionId, {
+							nodeId: node.id,
+							nodeLabel,
+							actionType: 'Add tag',
+							status: 'skipped',
+							errorMessage: 'No tag name configured'
+						});
 					}
 				}
 			} catch (nodeErr) {

@@ -163,9 +163,11 @@
 			</div>
 		</header>
 
-		<!-- Page content: min-h-0 so flex child shrinks and scrolls inside viewport -->
-		<main class="flex-1 min-h-0 overflow-auto p-6">
-			{@render children()}
+		<!-- Page content: flex column so pages can fill viewport height (e.g. Contacts list) -->
+		<main class="flex-1 min-h-0 flex flex-col overflow-auto p-6">
+			<div class="flex-1 min-h-0 flex flex-col">
+				{@render children()}
+			</div>
 		</main>
 	</div>
 </div>
