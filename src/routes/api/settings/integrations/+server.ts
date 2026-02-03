@@ -85,34 +85,8 @@ export const PUT: RequestHandler = async (event) => {
 		}
 
 		if (type === 'shopify') {
-			const accessToken = (config.accessToken as string)?.trim?.();
-			const rawDomain = typeof config.shopDomain === 'string' ? config.shopDomain.trim() : '';
-			const shopDomain = rawDomain.replace(/^https?:\/\//, '').replace(/\/+$/, '');
-			const apiVersion = typeof config.apiVersion === 'string' ? config.apiVersion.trim() : undefined;
-			const domainLooksValid = shopDomain.includes('.');
-			if (accessToken) {
-				if (!shopDomain || !domainLooksValid) {
-					return json({ error: 'Invalid shop domain' }, { status: 400 });
-				}
-				config = { accessToken, shopDomain, apiVersion: apiVersion || undefined };
-			} else {
-				const { data: existing } = await supabase
-					.from('user_integrations')
-					.select('config')
-					.eq('user_id', event.locals.user.id)
-					.eq('integration_type', 'shopify')
-					.single();
-				const existingConfig =
-					(existing?.config as { accessToken?: string; shopDomain?: string; apiVersion?: string }) ?? {};
-				config = {
-					...existingConfig,
-					...(shopDomain ? { shopDomain } : {}),
-					...(apiVersion ? { apiVersion } : {})
-				};
-				if (!config.accessToken || !config.shopDomain) {
-					return json({ error: 'Shopify access token and shop domain are required' }, { status: 400 });
-				}
-			}
+			// Shopify uses OAuth; config is set via /api/settings/integrations/shopify/callback
+			return json({ error: 'Use the Connect with Shopify button to connect your store via OAuth.' }, { status: 400 });
 		}
 
 		const { error } = await supabase.from('user_integrations').upsert(

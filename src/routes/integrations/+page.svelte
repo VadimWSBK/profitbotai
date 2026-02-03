@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { INTEGRATIONS } from '$lib/integrations';
+	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 
 	let connected = $state<string[]>([]);
 	let configs = $state<Record<string, { fromEmail?: string; shopDomain?: string; apiVersion?: string }>>({});
@@ -19,6 +21,9 @@
 	// Sync received emails
 	let syncReceivedLoading = $state(false);
 	let syncReceivedResult = $state<{ synced: number; skipped: number } | null>(null);
+	// Shopify OAuth
+	let shopifyShopDomain = $state('');
+	let shopifyConnecting = $state(false);
 
 	async function load() {
 		try {
@@ -33,6 +38,18 @@
 		} finally {
 			loaded = true;
 		}
+	}
+
+	function connectShopifyOAuth() {
+		const shop = shopifyShopDomain.trim().toLowerCase();
+		if (!shop) {
+			error = 'Enter your shop domain (e.g. your-store.myshopify.com)';
+			return;
+		}
+		shopifyConnecting = true;
+		error = null;
+		const shopParam = shop.includes('.myshopify.com') ? shop : `${shop}.myshopify.com`;
+		window.location.href = `/api/settings/integrations/shopify/connect?shop=${encodeURIComponent(shopParam)}`;
 	}
 
 	function getFieldValue(id: string, fieldId: string) {
@@ -61,23 +78,8 @@
 				const result = await res.json().catch(() => ({}));
 				if (!res.ok) throw new Error(result.error || 'Failed to connect');
 			} else if (id === 'shopify') {
-				const accessToken = getFieldValue(id, 'accessToken');
-				const shopDomain = getFieldValue(id, 'shopDomain');
-				const apiVersion = getFieldValue(id, 'apiVersion');
-				if (!accessToken || !shopDomain) {
-					error = 'Please enter your shop domain and access token';
-					return;
-				}
-				const res = await fetch('/api/settings/integrations', {
-					method: 'PUT',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({
-						type: id,
-						config: { accessToken, shopDomain, apiVersion: apiVersion || undefined }
-					})
-				});
-				const result = await res.json().catch(() => ({}));
-				if (!res.ok) throw new Error(result.error || 'Failed to connect');
+				// Shopify uses OAuth – connect() is not used; connectShopifyOAuth() handles it
+				return;
 			} else {
 				const apiKey = getFieldValue(id, 'apiKey');
 				if (!apiKey) {
@@ -198,6 +200,31 @@
 	$effect(() => {
 		if (!loaded) load();
 	});
+
+	// Handle OAuth callback params
+	$effect(() => {
+		const params = $page.url.searchParams;
+		const err = params.get('error');
+		const shopify = params.get('shopify');
+		if (err) {
+			const messages: Record<string, string> = {
+				shop_required: 'Shop domain is required.',
+				invalid_shop: 'Invalid shop domain. Use your-store.myshopify.com',
+				shopify_oauth_failed: 'Shopify authorization failed or was cancelled.',
+				shopify_not_configured: 'Shopify integration is not configured.',
+				shopify_token_exchange_failed: 'Failed to complete Shopify connection.',
+				shopify_no_token: 'Shopify did not return an access token.',
+				shopify_save_failed: 'Failed to save Shopify connection.'
+			};
+			error = messages[err] ?? 'An error occurred.';
+			goto('/integrations', { replaceState: true });
+		}
+		if (shopify === 'connected') {
+			error = null;
+			load();
+			goto('/integrations', { replaceState: true });
+		}
+	});
 </script>
 
 <svelte:head>
@@ -226,6 +253,10 @@
 							{#if integration.icon === 'mail'}
 								<svg class="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+								</svg>
+							{:else if integration.icon === 'bolt'}
+								<svg class="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"/>
 								</svg>
 							{:else}
 								<svg class="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -337,6 +368,33 @@
 										</div>
 									{/if}
 								</div>
+							{:else if 'oauth' in integration && integration.oauth && integration.id === 'shopify'}
+								<div class="mt-4 space-y-3">
+									<p class="text-sm text-gray-600">
+										Connect your Shopify store with one click. You'll be redirected to Shopify to authorize ProfitBot.
+									</p>
+									<p class="text-xs text-gray-500">
+										Ensure your Shopify app has this redirect URL: <code class="bg-gray-100 px-1 rounded">{$page.url.origin}/api/settings/integrations/shopify/callback</code>
+									</p>
+									<label class="block">
+										<span class="text-sm font-medium text-gray-700 mb-1">Shop domain</span>
+										<input
+											type="text"
+											placeholder="your-store.myshopify.com"
+											bind:value={shopifyShopDomain}
+											disabled={shopifyConnecting}
+											class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-amber-500 focus:border-amber-500 disabled:opacity-60"
+										/>
+									</label>
+									<button
+										type="button"
+										disabled={shopifyConnecting}
+										onclick={connectShopifyOAuth}
+										class="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white font-medium rounded-lg transition-colors text-sm"
+									>
+										{shopifyConnecting ? 'Redirecting…' : 'Connect with Shopify'}
+									</button>
+								</div>
 							{:else}
 								<div class="mt-4 space-y-3">
 									{#each integration.configFields as field}
@@ -355,10 +413,6 @@
 									{#if integration.id === 'resend'}
 										<p class="text-xs text-gray-400">
 											Get your Resend API key from <a href="https://resend.com/api-keys" target="_blank" rel="noopener noreferrer" class="text-amber-600 hover:underline">resend.com/api-keys</a>
-										</p>
-									{:else if integration.id === 'shopify'}
-										<p class="text-xs text-gray-400">
-											Create a Shopify custom app and generate an Admin API access token in your store admin.
 										</p>
 									{/if}
 									<button

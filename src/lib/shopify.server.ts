@@ -169,7 +169,6 @@ export async function listRecentOrders(
 		query: {
 			status: 'any',
 			limit,
-			'order': 'created_at desc',
 			fields:
 				'id,name,email,created_at,financial_status,fulfillment_status,cancelled_at,cancel_reason,total_price,currency,order_status_url'
 		}

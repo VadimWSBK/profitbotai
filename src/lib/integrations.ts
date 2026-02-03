@@ -9,6 +9,7 @@ export const INTEGRATIONS = [
 		name: 'Resend',
 		description: 'Send transactional emails (quotes, follow-ups, etc.) via Resend.',
 		icon: 'mail',
+		oauth: false,
 		configFields: [
 			{ id: 'apiKey', label: 'API Key', type: 'password' as const, placeholder: 're_xxxxxxxxxx...' },
 			{
@@ -22,13 +23,10 @@ export const INTEGRATIONS = [
 	{
 		id: 'shopify',
 		name: 'Shopify',
-		description: 'Manage orders and create draft orders via Shopify Admin API.',
+		description: 'Manage orders, create draft orders, cancel and refund via Shopify. Connect your store with one click.',
 		icon: 'bolt',
-		configFields: [
-			{ id: 'shopDomain', label: 'Shop domain', type: 'text' as const, placeholder: 'your-store.myshopify.com' },
-			{ id: 'accessToken', label: 'Admin API access token', type: 'password' as const, placeholder: 'shpat_...' },
-			{ id: 'apiVersion', label: 'API version (optional)', type: 'text' as const, placeholder: '2024-04' }
-		]
+		oauth: true,
+		configFields: [{ id: 'shopDomain', label: 'Shop domain', type: 'text' as const, placeholder: 'your-store.myshopify.com' }]
 	}
 ] as const;
 
