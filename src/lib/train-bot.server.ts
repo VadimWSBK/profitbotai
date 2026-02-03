@@ -198,8 +198,8 @@ async function getEmbeddingsGemini(texts: string[], apiKey: string): Promise<num
 	return out;
 }
 
-/** Get embeddings using the given key. */
-async function getEmbeddings(texts: string[], embeddingKey: EmbeddingKey): Promise<number[][]> {
+/** Get embeddings using the given key. Exported for agent rules RAG. */
+export async function getEmbeddings(texts: string[], embeddingKey: EmbeddingKey): Promise<number[][]> {
 	if (embeddingKey.provider === 'openai') return getEmbeddingsOpenAI(texts, embeddingKey.key);
 	return getEmbeddingsGemini(texts, embeddingKey.key);
 }

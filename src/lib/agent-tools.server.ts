@@ -179,7 +179,7 @@ function buildTools(admin: SupabaseClient): Record<string, ReturnType<typeof too
 
 	tools.generate_quote = tool({
 		description:
-			'Generate a quote PDF for the current conversation contact. Requires the contact to have name, email, and roof size (square metres). Use when the user asks for a quote, estimate, or price. Returns a download URL for the quote PDF if successful.',
+			'Generate a Done For You quote PDF (we coat the roof for the customer—professional installation). Use ONLY when the customer wants us to do the work, not DIY. Requires name, email, roof size (sqm). Do NOT use for DIY—for DIY, calculate litres, buckets, and price in chat only.',
 		inputSchema: z.object({
 			roof_size_sqm: z
 				.number()

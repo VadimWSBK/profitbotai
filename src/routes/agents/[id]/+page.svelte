@@ -58,6 +58,11 @@
 	let trainUploadFile = $state<File | null>(null);
 	let trainScrapeUrl = $state('');
 
+	type AgentRuleRow = { id: string; content: string; tags: string[] };
+	let agentRules = $state<AgentRuleRow[]>([]);
+	let rulesLoading = $state(true);
+	let ruleSaving = $state<string | null>(null);
+
 	type AgentTab = 'tools' | 'connect' | 'train';
 	let activeTab = $state<AgentTab>('train');
 
@@ -118,6 +123,85 @@
 		} catch {
 			trainStatus = { configured: false, documentCount: 0 };
 		}
+	}
+
+	async function fetchRules() {
+		if (!agentId) return;
+		rulesLoading = true;
+		try {
+			const res = await fetch(`/api/agents/${agentId}/rules`);
+			const data = await res.json().catch(() => ({}));
+			const list = Array.isArray(data.rules) ? data.rules : [];
+			agentRules = list.map((r: { id: string; content: string; tags?: string[] }) => ({
+				id: r.id,
+				content: r.content ?? '',
+				tags: Array.isArray(r.tags) ? r.tags : []
+			}));
+		} catch {
+			agentRules = [];
+		} finally {
+			rulesLoading = false;
+		}
+	}
+
+	function addRule() {
+		agentRules = [
+			...agentRules,
+			{ id: `new-${Date.now()}`, content: '', tags: [] }
+		];
+	}
+
+	function removeRule(index: number) {
+		const r = agentRules[index];
+		if (r.id.startsWith('new-')) {
+			agentRules = agentRules.filter((_, i) => i !== index);
+			return;
+		}
+		if (confirm('Delete this rule?')) {
+			fetch(`/api/agents/${agentId}/rules/${r.id}`, { method: 'DELETE' }).then((res) => {
+				if (res.ok) agentRules = agentRules.filter((_, i) => i !== index);
+			});
+		}
+	}
+
+	async function saveRule(index: number) {
+		const r = agentRules[index];
+		const content = r.content.trim();
+		if (!content) return;
+		ruleSaving = r.id;
+		try {
+			const isNew = r.id.startsWith('new-');
+			const url = isNew
+				? `/api/agents/${agentId}/rules`
+				: `/api/agents/${agentId}/rules/${r.id}`;
+			const method = isNew ? 'POST' : 'PATCH';
+			const body = isNew
+				? JSON.stringify({ content, tags: r.tags })
+				: JSON.stringify({ content, tags: r.tags });
+			const res = await fetch(url, {
+				method,
+				headers: { 'Content-Type': 'application/json' },
+				body
+			});
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(data.error || 'Failed to save rule');
+			if (isNew && data.id) {
+				agentRules = agentRules.map((x, i) =>
+					i === index ? { ...x, id: data.id } : x
+				);
+			}
+		} catch (e) {
+			alert(e instanceof Error ? e.message : 'Failed to save rule');
+		} finally {
+			ruleSaving = null;
+		}
+	}
+
+	function parseTagsInput(val: string): string[] {
+		return val
+			.split(/[\s,;]+/)
+			.map((t) => t.trim().toLowerCase())
+			.filter(Boolean);
 	}
 
 	async function trainUpload() {
@@ -201,7 +285,10 @@
 	}
 
 	$effect(() => {
-		if (agentId) fetchTrainStatus();
+		if (agentId) {
+			fetchTrainStatus();
+			fetchRules();
+		}
 	});
 </script>
 
@@ -419,10 +506,70 @@
 							<textarea bind:value={botTone} placeholder="e.g. Professional and friendly, concise. Or paste a longer style guide." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm min-h-[120px] font-mono text-xs" rows="4"></textarea>
 							<p class="mt-1 text-xs text-gray-500">Multi-line supported. Describe how the bot should sound.</p>
 						</label>
-						<label class="block">
-							<span class="text-sm font-medium text-gray-700 mb-1">Instructions / rules</span>
-							<textarea bind:value={botInstructions} placeholder="e.g. Answer only about our products. Keep replies under 3 sentences." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm min-h-[120px] font-mono text-xs" rows="4"></textarea>
-							<p class="mt-1 text-xs text-gray-500">Multi-line supported. Core rules, product principles, or JSON-style rules.</p>
+						<div class="border-t border-gray-200 pt-4 mt-4">
+							<h4 class="text-sm font-semibold text-gray-900 mb-2">Instructions / rules (RAG)</h4>
+							<p class="text-xs text-gray-500 mb-3">
+								Add rules one by one. Each rule is embedded and retrieved at chat time when relevant—only matching rules are sent to the AI.
+							</p>
+							{#if rulesLoading}
+								<p class="text-sm text-gray-500">Loading rules…</p>
+							{:else}
+								<div class="space-y-4">
+									{#each agentRules as rule, i}
+										<div class="border border-gray-200 rounded-lg p-4 bg-white space-y-3">
+											<div class="flex items-start justify-between gap-2">
+												<label class="block flex-1 min-w-0">
+													<span class="text-xs font-medium text-gray-500">Rule description</span>
+													<textarea
+														bind:value={rule.content}
+														class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mt-0.5 min-h-[80px]"
+														placeholder="e.g. NetZero Coating reflects up to 90% of solar heat."
+														rows="3"
+													></textarea>
+												</label>
+												<button
+													type="button"
+													class="p-2 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 shrink-0"
+													title="Remove rule"
+													onclick={() => removeRule(i)}
+												>
+													🗑
+												</button>
+											</div>
+											<div class="flex flex-wrap items-center gap-2">
+												<span class="text-xs font-medium text-gray-500 shrink-0">Tags (comma-separated):</span>
+												<input
+													type="text"
+													value={rule.tags.join(', ')}
+													oninput={(e) => (rule.tags = parseTagsInput((e.currentTarget as HTMLInputElement).value))}
+													class="flex-1 min-w-[150px] px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
+													placeholder="e.g. product, pricing, coverage"
+												/>
+												<button
+													type="button"
+													disabled={!rule.content.trim() || ruleSaving === rule.id}
+													onclick={() => saveRule(i)}
+													class="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg"
+												>
+													{ruleSaving === rule.id ? 'Saving…' : rule.id.startsWith('new-') ? 'Add rule' : 'Update'}
+												</button>
+											</div>
+										</div>
+									{/each}
+									<button
+										type="button"
+										onclick={addRule}
+										class="text-sm text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1"
+									>
+										+ Add rule
+									</button>
+								</div>
+							{/if}
+						</div>
+						<label class="block mt-4">
+							<span class="text-sm font-medium text-gray-700 mb-1">Additional instructions (optional)</span>
+							<textarea bind:value={botInstructions} placeholder="e.g. Keep replies under 3 sentences. Always ask for roof size." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm min-h-[80px] font-mono text-xs" rows="3"></textarea>
+							<p class="mt-1 text-xs text-gray-500">Sent with every message. Use for short, always-applicable rules.</p>
 						</label>
 					</div>
 				</div>

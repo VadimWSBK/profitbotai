@@ -9,6 +9,7 @@ import { getTriggerResultIfAny } from '$lib/trigger-webhook.server';
 import { extractContactFromMessage } from '$lib/extract-contact.server';
 import { generateQuoteForConversation } from '$lib/quote-pdf.server';
 import { getQuoteWorkflowForWidget, runQuoteWorkflow } from '$lib/run-workflow.server';
+import { getRelevantRulesForAgent } from '$lib/agent-rules.server';
 import type { WebhookTrigger } from '$lib/widget-config';
 
 /**
@@ -358,14 +359,37 @@ export const POST: RequestHandler = async (event) => {
 			(extractedContact.roofSize != null && Number(extractedContact.roofSize) >= 0) ||
 			(contact?.roof_size_sqm != null && Number(contact.roof_size_sqm) >= 0);
 
+			// DIY vs Done For You: only generate PDF when user wants us to do the work
+			const msg = message.toLowerCase();
+			const wantsDoneForYou = /\b(you do it|you coat|professional|install|done for me|get you to|have you do|you guys|your team|someone to do)\b|done for you/i.test(msg);
+			const wantsDiy = /\b(myself|diy|do it myself|buy the product|supply only|product only)\b/i.test(msg);
+
 			console.log('[chat/quote] intent=quote', {
 				hasName,
 				hasEmail,
 				hasRoofSize,
+				wantsDoneForYou,
+				wantsDiy,
 				extractedRoofSize: extractedContact.roofSize
 			});
 
 			if (hasName && hasEmail && hasRoofSize) {
+				// If DIY: tell AI to calculate in chat, do NOT generate PDF
+				if (wantsDiy) {
+					triggerResult = {
+						...triggerResult,
+						webhookResult:
+							'The customer wants DIY. Calculate litres (roof size ÷ 2), buckets (15L $389.99, 10L $285.99, 5L $149.99), and total cost in chat. Do NOT use generate_quote or create a PDF.'
+					};
+				} else if (!wantsDoneForYou && !wantsDiy) {
+					// Ambiguous: ask DIY vs Done For You before generating
+					triggerResult = {
+						...triggerResult,
+						webhookResult:
+							'We have name, email, and roof size. Ask: "Do you plan to do it yourself (DIY) or would you like us to coat the roof for you?" For DIY, calculate in chat. For Done For You, they will confirm and you can use generate_quote.'
+					};
+				} else {
+					// wantsDoneForYou: generate the PDF
 				const adminSupabase = getSupabaseAdmin();
 				const quoteWorkflow = await getQuoteWorkflowForWidget(adminSupabase, widgetId);
 				if (quoteWorkflow) {
@@ -430,6 +454,7 @@ export const POST: RequestHandler = async (event) => {
 						};
 					}
 				}
+			}
 			} else {
 				// Missing required info: tell the bot to ask for it (do not run workflow yet)
 				const missing: string[] = [];
@@ -437,7 +462,7 @@ export const POST: RequestHandler = async (event) => {
 				if (!hasEmail) missing.push('email');
 				if (!hasRoofSize) missing.push('roof size in square metres');
 				console.log('[chat/quote] Workflow not run: missing', missing.join(', '));
-				const instruction = `The user wants a quote but we need the following before we can generate it: ${missing.join(', ')}. Politely ask for only the missing information (e.g. "What's your name?", "What's your email?", "What's your roof size in square metres?"). Do not say the quote is being generated or promise a quote until we have name, email, and roof size.`;
+				const instruction = `The user wants a quote but we need the following before we can help: ${missing.join(', ')}. Politely ask for only the missing information. Once we have name, email, and roof size, we will ask whether they want DIY (we calculate in chat) or Done For You (we coat the roof for them—PDF quote).`;
 				triggerResult = { ...triggerResult, webhookResult: instruction };
 			}
 		}
@@ -446,11 +471,11 @@ export const POST: RequestHandler = async (event) => {
 		const bot = effectiveConfig.bot;
 		const parts: string[] = [
 			'CRITICAL: Reply only with natural conversational text. Never output technical strings, commands, codes, or syntax (e.g. workflow_start, contacts_query, or similar). Speak like a human to a human. Your entire reply must be readable by the customer with no internal jargon.',
-			'For quotes: we only generate a quote once we have the customer\'s name, email, and roof size (square metres). If the user asks for a quote before we have all three, politely ask for the missing piece(s) only. Do not say the quote is being generated or will arrive by email until we actually have name, email, and roof size.'
+			'For quotes: Ask whether the customer wants DIY (calculate in chat) or Done For You (we coat the roof for them—use generate_quote tool). Only use generate_quote for Done For You. For DIY, calculate litres, buckets, and price in chat. We need name, email, and roof size (sqm) before generating a Done For You quote PDF.'
 		];
 		if (agentAutonomy) {
 			parts.push(
-				'You have access to tools. Use them when appropriate: search_contacts to look up contacts by name or email; get_current_contact to see what we have on file for this chat; generate_quote to create a quote PDF (need name, email, roof size in sqm); send_email to send an email (e.g. with the quote link); shopify_check_orders to look up order status; shopify_create_draft_order to create a draft order and checkout link; shopify_cancel_order to cancel an order; shopify_refund_order to refund an order. Use the tools, then reply naturally to the customer. Do not mention "calling a tool" or technical names—just do the action and respond in plain language.'
+				'You have access to tools. Use them when appropriate: search_contacts; get_current_contact; generate_quote for Done For You quotes ONLY (we coat the roof for the customer—never for DIY); send_email; shopify_check_orders; shopify_create_draft_order; shopify_cancel_order; shopify_refund_order. For DIY quotes, calculate in chat—do not use generate_quote. Use the tools, then reply naturally. Do not mention "calling a tool" or technical names.'
 			);
 		}
 		const agentAllowedTools = effectiveConfig.agentAllowedTools ?? null;
@@ -460,6 +485,19 @@ export const POST: RequestHandler = async (event) => {
 		if (bot.role?.trim()) parts.push(bot.role.trim());
 		if (bot.tone?.trim()) parts.push(`Tone: ${bot.tone.trim()}`);
 		if (bot.instructions?.trim()) parts.push(bot.instructions.trim());
+		// RAG: retrieve relevant rules for this message (only when widget has an agent)
+		if (agentId && message) {
+			try {
+				const relevantRules = await getRelevantRulesForAgent(agentId, message, 5);
+				if (relevantRules.length > 0) {
+					parts.push(
+						`Relevant rules (retrieved for this query—follow these):\n${relevantRules.map((r) => r.content).join('\n\n')}`
+					);
+				}
+			} catch (e) {
+				console.error('[chat] getRelevantRulesForAgent:', e);
+			}
+		}
 		// Contact data is ALREADY loaded below — use it directly, never output query syntax
 		const contactLines: string[] = [
 			'Contact data (already loaded from database): Use the info below when the user asks about their details, quote, or "what do you have on file?". If PDF links are listed, share them as clickable hyperlinks using markdown: [Download Quote](paste-the-url-here). The chat renders [text](url) as clickable links.'
