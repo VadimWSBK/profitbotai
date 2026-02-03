@@ -411,15 +411,18 @@
 					<div class="space-y-4">
 						<label class="block">
 							<span class="text-sm font-medium text-gray-700 mb-1">Role</span>
-							<input type="text" bind:value={botRole} placeholder="e.g. You are a helpful sales assistant for NetZero Coating." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+							<textarea bind:value={botRole} placeholder="e.g. You are a helpful sales assistant for NetZero Coating." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm min-h-[120px] font-mono text-xs" rows="4"></textarea>
+							<p class="mt-1 text-xs text-gray-500">Multi-line supported. Define who the bot is in as much detail as needed.</p>
 						</label>
 						<label class="block">
 							<span class="text-sm font-medium text-gray-700 mb-1">Tone</span>
-							<input type="text" bind:value={botTone} placeholder="e.g. Professional and friendly, concise" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+							<textarea bind:value={botTone} placeholder="e.g. Professional and friendly, concise. Or paste a longer style guide." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm min-h-[120px] font-mono text-xs" rows="4"></textarea>
+							<p class="mt-1 text-xs text-gray-500">Multi-line supported. Describe how the bot should sound.</p>
 						</label>
 						<label class="block">
 							<span class="text-sm font-medium text-gray-700 mb-1">Instructions / rules</span>
-							<textarea bind:value={botInstructions} placeholder="e.g. Answer only about our products. Keep replies under 3 sentences." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm min-h-[80px]" rows="3"></textarea>
+							<textarea bind:value={botInstructions} placeholder="e.g. Answer only about our products. Keep replies under 3 sentences." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm min-h-[120px] font-mono text-xs" rows="4"></textarea>
+							<p class="mt-1 text-xs text-gray-500">Multi-line supported. Core rules, product principles, or JSON-style rules.</p>
 						</label>
 					</div>
 				</div>

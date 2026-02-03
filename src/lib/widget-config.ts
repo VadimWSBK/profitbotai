@@ -151,7 +151,7 @@ export const defaultBubbleConfig: BubbleConfig = {
 export const defaultTooltipConfig: TooltipConfig = {
 	displayTooltip: true,
 	hideTooltipOnMobile: false,
-	message: 'Hello 👋 customize & connect me to n8n',
+	message: 'Hi {first_name} 👋 Let\'s Chat.',
 	backgroundColor: '#fff9f6',
 	textColor: '#1c1c1c',
 	fontSizePx: 15

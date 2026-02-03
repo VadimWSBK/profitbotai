@@ -2,15 +2,40 @@
 	import type { WidgetConfig } from '$lib/widget-config';
 	import { fly } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
+	import { browser } from '$app/environment';
+	import { getSessionId } from '$lib/widget-session';
 	import ChatWindow from './ChatWindow.svelte';
 
 	let { config, widgetId } = $props<{ config: WidgetConfig; widgetId?: string }>();
 	let iconError = $state(false);
 	let open = $state(false);
+	let visitorName = $state<string | null>(null);
 
 	const bubble = $derived(config.bubble);
 	const tooltip = $derived(config.tooltip);
 	const showCustomIcon = $derived(bubble.customIconUrl && !iconError);
+	const visitorFirstName = $derived(
+		visitorName?.trim() ? visitorName.trim().split(/\s+/)[0] ?? '' : ''
+	);
+	const tooltipMessage = $derived(
+		(tooltip.message ?? '')
+			.replace(/\{first_name\}/gi, visitorFirstName || 'there')
+			.replace(/\{name\}/gi, visitorName?.trim() || 'there')
+	);
+
+	// Fetch visitor name when embedded so tooltip can show "Hi {first_name}"
+	$effect(() => {
+		if (!widgetId || widgetId === 'preview' || !browser) return;
+		const sessionId = getSessionId(widgetId, browser);
+		if (sessionId === 'preview') return;
+		fetch(`/api/widgets/${widgetId}/visitor?session_id=${encodeURIComponent(sessionId)}`)
+			.then((r) => r.json())
+			.then((data: { name?: string | null }) => {
+				const n = data?.name;
+				visitorName = typeof n === 'string' && n.trim() ? n.trim() : null;
+			})
+			.catch(() => {});
+	});
 
 	// Auto-open if configured
 	$effect(() => {
@@ -63,7 +88,7 @@
 				onclick={() => (open = true)}
 				onkeydown={(e) => e.key === 'Enter' && (open = true)}
 			>
-				{tooltip.message}
+				{tooltipMessage}
 			</div>
 		{/if}
 		<button
