@@ -314,9 +314,10 @@
 						{#if contactDetail.pdfQuotes && contactDetail.pdfQuotes.length > 0}
 							<section>
 								<h3 class="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-3">PDF quotes</h3>
-								<ul class="rounded-lg border border-gray-200 bg-gray-50/50 p-4 space-y-2">
+								<ul class="rounded-lg border border-gray-200 bg-gray-50/50 p-4 space-y-3">
 									{#each contactDetail.pdfQuotes as quote}
-										<li>
+										{@const resolved = typeof quote === 'string' ? { url: quote } : quote && typeof quote === 'object' && 'url' in quote ? quote as { url: string; created_at?: string; total?: string } : null}
+										<li class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
 											{#if typeof quote === 'string'}
 												<a
 													href={quote}
@@ -326,15 +327,28 @@
 												>
 													View PDF
 												</a>
-											{:else if quote && typeof quote === 'object' && 'url' in quote}
+											{:else if resolved}
 												<a
-													href={(quote as { url: string }).url}
+													href={resolved.url}
 													target="_blank"
 													rel="noopener noreferrer"
 													class="text-amber-600 hover:text-amber-700 text-sm font-medium break-all"
 												>
 													{(quote as { name?: string }).name ?? 'View PDF'}
 												</a>
+												{#if resolved.created_at || resolved.total}
+													<span class="text-gray-500 text-xs">
+														{#if resolved.created_at}
+															{new Date(resolved.created_at).toLocaleDateString(undefined, { dateStyle: 'medium' })}
+														{/if}
+														{#if resolved.created_at && resolved.total}
+															<span class="text-gray-400"> · </span>
+														{/if}
+														{#if resolved.total}
+															{resolved.total}
+														{/if}
+													</span>
+												{/if}
 											{:else}
 												<span class="text-gray-500 text-sm">—</span>
 											{/if}

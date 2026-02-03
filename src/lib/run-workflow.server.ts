@@ -264,7 +264,8 @@ export async function runQuoteWorkflow(
 						const { error: appendErr } = await admin.rpc('append_pdf_quote_to_contact', {
 							p_conversation_id: ctx.conversationId,
 							p_widget_id: ctx.widgetId,
-							p_pdf_url: gen.storagePath
+							p_pdf_url: gen.storagePath,
+							p_total: gen.total ?? null,
 						});
 						if (appendErr) console.error('[run-workflow] append_pdf_quote_to_contact:', appendErr);
 						await logWorkflowStep(admin, executionId, {

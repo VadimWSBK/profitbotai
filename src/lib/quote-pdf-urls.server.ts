@@ -5,10 +5,10 @@
 
 import { getSupabaseAdmin } from '$lib/supabase.server';
 
-export type PdfQuoteResolved = { url: string; created_at?: string };
+export type PdfQuoteResolved = { url: string; created_at?: string; total?: string };
 
 /**
- * Resolve pdf_quotes array (paths or { url, created_at }) to signed URLs for the roof_quotes bucket.
+ * Resolve pdf_quotes array (paths or { url, created_at?, total? }) to signed URLs for the roof_quotes bucket.
  */
 export async function resolvePdfQuotesToSignedUrls(pdf_quotes: unknown): Promise<PdfQuoteResolved[]> {
 	const result: PdfQuoteResolved[] = [];
@@ -21,15 +21,17 @@ export async function resolvePdfQuotesToSignedUrls(pdf_quotes: unknown): Promise
 		const filePath = pathMatch?.[1] ?? stored.trim();
 		const created_at =
 			typeof q === 'object' && q !== null && 'created_at' in q ? (q as { created_at?: string }).created_at : undefined;
+		const total =
+			typeof q === 'object' && q !== null && 'total' in q ? (q as { total?: string }).total : undefined;
 		if (!filePath || filePath.startsWith('http')) {
-			result.push({ url: stored, created_at });
+			result.push({ url: stored, created_at, total });
 			continue;
 		}
 		const { data } = await admin.storage.from('roof_quotes').createSignedUrl(filePath, 3600);
 		if (data?.signedUrl) {
-			result.push({ url: data.signedUrl, created_at });
+			result.push({ url: data.signedUrl, created_at, total });
 		} else {
-			result.push({ url: stored, created_at });
+			result.push({ url: stored, created_at, total });
 		}
 	}
 	return result;

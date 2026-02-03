@@ -136,7 +136,14 @@ export async function generateQuoteForConversation(
 	}
 
 	const { data: signed } = await admin.storage.from(BUCKET).createSignedUrl(fileName, 3600);
-	return { signedUrl: signed?.signedUrl ?? undefined, storagePath: fileName };
+	const currency = settings.currency ?? 'USD';
+	const formattedTotal =
+		new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(computed.total) ?? 0);
+	return {
+		signedUrl: signed?.signedUrl ?? undefined,
+		storagePath: fileName,
+		total: formattedTotal
+	};
 }
 
 /**

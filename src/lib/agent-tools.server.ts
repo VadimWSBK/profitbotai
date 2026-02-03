@@ -199,6 +199,7 @@ function buildTools(admin: SupabaseClient): Record<string, ReturnType<typeof too
 					p_conversation_id: c.conversationId,
 					p_widget_id: c.widgetId,
 					p_pdf_url: result.storagePath ?? '',
+					p_total: result.total ?? null,
 				});
 				return { success: true, downloadUrl: result.signedUrl, message: 'Quote generated. Share the download link with the customer.' };
 			}
