@@ -30,7 +30,7 @@ export async function generateQuoteForConversation(
 	admin: SupabaseClient,
 	conversationId: string,
 	widgetId: string,
-	contact: { name?: string | null; email?: string | null; phone?: string | null; address?: string | null },
+	contact: { name?: string | null; email?: string | null; phone?: string | null; address?: string | null; roof_size_sqm?: number | null },
 	extracted: { roofSize?: number } | null,
 	ownerIdFromCaller?: string
 ): Promise<{ signedUrl?: string; storagePath?: string; error?: string }> {
@@ -87,7 +87,12 @@ export async function generateQuoteForConversation(
 	};
 
 	const customer = { name: contact.name ?? '', email: contact.email ?? '', phone: contact.phone ?? '' };
-	const project = { roofSize: extracted?.roofSize ?? 0, fullAddress: contact.address ?? '' };
+	const roofFromExtracted = extracted?.roofSize;
+	const roofFromContact = contact.roof_size_sqm != null ? Number(contact.roof_size_sqm) : null;
+	const project = {
+		roofSize: roofFromExtracted ?? roofFromContact ?? 0,
+		fullAddress: contact.address ?? ''
+	};
 	const roofSize = Math.max(0, project.roofSize);
 	const computed = computeQuoteFromSettings(settings, roofSize);
 	const payload = {

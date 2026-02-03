@@ -27,6 +27,7 @@ export const GET: RequestHandler = async (event) => {
 			email,
 			phone,
 			address,
+			roof_size_sqm,
 			pdf_quotes,
 			created_at,
 			updated_at,
@@ -50,6 +51,7 @@ export const GET: RequestHandler = async (event) => {
 		email: string | null;
 		phone: string | null;
 		address: string | null;
+		roof_size_sqm: number | null;
 		pdf_quotes: unknown;
 		created_at: string;
 		updated_at: string;
@@ -71,6 +73,7 @@ export const GET: RequestHandler = async (event) => {
 		email: r.email ?? null,
 		phone: r.phone ?? null,
 		address: r.address ?? null,
+		roofSizeSqm: r.roof_size_sqm != null ? Number(r.roof_size_sqm) : null,
 		pdfQuotes,
 		createdAt: r.created_at,
 		updatedAt: r.updated_at

@@ -15,7 +15,7 @@ export type AgentToolContext = {
 	conversationId: string;
 	widgetId: string;
 	ownerId: string;
-	contact: { name?: string | null; email?: string | null; phone?: string | null; address?: string | null } | null;
+	contact: { name?: string | null; email?: string | null; phone?: string | null; address?: string | null; roof_size_sqm?: number | null } | null;
 	extractedRoofSize?: number;
 };
 
@@ -59,15 +59,15 @@ function buildTools(admin: SupabaseClient): Record<string, ReturnType<typeof too
 		},
 	});
 
-	tools.get_current_contact = tool({
+		tools.get_current_contact = tool({
 		description:
-			'Get the current conversation contact (the person chatting). Use when the user asks "what do you have on file?", "my details", or to confirm name/email/phone/address for this chat.',
+			'Get the current conversation contact (the person chatting). Use when the user asks "what do you have on file?", "my details", or to confirm name/email/phone/address/roof size for this chat.',
 		inputSchema: z.object({}),
 		execute: async (_, { experimental_context }: { experimental_context?: unknown }) => {
 			const c = getContext(experimental_context);
 			if (!c) return { error: 'Missing context' };
 			const contact = c.contact;
-			if (!contact || (!contact.name && !contact.email && !contact.phone && !contact.address)) {
+			if (!contact || (!contact.name && !contact.email && !contact.phone && !contact.address && contact.roof_size_sqm == null)) {
 				return { contact: null, message: 'No contact details stored yet for this conversation.' };
 			}
 			return {
@@ -76,6 +76,7 @@ function buildTools(admin: SupabaseClient): Record<string, ReturnType<typeof too
 					email: contact.email ?? '',
 					phone: contact.phone ?? '',
 					address: contact.address ?? '',
+					roof_size_sqm: contact.roof_size_sqm != null ? Number(contact.roof_size_sqm) : null,
 				},
 			};
 		},
@@ -83,25 +84,27 @@ function buildTools(admin: SupabaseClient): Record<string, ReturnType<typeof too
 
 	tools.create_contact = tool({
 		description:
-			'Create or overwrite the contact for the current conversation. Use when the user provides their name, email, phone, or address and you want to store it. One contact per conversation.',
+			'Create or overwrite the contact for the current conversation. Use when the user provides their name, email, phone, address, or roof size (sqm) and you want to store it. One contact per conversation.',
 		inputSchema: z.object({
 			name: z.string().optional().describe('Full name'),
 			email: z.string().optional().describe('Email address'),
 			phone: z.string().optional().describe('Phone number'),
 			address: z.string().optional().describe('Address'),
+			roof_size_sqm: z.number().optional().min(0).describe('Roof or project area in square metres'),
 		}),
 		execute: async (
-			{ name, email, phone, address },
+			{ name, email, phone, address, roof_size_sqm },
 			{ experimental_context }: { experimental_context?: unknown }
 		) => {
 			const c = getContext(experimental_context);
 			if (!c) return { error: 'Missing context' };
-			const updates: Record<string, string> = {};
+			const updates: Record<string, string | number> = {};
 			if (name != null && name.trim()) updates.name = name.trim();
 			if (email != null && email.trim()) updates.email = email.trim().toLowerCase();
 			if (phone != null && phone.trim()) updates.phone = phone.trim();
 			if (address != null && address.trim()) updates.address = address.trim();
-			if (Object.keys(updates).length === 0) return { error: 'Provide at least one field (name, email, phone, or address).' };
+			if (roof_size_sqm != null && Number(roof_size_sqm) >= 0) updates.roof_size_sqm = Number(roof_size_sqm);
+			if (Object.keys(updates).length === 0) return { error: 'Provide at least one field (name, email, phone, address, or roof_size_sqm).' };
 			const { error: upsertErr } = await admin.from('contacts').upsert(
 				{
 					conversation_id: c.conversationId,
@@ -117,24 +120,26 @@ function buildTools(admin: SupabaseClient): Record<string, ReturnType<typeof too
 
 	tools.update_contact = tool({
 		description:
-			'Update the current conversation contact. Use when the user wants to change their stored name, email, phone, or address. Only provided fields are updated.',
+			'Update the current conversation contact. Use when the user wants to change their stored name, email, phone, address, or roof size (sqm). Only provided fields are updated.',
 		inputSchema: z.object({
 			name: z.string().optional().describe('Full name'),
 			email: z.string().optional().describe('Email address'),
 			phone: z.string().optional().describe('Phone number'),
 			address: z.string().optional().describe('Address'),
+			roof_size_sqm: z.number().optional().min(0).describe('Roof or project area in square metres'),
 		}),
 		execute: async (
-			{ name, email, phone, address },
+			{ name, email, phone, address, roof_size_sqm },
 			{ experimental_context }: { experimental_context?: unknown }
 		) => {
 			const c = getContext(experimental_context);
 			if (!c) return { error: 'Missing context' };
-			const updates: Record<string, string> = {};
+			const updates: Record<string, string | number> = {};
 			if (name != null && name.trim()) updates.name = name.trim();
 			if (email != null && email.trim()) updates.email = email.trim().toLowerCase();
 			if (phone != null && phone.trim()) updates.phone = phone.trim();
 			if (address != null && address.trim()) updates.address = address.trim();
+			if (roof_size_sqm != null && Number(roof_size_sqm) >= 0) updates.roof_size_sqm = Number(roof_size_sqm);
 			if (Object.keys(updates).length === 0) return { error: 'Provide at least one field to update.' };
 			const { error } = await admin
 				.from('contacts')
@@ -181,7 +186,7 @@ function buildTools(admin: SupabaseClient): Record<string, ReturnType<typeof too
 			const contact = c.contact;
 			if (!contact?.name?.trim()) return { error: 'Contact name is required for a quote. Ask the user for their name.' };
 			if (!contact?.email?.trim()) return { error: 'Contact email is required for a quote. Ask the user for their email.' };
-			const roofSize = roof_size_sqm ?? c.extractedRoofSize;
+			const roofSize = roof_size_sqm ?? c.extractedRoofSize ?? (c.contact?.roof_size_sqm != null ? Number(c.contact.roof_size_sqm) : undefined);
 			if (roofSize == null || Number(roofSize) < 0) {
 				return { error: 'Roof size (square metres) is required. Ask the user for their roof size or area.' };
 			}

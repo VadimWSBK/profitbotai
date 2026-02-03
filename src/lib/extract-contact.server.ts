@@ -21,10 +21,12 @@ function extractFromRegex(message: string): Partial<ExtractedContact> {
 	// Email: standard pattern (e.g. user@domain.com)
 	const emailMatch = message.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
 	if (emailMatch) out.email = emailMatch[0].toLowerCase();
-	// Roof size: "200 sqm", "400m2", "roof is 200", etc.
+	// Roof size: "200 sqm", "400m2", "about 120sqm", "roof is 200", "120 sq. metres", etc.
 	const roofMatch =
-		message.match(/(\d+(?:\.\d+)?)\s*(?:sqm|m2|m²|square\s*metre[s]?|sq\.?\s*metre[s]?|sq\.?\s*m\.?)/i) ??
-		message.match(/roof\s*(?:is|size)?\s*:?\s*(\d+(?:\.\d+)?)/i);
+		message.match(/(?:about|approximately|approx\.?)\s*(\d+(?:\.\d+)?)\s*(?:sqm|m2|m²|sq\s*m|square\s*metre[s]?|sq\.?\s*metre[s]?|sq\.?\s*m\.?)/i) ??
+		message.match(/(\d+(?:\.\d+)?)\s*(?:sqm|m2|m²|sq\s*m|square\s*metre[s]?|sq\.?\s*metre[s]?|sq\.?\s*m\.?)/i) ??
+		message.match(/roof\s*(?:is|size)?\s*:?\s*(?:about|approximately|approx\.?)?\s*(\d+(?:\.\d+)?)/i) ??
+		message.match(/(?:size|area)\s*(?:is|of)?\s*(?:about|approximately|approx\.?)?\s*(\d+(?:\.\d+)?)/i);
 	if (roofMatch) {
 		const n = Number.parseFloat(roofMatch[1]);
 		if (n >= 0) out.roofSize = n;

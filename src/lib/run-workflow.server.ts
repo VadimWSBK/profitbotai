@@ -21,7 +21,7 @@ export type WorkflowRunContext = {
 	conversationId: string;
 	widgetId: string;
 	ownerId: string;
-	contact: { name?: string | null; email?: string | null; phone?: string | null; address?: string | null };
+	contact: { name?: string | null; email?: string | null; phone?: string | null; address?: string | null; roof_size_sqm?: number | null };
 	extractedRoofSize?: number;
 };
 
@@ -249,8 +249,8 @@ export async function runQuoteWorkflow(
 			const nodeLabel = (node.data?.label as string) ?? node.id;
 			try {
 				if (actionType === 'Generate quote') {
-					const extracted =
-						ctx.extractedRoofSize != null ? { roofSize: Number(ctx.extractedRoofSize) } : null;
+					const roofFromCtx = ctx.extractedRoofSize ?? (ctx.contact?.roof_size_sqm != null ? Number(ctx.contact.roof_size_sqm) : undefined);
+					const extracted = roofFromCtx != null ? { roofSize: roofFromCtx } : null;
 					const gen = await generateQuoteForConversation(
 						admin,
 						ctx.conversationId,

@@ -7,6 +7,7 @@ import { getAISdkModel } from '$lib/ai-sdk-model.server';
 import { getConversationContextForLlm } from '$lib/conversation-context.server';
 import { getTriggerResultIfAny } from '$lib/trigger-webhook.server';
 import { extractContactFromMessage } from '$lib/extract-contact.server';
+import { generateQuoteForConversation } from '$lib/quote-pdf.server';
 import { getQuoteWorkflowForWidget, runQuoteWorkflow } from '$lib/run-workflow.server';
 import type { WebhookTrigger } from '$lib/widget-config';
 
@@ -216,10 +217,10 @@ export const POST: RequestHandler = async (event) => {
 			maxChars: 24_000
 		});
 
-		// Load contact (name, email, pdf_quotes) for context – bot can reference stored info and quote links
+		// Load contact (name, email, roof_size_sqm, pdf_quotes) for context – bot can reference stored info and quote links
 		const { data: contact } = await supabase
 			.from('contacts')
-			.select('name, email, phone, address, pdf_quotes')
+			.select('name, email, phone, address, roof_size_sqm, pdf_quotes')
 			.eq('conversation_id', conv.id)
 			.maybeSingle();
 
@@ -231,18 +232,21 @@ export const POST: RequestHandler = async (event) => {
 			conversationContext: llmHistory
 		});
 
-		// Update contact if we extracted name, email, phone, or address from the message
+		// Update contact if we extracted name, email, phone, address, or roof size from the message
 		// Skip email if another contact already has it (contacts_email_unique constraint)
-		if (
+		const hasExtractedFields =
 			extractedContact.name ||
 			extractedContact.email ||
 			extractedContact.phone ||
-			extractedContact.address
-		) {
-			const updates: Record<string, string> = {};
+			extractedContact.address ||
+			extractedContact.roofSize != null;
+		if (hasExtractedFields) {
+			const updates: Record<string, string | number> = {};
 			if (extractedContact.name) updates.name = extractedContact.name;
 			if (extractedContact.phone) updates.phone = extractedContact.phone;
 			if (extractedContact.address) updates.address = extractedContact.address;
+			if (extractedContact.roofSize != null && Number(extractedContact.roofSize) >= 0)
+				updates.roof_size_sqm = Number(extractedContact.roofSize);
 			if (extractedContact.email) {
 				const { data: existing } = await supabase
 					.from('contacts')
@@ -264,13 +268,20 @@ export const POST: RequestHandler = async (event) => {
 		}
 
 		// Merge extracted fields into contact (for system prompt + webhook payload)
+		const effectiveRoofSize =
+			extractedContact.roofSize != null
+				? Number(extractedContact.roofSize)
+				: contact?.roof_size_sqm != null
+					? Number(contact.roof_size_sqm)
+					: undefined;
 		const contactForPrompt = contact
 			? {
 					...contact,
 					...(extractedContact.name && { name: extractedContact.name }),
 					...(extractedContact.email && { email: extractedContact.email }),
 					...(extractedContact.phone && { phone: extractedContact.phone }),
-					...(extractedContact.address && { address: extractedContact.address })
+					...(extractedContact.address && { address: extractedContact.address }),
+					...(effectiveRoofSize != null && { roof_size_sqm: effectiveRoofSize })
 				}
 			: null;
 
@@ -343,7 +354,9 @@ export const POST: RequestHandler = async (event) => {
 			const contact = contactForPrompt ?? { name: null, email: null, phone: null, address: null };
 			const hasName = !!(contact.name ?? extractedContact.name);
 			const hasEmail = !!(contact.email ?? extractedContact.email);
-			const hasRoofSize = extractedContact.roofSize != null && Number(extractedContact.roofSize) >= 0;
+			const hasRoofSize =
+			(extractedContact.roofSize != null && Number(extractedContact.roofSize) >= 0) ||
+			(contact?.roof_size_sqm != null && Number(contact.roof_size_sqm) >= 0);
 
 			console.log('[chat/quote] intent=quote', {
 				hasName,
@@ -363,7 +376,7 @@ export const POST: RequestHandler = async (event) => {
 							ownerId: ownerId ?? '',
 							contact,
 							extractedRoofSize:
-								extractedContact.roofSize != null ? Number(extractedContact.roofSize) : undefined
+								effectiveRoofSize ?? undefined
 						});
 						quoteEmailSent = runResult.quoteEmailSent;
 						triggerResult = {
@@ -380,12 +393,42 @@ export const POST: RequestHandler = async (event) => {
 						};
 					}
 				} else {
-					// No workflow configured for this widget: do not generate or email; tell user to set up workflow
-					triggerResult = {
-						...triggerResult,
-						webhookResult:
-							'The user asked for a quote. No quote workflow is set up for this widget. In Workflows, create a workflow with trigger "Message in the chat" → "When customer requests quote" and actions "Generate quote" and "Send email", then assign it to this widget.'
-					};
+					// No live quote workflow: generate quote directly so the agent can share the link
+					try {
+						const gen = await generateQuoteForConversation(
+							adminSupabase,
+							conv.id,
+							widgetId,
+							contact,
+							effectiveRoofSize != null ? { roofSize: effectiveRoofSize } : null,
+							ownerId ?? undefined
+						);
+						if (gen.signedUrl && gen.storagePath) {
+							await adminSupabase.rpc('append_pdf_quote_to_contact', {
+								p_conversation_id: conv.id,
+								p_widget_id: widgetId,
+								p_pdf_url: gen.storagePath,
+								p_total: gen.total ?? null
+							});
+							quoteEmailSent = false; // no workflow email
+							triggerResult = {
+								...triggerResult,
+								webhookResult: `Quote generated successfully. You MUST include this exact clickable link in your reply on a single line: [Download Quote](${gen.signedUrl}). Confirm the quote is ready and share the link.`
+							};
+							console.log('[chat/quote] Generated quote directly (no workflow)');
+						} else {
+							triggerResult = {
+								...triggerResult,
+								webhookResult: `Quote could not be generated: ${gen.error ?? 'Unknown error'}. Apologise and offer to have a specialist follow up.`
+							};
+						}
+					} catch (e) {
+						console.error('[chat/quote] generateQuoteForConversation threw:', e);
+						triggerResult = {
+							...triggerResult,
+							webhookResult: `Quote generation failed: ${e instanceof Error ? e.message : 'Unknown error'}. Apologise and offer to have a specialist follow up.`
+						};
+					}
 				}
 			} else {
 				// Missing required info: tell the bot to ask for it (do not run workflow yet)
@@ -422,11 +465,12 @@ export const POST: RequestHandler = async (event) => {
 			'Contact data (already loaded from database): Use the info below when the user asks about their details, quote, or "what do you have on file?". If PDF links are listed, share them as clickable hyperlinks using markdown: [Download Quote](paste-the-url-here). The chat renders [text](url) as clickable links.'
 		];
 		const currentContact = contactForPrompt;
-		if (currentContact && (currentContact.name || currentContact.email || currentContact.phone || currentContact.address || (Array.isArray(currentContact.pdf_quotes) && currentContact.pdf_quotes.length > 0))) {
+		if (currentContact && (currentContact.name || currentContact.email || currentContact.phone || currentContact.address || currentContact.roof_size_sqm != null || (Array.isArray(currentContact.pdf_quotes) && currentContact.pdf_quotes.length > 0))) {
 			contactLines.push('Current conversation contact:');
 			if (currentContact.name) contactLines.push(`- Name: ${currentContact.name}`);
 			if (currentContact.email) contactLines.push(`- Email: ${currentContact.email}`);
 			if (currentContact.phone) contactLines.push(`- Phone: ${currentContact.phone}`);
+			if (currentContact.roof_size_sqm != null) contactLines.push(`- Roof size: ${currentContact.roof_size_sqm} m²`);
 			if (currentContact.address) contactLines.push(`- Address: ${currentContact.address}`);
 			if (Array.isArray(currentContact.pdf_quotes) && currentContact.pdf_quotes.length > 0) {
 				const adminSupabase = getSupabaseAdmin();
@@ -511,8 +555,7 @@ export const POST: RequestHandler = async (event) => {
 					widgetId,
 					ownerId: ownerId ?? '',
 					contact: contactForPrompt ?? null,
-					extractedRoofSize:
-						extractedContact.roofSize != null ? Number(extractedContact.roofSize) : undefined
+					extractedRoofSize: effectiveRoofSize ?? undefined
 				}
 			: null;
 
