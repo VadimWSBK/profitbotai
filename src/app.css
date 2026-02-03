@@ -15,8 +15,8 @@ body:has(.app-layout) {
 	display: none;
 }
 
-/* Break long URLs in chat messages to prevent horizontal overflow */
+/* Break long URLs in chat messages at word boundaries; only break mid-word when necessary (e.g. very long URL) */
 .chat-message-link {
-	word-break: break-all;
-	overflow-wrap: anywhere;
+	word-break: normal;
+	overflow-wrap: break-word;
 }

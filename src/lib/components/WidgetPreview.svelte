@@ -4,7 +4,7 @@
 	import { cubicOut } from 'svelte/easing';
 	import ChatWindow from './ChatWindow.svelte';
 
-	let { config, widgetId } = $props<{ config: WidgetConfig; widgetId?: string }>();
+	let { config, widgetId, embed = false } = $props<{ config: WidgetConfig; widgetId?: string; embed?: boolean }>();
 	let iconError = $state(false);
 	let open = $state(false);
 
@@ -33,7 +33,7 @@
 </script>
 
 <div
-	class="widget-preview-wrapper fixed z-[9999] flex flex-col items-end"
+	class="widget-preview-wrapper z-[9999] flex flex-col items-end {embed ? 'absolute' : 'fixed'}"
 	style="right: {bubble.rightPositionPx}px; bottom: {bubble.bottomPositionPx}px;"
 >
 	{#if open}

@@ -55,8 +55,18 @@
 		requestAnimationFrame(() => scrollToBottom());
 	}
 
-	function scrollToBottom() {
-		if (contentEl) contentEl.scrollTop = contentEl.scrollHeight;
+	const SCROLL_NEAR_BOTTOM_PX = 120;
+
+	function isNearBottom(): boolean {
+		if (!contentEl) return false;
+		const { scrollTop, clientHeight, scrollHeight } = contentEl;
+		return scrollTop + clientHeight >= scrollHeight - SCROLL_NEAR_BOTTOM_PX;
+	}
+
+	/** Scroll to bottom. Pass true to force (e.g. after user sends); otherwise only scroll if user was already near bottom. */
+	function scrollToBottom(force = false) {
+		if (!contentEl) return;
+		if (force || isNearBottom()) contentEl.scrollTop = contentEl.scrollHeight;
 	}
 
 	async function fetchStoredMessages() {
@@ -76,7 +86,7 @@
 					avatarUrl: m.avatarUrl
 				}));
 				showStarterPrompts = false;
-				requestAnimationFrame(() => scrollToBottom());
+				requestAnimationFrame(() => scrollToBottom(true));
 			}
 			if (list.length > 0 || data.agentTyping || data.agentAvatarUrl) {
 				agentTyping = !!data.agentTyping;
@@ -107,7 +117,7 @@
 				if (serverMessages.length >= messages.length) {
 					messages = serverMessages;
 					showStarterPrompts = false;
-					requestAnimationFrame(() => scrollToBottom());
+					// Do not auto-scroll on poll sync — respect user scroll position (e.g. reading history)
 				}
 				agentTyping = !!data.agentTyping;
 				agentAvatarUrl = data.agentAvatarUrl ?? null;
@@ -140,7 +150,7 @@
 		messages = [...messages, { role: 'user', content: trimmed }];
 		inputText = '';
 		showStarterPrompts = false;
-		requestAnimationFrame(() => scrollToBottom());
+		requestAnimationFrame(() => scrollToBottom(true));
 
 		loading = true;
 		let botReply = config.window.customErrorMessage;
@@ -596,7 +606,7 @@
 
 	<div
 		bind:this={contentEl}
-		class="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-3 {win.showScrollbar ? '' : 'scrollbar-hide'}"
+		class="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-3 {win.showScrollbar ? '' : 'scrollbar-hide'} chat-messages-scroll"
 		role="log"
 		aria-live="polite"
 	>
@@ -794,12 +804,18 @@
 	.chat-window .scrollbar-hide::-webkit-scrollbar {
 		display: none;
 	}
+	/* Prevent browser from auto-scrolling when content updates (e.g. poll sync) */
+	.chat-window .chat-messages-scroll {
+		overflow-anchor: none;
+	}
 	.chat-window-input::placeholder {
 		color: var(--ph, #9ca3af);
 	}
 	:global(.chat-message-link) {
 		color: inherit;
 		text-decoration: underline;
+		word-break: normal;
+		overflow-wrap: break-word;
 	}
 	:global(.chat-message-link:hover) {
 		opacity: 0.9;
