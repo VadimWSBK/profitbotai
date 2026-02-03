@@ -394,7 +394,74 @@
 	const winRadius = $derived(win.borderRadiusStyle === 'rounded' ? '12px' : '0');
 	const headerRadius = $derived(win.borderRadiusStyle === 'rounded' ? '12px 12px 0 0' : '0');
 
-	/** Convert markdown links [text](url) and raw URLs to clickable links. Escapes plain text for safety. */
+	/** Split message into table blocks and text blocks. Tables are consecutive lines that look like markdown table rows (| ... |). */
+	function splitTablesAndText(message: string): Array<{ type: 'table' | 'text'; content: string }> {
+		if (!message || typeof message !== 'string') return [];
+		const lines = message.split('\n');
+		const parts: Array<{ type: 'table' | 'text'; content: string }> = [];
+		let i = 0;
+		const isTableRow = (line: string) => /^\|.+\|[\s]*$/.test(line.trim());
+		const isSeparatorRow = (line: string) => /^\|[\s\-:]+\|[\s]*$/.test(line.trim());
+		while (i < lines.length) {
+			if (isTableRow(lines[i])) {
+				const tableLines: string[] = [];
+				while (i < lines.length && isTableRow(lines[i])) {
+					tableLines.push(lines[i]);
+					i++;
+				}
+				if (tableLines.length >= 2) {
+					parts.push({ type: 'table', content: tableLines.join('\n') });
+					continue;
+				}
+				parts.push({ type: 'text', content: tableLines.join('\n') });
+				continue;
+			}
+			const textLines: string[] = [];
+			while (i < lines.length && !isTableRow(lines[i])) {
+				textLines.push(lines[i]);
+				i++;
+			}
+			if (textLines.length) parts.push({ type: 'text', content: textLines.join('\n') });
+		}
+		return parts;
+	}
+
+	/** Convert a markdown table string to HTML. Escapes cell content. */
+	function markdownTableToHtml(tableContent: string): string {
+		const escape = (s: string) =>
+			String(s)
+				.replace(/&/g, '&amp;')
+				.replace(/</g, '&lt;')
+				.replace(/>/g, '&gt;')
+				.replace(/"/g, '&quot;');
+		const lines = tableContent.split('\n').filter((l) => l.trim());
+		if (lines.length < 2) return escape(tableContent);
+		const parseRow = (line: string) =>
+			line
+				.split('|')
+				.map((c) => c.trim())
+				.filter((_, i, arr) => i > 0 && i < arr.length - 1);
+		const headerCells = parseRow(lines[0]);
+		const isSep = (line: string) => {
+			const cells = parseRow(line);
+			return cells.length > 0 && cells.every((c) => /^[\s\-:]+$/.test(c));
+		};
+		const bodyStart = lines.length > 1 && isSep(lines[1]) ? 2 : 1;
+		let html = '<table class="chat-message-table"><thead><tr>';
+		for (const c of headerCells) html += `<th>${escape(c)}</th>`;
+		html += '</tr></thead><tbody>';
+		for (let r = bodyStart; r < lines.length; r++) {
+			const cells = parseRow(lines[r]);
+			if (cells.length === 0) continue;
+			html += '<tr>';
+			for (const c of cells) html += `<td>${escape(c)}</td>`;
+			html += '</tr>';
+		}
+		html += '</tbody></table>';
+		return html;
+	}
+
+	/** Convert markdown links [text](url), image syntax ![alt](url) and raw URLs to clickable links/media. Escapes plain text for safety. */
 	/** Supports [text](url) even when the LLM puts a newline between ] and (, so only the link text is shown. */
 	function formatMessageWithLinks(text: string): string {
 		if (!text || typeof text !== 'string') return '';
@@ -406,15 +473,28 @@
 				.replace(/"/g, '&quot;');
 		const parts: string[] = [];
 		let lastIndex = 0;
+		// Images: ![alt](url) with optional whitespace between ] and (; optional closing ) so truncated links still embed
+		const imageRe = /!\[([^\]]*)\]\s*\((https?:\/\/[^)\s]+)\)?/g;
 		// Markdown link: [text](url) with optional whitespace between ] and (; optional closing ) so truncated links still embed
 		const markdownLinkRe = /\[([^\]]*)\]\s*\((https?:\/\/[^)\s]+)\)?/g;
 		const rawUrlRe = /(https?:\/\/[^\s<>"']+)/g;
 		// Collect all matches (markdown first, then raw URLs) and sort by index to output in order
 		type LinkMatch =
 			| { index: number; end: number; type: 'markdown'; text: string; url: string }
+			| { index: number; end: number; type: 'image'; alt: string; url: string }
 			| { index: number; end: number; type: 'raw'; url: string };
 		const matches: LinkMatch[] = [];
 		let m: RegExpExecArray | null;
+		imageRe.lastIndex = 0;
+		while ((m = imageRe.exec(text)) !== null) {
+			matches.push({
+				index: m.index,
+				end: imageRe.lastIndex,
+				type: 'image',
+				alt: m[1] || '',
+				url: m[2]
+			});
+		}
 		markdownLinkRe.lastIndex = 0;
 		while ((m = markdownLinkRe.exec(text)) !== null) {
 			matches.push({
@@ -427,9 +507,12 @@
 		}
 		rawUrlRe.lastIndex = 0;
 		while ((m = rawUrlRe.exec(text)) !== null) {
-			// Skip if this URL is inside a markdown link we already captured
+			// Skip if this URL is inside an image or markdown link we already captured
 			const insideMarkdown = matches.some(
-				(match) => match.type === 'markdown' && m!.index >= match.index && m!.index < match.end
+				(match) =>
+					(match.type === 'markdown' || match.type === 'image') &&
+					m!.index >= match.index &&
+					m!.index < match.end
 			);
 			if (!insideMarkdown) {
 				matches.push({ index: m.index, end: rawUrlRe.lastIndex, type: 'raw', url: m[1] });
@@ -439,14 +522,33 @@
 		for (const match of matches) {
 			parts.push(escape(text.slice(lastIndex, match.index)));
 			const url = match.url;
-			const displayText = match.type === 'markdown' ? match.text : url;
-			parts.push(
-				`<a href="${escape(url)}" target="_blank" rel="noopener noreferrer" class="chat-message-link underline">${escape(displayText)}</a>`
-			);
+			if (match.type === 'image') {
+				const alt = match.alt;
+				parts.push(
+					`<img src="${escape(url)}" alt="${escape(alt)}" class="chat-message-image max-w-full h-auto rounded-md" />`
+				);
+			} else {
+				const displayText = match.type === 'markdown' ? match.text : url;
+				parts.push(
+					`<a href="${escape(url)}" target="_blank" rel="noopener noreferrer" class="chat-message-link underline">${escape(displayText)}</a>`
+				);
+			}
 			lastIndex = match.end;
 		}
 		parts.push(escape(text.slice(lastIndex)));
-		return parts.join('');
+		// Preserve line breaks so lists and paragraphs render nicely
+		const joined = parts.join('');
+		return joined.replace(/\n/g, '<br />');
+	}
+
+	/** Format full message: tables as HTML tables, rest as links/images/line breaks. */
+	function formatMessage(content: string): string {
+		const parts = splitTablesAndText(content);
+		return parts
+			.map((p) =>
+				p.type === 'table' ? markdownTableToHtml(p.content) : formatMessageWithLinks(p.content)
+			)
+			.join('');
 	}
 </script>
 
@@ -547,7 +649,7 @@
 								border-radius: {win.messageBorderRadius}px;
 							"
 						>
-							<span class="flex-1 min-w-0 break-words">{@html formatMessageWithLinks(msg.content)}</span>
+							<span class="flex-1 min-w-0 break-words whitespace-pre-wrap">{@html formatMessage(msg.content)}</span>
 							{#if botStyle.showCopyToClipboardIcon}
 								<button type="button" class="shrink-0 opacity-70 hover:opacity-100" onclick={() => navigator.clipboard.writeText(msg.content)} title="Copy">
 									<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
@@ -701,5 +803,22 @@
 	}
 	:global(.chat-message-link:hover) {
 		opacity: 0.9;
+	}
+	:global(.chat-message-table) {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.95em;
+		margin: 0.5em 0;
+	}
+	:global(.chat-message-table th),
+	:global(.chat-message-table td) {
+		border: 1px solid currentColor;
+		opacity: 0.9;
+		padding: 0.4em 0.6em;
+		text-align: left;
+	}
+	:global(.chat-message-table th) {
+		font-weight: 600;
+		opacity: 1;
 	}
 </style>
