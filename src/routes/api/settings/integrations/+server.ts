@@ -21,11 +21,17 @@ export const GET: RequestHandler = async (event) => {
 		const connected = rows
 			.map((r) => r.integration_type)
 			.filter((t) => INTEGRATION_IDS.includes(t as (typeof INTEGRATION_IDS)[number]));
-		const configs: Record<string, { fromEmail?: string }> = {};
+		const configs: Record<string, { fromEmail?: string; shopDomain?: string; apiVersion?: string }> = {};
 		for (const r of rows) {
-			const config = r.config as { fromEmail?: string } | null;
+			const config = r.config as { fromEmail?: string; shopDomain?: string; apiVersion?: string } | null;
 			if (r.integration_type === 'resend' && config) {
 				configs.resend = { fromEmail: typeof config.fromEmail === 'string' ? config.fromEmail : undefined };
+			}
+			if (r.integration_type === 'shopify' && config) {
+				configs.shopify = {
+					shopDomain: typeof config.shopDomain === 'string' ? config.shopDomain : undefined,
+					apiVersion: typeof config.apiVersion === 'string' ? config.apiVersion : undefined
+				};
 			}
 		}
 		return json({ connected, configs });
@@ -75,6 +81,37 @@ export const PUT: RequestHandler = async (event) => {
 					...existingConfig,
 					...(fromEmail === undefined ? {} : { fromEmail: fromEmail || undefined })
 				};
+			}
+		}
+
+		if (type === 'shopify') {
+			const accessToken = (config.accessToken as string)?.trim?.();
+			const rawDomain = typeof config.shopDomain === 'string' ? config.shopDomain.trim() : '';
+			const shopDomain = rawDomain.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+			const apiVersion = typeof config.apiVersion === 'string' ? config.apiVersion.trim() : undefined;
+			const domainLooksValid = shopDomain.includes('.');
+			if (accessToken) {
+				if (!shopDomain || !domainLooksValid) {
+					return json({ error: 'Invalid shop domain' }, { status: 400 });
+				}
+				config = { accessToken, shopDomain, apiVersion: apiVersion || undefined };
+			} else {
+				const { data: existing } = await supabase
+					.from('user_integrations')
+					.select('config')
+					.eq('user_id', event.locals.user.id)
+					.eq('integration_type', 'shopify')
+					.single();
+				const existingConfig =
+					(existing?.config as { accessToken?: string; shopDomain?: string; apiVersion?: string }) ?? {};
+				config = {
+					...existingConfig,
+					...(shopDomain ? { shopDomain } : {}),
+					...(apiVersion ? { apiVersion } : {})
+				};
+				if (!config.accessToken || !config.shopDomain) {
+					return json({ error: 'Shopify access token and shop domain are required' }, { status: 400 });
+				}
 			}
 		}
 

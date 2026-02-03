@@ -14,7 +14,11 @@ export const AGENT_TOOL_IDS = [
 	'send_message',
 	'get_leadflow_stages',
 	'get_contact_lead_stage',
-	'move_contact_to_stage'
+	'move_contact_to_stage',
+	'shopify_check_orders',
+	'shopify_create_draft_order',
+	'shopify_cancel_order',
+	'shopify_refund_order'
 ] as const;
 
 export type AgentToolId = (typeof AGENT_TOOL_IDS)[number];
@@ -30,7 +34,11 @@ export const AGENT_TOOL_LABELS: Record<AgentToolId, string> = {
 	send_message: 'Send chat message',
 	get_leadflow_stages: 'Get leadflow stages',
 	get_contact_lead_stage: 'Get contact lead stage',
-	move_contact_to_stage: 'Move contact to leadflow stage'
+	move_contact_to_stage: 'Move contact to leadflow stage',
+	shopify_check_orders: 'Shopify: Check orders/status',
+	shopify_create_draft_order: 'Shopify: Create draft order',
+	shopify_cancel_order: 'Shopify: Cancel order',
+	shopify_refund_order: 'Shopify: Refund order'
 };
 
 /** Default tools when creating a new agent (search, get contact, quote, email). */

@@ -18,6 +18,17 @@ export const INTEGRATIONS = [
 				placeholder: 'quotes@rs.yourdomain.com'
 			}
 		]
+	},
+	{
+		id: 'shopify',
+		name: 'Shopify',
+		description: 'Manage orders and create draft orders via Shopify Admin API.',
+		icon: 'bolt',
+		configFields: [
+			{ id: 'shopDomain', label: 'Shop domain', type: 'text' as const, placeholder: 'your-store.myshopify.com' },
+			{ id: 'accessToken', label: 'Admin API access token', type: 'password' as const, placeholder: 'shpat_...' },
+			{ id: 'apiVersion', label: 'API version (optional)', type: 'text' as const, placeholder: '2024-04' }
+		]
 	}
 ] as const;
 

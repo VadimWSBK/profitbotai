@@ -450,7 +450,7 @@ export const POST: RequestHandler = async (event) => {
 		];
 		if (agentAutonomy) {
 			parts.push(
-				'You have access to tools. Use them when appropriate: search_contacts to look up contacts by name or email; get_current_contact to see what we have on file for this chat; generate_quote to create a quote PDF (need name, email, roof size in sqm); send_email to send an email (e.g. with the quote link). Use the tools, then reply naturally to the customer. Do not mention "calling a tool" or technical names—just do the action and respond in plain language.'
+				'You have access to tools. Use them when appropriate: search_contacts to look up contacts by name or email; get_current_contact to see what we have on file for this chat; generate_quote to create a quote PDF (need name, email, roof size in sqm); send_email to send an email (e.g. with the quote link); shopify_check_orders to look up order status; shopify_create_draft_order to create a draft order and checkout link; shopify_cancel_order to cancel an order; shopify_refund_order to refund an order. Use the tools, then reply naturally to the customer. Do not mention "calling a tool" or technical names—just do the action and respond in plain language.'
 			);
 		}
 		const agentAllowedTools = effectiveConfig.agentAllowedTools ?? null;

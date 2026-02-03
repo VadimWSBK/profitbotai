@@ -2,7 +2,7 @@
 	import { INTEGRATIONS } from '$lib/integrations';
 
 	let connected = $state<string[]>([]);
-	let configs = $state<Record<string, { fromEmail?: string }>>({});
+	let configs = $state<Record<string, { fromEmail?: string; shopDomain?: string; apiVersion?: string }>>({});
 	let loaded = $state(false);
 	let saving = $state(false);
 	let disconnecting = $state<string | null>(null);
@@ -35,28 +35,75 @@
 		}
 	}
 
+	function getFieldValue(id: string, fieldId: string) {
+		return formValues[`${id}_${fieldId}`]?.trim() ?? '';
+	}
+
 	async function connect(id: string) {
 		saving = true;
 		error = null;
 		try {
-			const apiKey = formValues[`${id}_apiKey`]?.trim();
-			if (!apiKey) {
-				error = 'Please enter your API key';
-				return;
+			if (id === 'resend') {
+				const apiKey = getFieldValue(id, 'apiKey');
+				const fromEmail = getFieldValue(id, 'fromEmail');
+				if (!apiKey) {
+					error = 'Please enter your Resend API key';
+					return;
+				}
+				const res = await fetch('/api/settings/integrations', {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						type: id,
+						config: { apiKey, fromEmail: fromEmail || undefined }
+					})
+				});
+				const result = await res.json().catch(() => ({}));
+				if (!res.ok) throw new Error(result.error || 'Failed to connect');
+			} else if (id === 'shopify') {
+				const accessToken = getFieldValue(id, 'accessToken');
+				const shopDomain = getFieldValue(id, 'shopDomain');
+				const apiVersion = getFieldValue(id, 'apiVersion');
+				if (!accessToken || !shopDomain) {
+					error = 'Please enter your shop domain and access token';
+					return;
+				}
+				const res = await fetch('/api/settings/integrations', {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						type: id,
+						config: { accessToken, shopDomain, apiVersion: apiVersion || undefined }
+					})
+				});
+				const result = await res.json().catch(() => ({}));
+				if (!res.ok) throw new Error(result.error || 'Failed to connect');
+			} else {
+				const apiKey = getFieldValue(id, 'apiKey');
+				if (!apiKey) {
+					error = 'Please enter your API key';
+					return;
+				}
+				const res = await fetch('/api/settings/integrations', {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						type: id,
+						config: { apiKey }
+					})
+				});
+				const result = await res.json().catch(() => ({}));
+				if (!res.ok) throw new Error(result.error || 'Failed to connect');
 			}
-			const fromEmail = id === 'resend' ? formValues[`${id}_fromEmail`]?.trim() : undefined;
-			const res = await fetch('/api/settings/integrations', {
-				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					type: id,
-					config: id === 'resend' ? { apiKey, fromEmail: fromEmail || undefined } : { apiKey }
-				})
-			});
-			const result = await res.json().catch(() => ({}));
-			if (!res.ok) throw new Error(result.error || 'Failed to connect');
 			await load();
-			formValues = { ...formValues, [`${id}_apiKey`]: '', [`${id}_fromEmail`]: '' };
+			formValues = {
+				...formValues,
+				[`${id}_apiKey`]: '',
+				[`${id}_fromEmail`]: '',
+				[`${id}_accessToken`]: '',
+				[`${id}_shopDomain`]: '',
+				[`${id}_apiVersion`]: ''
+			};
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to connect';
 		} finally {
@@ -280,6 +327,14 @@
 												{/if}
 											</div>
 										</div>
+									{:else if integration.id === 'shopify'}
+										<div class="pt-3 border-t border-gray-100 space-y-2">
+											<p class="text-sm font-medium text-gray-700">Connected store</p>
+											<p class="text-xs text-gray-500">
+												{configs.shopify?.shopDomain || 'Shop domain not available'}
+												{configs.shopify?.apiVersion ? ` · API ${configs.shopify.apiVersion}` : ''}
+											</p>
+										</div>
 									{/if}
 								</div>
 							{:else}
@@ -300,6 +355,10 @@
 									{#if integration.id === 'resend'}
 										<p class="text-xs text-gray-400">
 											Get your Resend API key from <a href="https://resend.com/api-keys" target="_blank" rel="noopener noreferrer" class="text-amber-600 hover:underline">resend.com/api-keys</a>
+										</p>
+									{:else if integration.id === 'shopify'}
+										<p class="text-xs text-gray-400">
+											Create a Shopify custom app and generate an Admin API access token in your store admin.
 										</p>
 									{/if}
 									<button

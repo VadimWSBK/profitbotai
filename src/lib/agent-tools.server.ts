@@ -10,6 +10,15 @@ import { z } from 'zod';
 import { generateQuoteForConversation } from '$lib/quote-pdf.server';
 import { sendQuoteEmail, sendContactEmail } from '$lib/send-quote-email.server';
 import { AGENT_TOOL_IDS, type AgentToolId } from '$lib/agent-tools';
+import {
+	cancelOrder,
+	createDraftOrder,
+	getShopifyConfigForUser,
+	listRecentOrders,
+	refundOrderFull,
+	searchOrders,
+	shopifyRequest
+} from '$lib/shopify.server';
 
 export type AgentToolContext = {
 	conversationId: string;
@@ -90,7 +99,7 @@ function buildTools(admin: SupabaseClient): Record<string, ReturnType<typeof too
 			email: z.string().optional().describe('Email address'),
 			phone: z.string().optional().describe('Phone number'),
 			address: z.string().optional().describe('Address'),
-			roof_size_sqm: z.number().optional().min(0).describe('Roof or project area in square metres'),
+			roof_size_sqm: z.number().min(0).optional().describe('Roof or project area in square metres'),
 		}),
 		execute: async (
 			{ name, email, phone, address, roof_size_sqm },
@@ -126,7 +135,7 @@ function buildTools(admin: SupabaseClient): Record<string, ReturnType<typeof too
 			email: z.string().optional().describe('Email address'),
 			phone: z.string().optional().describe('Phone number'),
 			address: z.string().optional().describe('Address'),
-			roof_size_sqm: z.number().optional().min(0).describe('Roof or project area in square metres'),
+			roof_size_sqm: z.number().min(0).optional().describe('Roof or project area in square metres'),
 		}),
 		execute: async (
 			{ name, email, phone, address, roof_size_sqm },
@@ -386,6 +395,158 @@ function buildTools(admin: SupabaseClient): Record<string, ReturnType<typeof too
 			if (upsertErr) return { error: upsertErr.message };
 			return { success: true, message: 'Contact moved to stage.' };
 		},
+	});
+
+	tools.shopify_check_orders = tool({
+		description:
+			'Check Shopify orders and status. Use to look up an order by order number, ID, or customer email, or list recent orders when no query is provided.',
+		inputSchema: z.object({
+			query: z
+				.string()
+				.optional()
+				.describe('Order number (e.g. #1001), customer email, or search term. Leave empty to list recent orders.'),
+			order_id: z
+				.preprocess((v) => (typeof v === 'string' ? Number(v) : v), z.number().int().positive().optional())
+				.describe('Shopify order ID (numeric) if known.'),
+			limit: z.number().int().min(1).max(20).optional().describe('Max orders to return (default 5).')
+		}),
+		execute: async (
+			{ query, order_id, limit },
+			{ experimental_context }: { experimental_context?: unknown }
+		) => {
+			const c = getContext(experimental_context);
+			if (!c) return { error: 'Missing context' };
+			const config = await getShopifyConfigForUser(admin, c.ownerId);
+			if (!config) return { error: 'Shopify is not connected for this account.' };
+
+			const max = typeof limit === 'number' ? limit : 5;
+			if (order_id) {
+				const res = await shopifyRequest<{ order?: Record<string, unknown> }>(config, `orders/${order_id}.json`, {
+					query: {
+						fields:
+							'id,name,email,created_at,financial_status,fulfillment_status,cancelled_at,cancel_reason,total_price,currency,order_status_url'
+					}
+				});
+				if (!res.ok) return { error: res.error ?? 'Failed to fetch order' };
+				const order = res.data?.order ?? null;
+				return { orders: order ? [order] : [], count: order ? 1 : 0 };
+			}
+
+			const q = (query ?? '').trim();
+			if (!q) {
+				const recent = await listRecentOrders(config, max);
+				if (recent.error) return { error: recent.error };
+				return { orders: recent.orders ?? [], count: recent.orders?.length ?? 0 };
+			}
+
+			let searchQuery = q;
+			if (q.includes('@')) {
+				searchQuery = `email:${q}`;
+			} else if (/^#?\d+/.test(q)) {
+				const orderName = q.startsWith('#') ? q : `#${q}`;
+				searchQuery = `name:${orderName}`;
+			}
+			const result = await searchOrders(config, searchQuery, max);
+			if (result.error) return { error: result.error };
+			return { orders: result.orders ?? [], count: result.orders?.length ?? 0 };
+		}
+	});
+
+	tools.shopify_create_draft_order = tool({
+		description:
+			'Create a Shopify draft order and return a checkout link. Use when the customer wants a draft order or checkout link.',
+		inputSchema: z.object({
+			email: z.string().optional().describe('Customer email (optional).'),
+			line_items: z
+				.array(
+					z.object({
+						title: z.string().optional().describe('Line item title if no variant_id.'),
+						variant_id: z.number().int().optional().describe('Variant ID if using existing product variant.'),
+						quantity: z.number().int().min(1).describe('Quantity'),
+						price: z.string().optional().describe('Price per item (e.g. "29.99") if no variant_id.')
+					})
+				)
+				.min(1)
+				.describe('Line items for the draft order.'),
+			note: z.string().optional().describe('Optional internal note'),
+			tags: z.string().optional().describe('Optional tags (comma-separated)'),
+			currency: z.string().optional().describe('Optional currency code, e.g. USD')
+		}),
+		execute: async (
+			{ email, line_items, note, tags, currency },
+			{ experimental_context }: { experimental_context?: unknown }
+		) => {
+			const c = getContext(experimental_context);
+			if (!c) return { error: 'Missing context' };
+			const config = await getShopifyConfigForUser(admin, c.ownerId);
+			if (!config) return { error: 'Shopify is not connected for this account.' };
+			const result = await createDraftOrder(config, {
+				email: email?.trim() || undefined,
+				line_items,
+				note: note?.trim() || undefined,
+				tags: tags?.trim() || undefined,
+				currency: currency?.trim() || undefined
+			});
+			if (!result.ok) return { error: result.error ?? 'Failed to create draft order' };
+			return {
+				success: true,
+				draftOrderId: result.draftOrderId,
+				checkoutUrl: result.checkoutUrl,
+				message: result.checkoutUrl
+					? 'Draft order created. Share the checkout link with the customer.'
+					: 'Draft order created.'
+			};
+		}
+	});
+
+	tools.shopify_cancel_order = tool({
+		description: 'Cancel a Shopify order by ID. Use when the customer requests cancellation.',
+		inputSchema: z.object({
+			order_id: z.preprocess((v) => (typeof v === 'string' ? Number(v) : v), z.number().int().positive()),
+			reason: z.string().optional().describe('Reason (e.g. customer, inventory, fraud, other).'),
+			notify: z.boolean().optional().describe('Whether to notify the customer (default false).'),
+			restock: z.boolean().optional().describe('Whether to restock items (default false).')
+		}),
+		execute: async (
+			{ order_id, reason, notify, restock },
+			{ experimental_context }: { experimental_context?: unknown }
+		) => {
+			const c = getContext(experimental_context);
+			if (!c) return { error: 'Missing context' };
+			const config = await getShopifyConfigForUser(admin, c.ownerId);
+			if (!config) return { error: 'Shopify is not connected for this account.' };
+			const result = await cancelOrder(config, Number(order_id), {
+				reason: reason?.trim() || undefined,
+				notify: notify ?? false,
+				restock: restock ?? false
+			});
+			if (!result.ok) return { error: result.error ?? 'Failed to cancel order' };
+			return { success: true, message: 'Order cancelled.' };
+		}
+	});
+
+	tools.shopify_refund_order = tool({
+		description: 'Refund a Shopify order in full by ID. Use when the customer requests a refund.',
+		inputSchema: z.object({
+			order_id: z.preprocess((v) => (typeof v === 'string' ? Number(v) : v), z.number().int().positive()),
+			notify: z.boolean().optional().describe('Whether to notify the customer (default false).'),
+			note: z.string().optional().describe('Optional refund note')
+		}),
+		execute: async (
+			{ order_id, notify, note },
+			{ experimental_context }: { experimental_context?: unknown }
+		) => {
+			const c = getContext(experimental_context);
+			if (!c) return { error: 'Missing context' };
+			const config = await getShopifyConfigForUser(admin, c.ownerId);
+			if (!config) return { error: 'Shopify is not connected for this account.' };
+			const result = await refundOrderFull(config, Number(order_id), {
+				notify: notify ?? false,
+				note: note?.trim() || undefined
+			});
+			if (!result.ok) return { error: result.error ?? 'Failed to refund order' };
+			return { success: true, message: 'Order refunded.' };
+		}
 	});
 
 	return tools;
