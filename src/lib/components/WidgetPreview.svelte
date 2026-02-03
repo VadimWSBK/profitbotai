@@ -76,7 +76,8 @@
 			border-radius: {bubbleRadius};
 		"
 		onclick={() => (open = !open)}
-		aria-label="Open chat"
+		aria-label={open ? 'Close chat' : 'Open chat'}
+		aria-expanded={open}
 	>
 		{#if showCustomIcon}
 			<img

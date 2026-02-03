@@ -42,12 +42,20 @@
 	let agentTyping = $state(false);
 	let agentAvatarUrl = $state<string | null>(null);
 	let contentEl: HTMLDivElement;
+	let inputEl: HTMLInputElement;
+	let showScrollToBottom = $state(false);
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 	const win = $derived(config.window);
 	const bubble = $derived(config.bubble);
 	const botStyle = $derived(win.botMessageSettings);
 	const useDirect = $derived(config.chatBackend === 'direct' && !!config.llmProvider && !!widgetId);
+
+	// Update scroll-to-bottom FAB visibility when messages or content change
+	$effect(() => {
+		void messages.length;
+		requestAnimationFrame(updateScrollToBottomVisibility);
+	});
 
 	function addBotMessage(content: string) {
 		messages = [...messages, { role: 'bot', content }];
@@ -66,7 +74,18 @@
 	/** Scroll to bottom. Pass true to force (e.g. after user sends); otherwise only scroll if user was already near bottom. */
 	function scrollToBottom(force = false) {
 		if (!contentEl) return;
-		if (force || isNearBottom()) contentEl.scrollTop = contentEl.scrollHeight;
+		if (force || isNearBottom()) {
+			contentEl.scrollTop = contentEl.scrollHeight;
+			showScrollToBottom = false;
+		}
+	}
+
+	function updateScrollToBottomVisibility() {
+		if (!contentEl) return;
+		const { scrollTop, clientHeight, scrollHeight } = contentEl;
+		const nearBottom = scrollTop + clientHeight >= scrollHeight - SCROLL_NEAR_BOTTOM_PX;
+		const canScroll = scrollHeight > clientHeight;
+		showScrollToBottom = canScroll && !nearBottom;
 	}
 
 	async function fetchStoredMessages() {
@@ -141,8 +160,20 @@
 		fetchStoredMessages();
 		startPolling();
 		if (!willFetch) messagesLoading = false;
+		// Focus input when chat opens (industry standard: ready to type)
+		requestAnimationFrame(() => inputEl?.focus());
+		const onKeyDown = (e: KeyboardEvent) => {
+			if (e.key === 'Escape') {
+				onClose();
+				e.preventDefault();
+			}
+		};
+		window.addEventListener('keydown', onKeyDown);
+		onDestroy(() => {
+			window.removeEventListener('keydown', onKeyDown);
+			stopPolling();
+		});
 	});
-	onDestroy(() => stopPolling());
 
 	async function sendMessage(text: string) {
 		const trimmed = text.trim();
@@ -606,9 +637,10 @@
 
 	<div
 		bind:this={contentEl}
-		class="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-3 {win.showScrollbar ? '' : 'scrollbar-hide'} chat-messages-scroll"
+		class="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-3 {win.showScrollbar ? '' : 'scrollbar-hide'} chat-messages-scroll relative"
 		role="log"
 		aria-live="polite"
+		onscroll={updateScrollToBottomVisibility}
 	>
 		{#if messagesLoading}
 			<div class="flex-1 flex items-center justify-center min-h-[120px]" aria-busy="true" aria-label="Loading conversation">
@@ -710,6 +742,17 @@
 				</div>
 			{/if}
 		{/if}
+		{#if showScrollToBottom}
+			<button
+				type="button"
+				class="chat-scroll-to-bottom"
+				onclick={() => scrollToBottom(true)}
+				title="Scroll to bottom"
+				aria-label="Scroll to latest messages"
+			>
+				<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>
+			</button>
+		{/if}
 	</div>
 
 	{#if showStarterPrompts && win.starterPrompts.filter((p: string) => p.trim()).length > 0}
@@ -741,7 +784,9 @@
 		onsubmit={handleSubmit}
 	>
 		<input
+			bind:this={inputEl}
 			type="text"
+			autocomplete="off"
 			class="chat-window-input flex-1 px-3 py-2 border rounded-lg outline-none focus:ring-2"
 			style="
 				background-color: {win.inputBackgroundColor};
@@ -752,6 +797,7 @@
 			placeholder={win.inputPlaceholder}
 			bind:value={inputText}
 			disabled={loading}
+			aria-label="Message input"
 		/>
 		<button
 			type="submit"
@@ -810,6 +856,27 @@
 	}
 	.chat-window-input::placeholder {
 		color: var(--ph, #9ca3af);
+	}
+	.chat-scroll-to-bottom {
+		position: absolute;
+		bottom: 0.75rem;
+		right: 0.75rem;
+		width: 36px;
+		height: 36px;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: rgba(0, 0, 0, 0.15);
+		color: inherit;
+		border: none;
+		cursor: pointer;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+		transition: opacity 0.2s, background 0.2s;
+	}
+	.chat-scroll-to-bottom:hover {
+		background: rgba(0, 0, 0, 0.25);
+		opacity: 1;
 	}
 	:global(.chat-message-link) {
 		color: inherit;
