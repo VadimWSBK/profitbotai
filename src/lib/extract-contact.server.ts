@@ -31,7 +31,21 @@ function extractFromRegex(message: string): Partial<ExtractedContact> {
 		const n = Number.parseFloat(roofMatch[1]);
 		if (n >= 0) out.roofSize = n;
 	}
+	// Words that are never names (e.g. "how" in "Hey how much...")
+	const NOT_NAMES = new Set(
+		'how what when where why who which can could would should may might will shall must is are was were do does did has have had am been get got go going come coming want need like love think know see say tell ask give take make find help work try'.split(
+			' '
+		)
+	);
+	function isValidName(s: string): boolean {
+		const lower = s.trim().toLowerCase();
+		if (lower.length < 2) return false;
+		if (NOT_NAMES.has(lower)) return false;
+		return /^[a-zA-Z]+(?:\s+[a-zA-Z]+)?$/.test(s.trim());
+	}
+
 	// Name: "my name is X", "I'm X", "name is X", "call me X" (single word or "First Last")
+	// Greeting "Hey X" only when X looks like a name (not "how", "what", etc.)
 	const namePatterns = [
 		/(?:my\s+name\s+is|i['']m|name\s+is|call\s+me|i\s+am)\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)?)/i,
 		/^(?:hi|hey|hello)[,\s]+([a-zA-Z]+)\b/i,
@@ -39,7 +53,7 @@ function extractFromRegex(message: string): Partial<ExtractedContact> {
 	];
 	for (const re of namePatterns) {
 		const m = message.match(re);
-		if (m?.[1]?.trim() && (m[1].length > 1 || /[a-zA-Z]/.test(m[1]))) {
+		if (m?.[1]?.trim() && isValidName(m[1])) {
 			out.name = m[1].trim();
 			break;
 		}
@@ -68,7 +82,7 @@ export async function extractContactFromMessage(
 					.join('\n')
 			: '';
 
-	const systemPrompt = `You extract contact and project info from user messages. Reply with a JSON object containing ONLY the fields the user clearly provided. Use exact keys: name, email, phone, address, roofSize. roofSize is a number (square metres) when the user gives roof/area size (e.g. "400 sqm", "400m2", "square metre is 400"). Omit any key not provided. Example: {"email":"jane@example.com","roofSize":400}. If nothing relevant, reply: {}. No other text.`;
+	const systemPrompt = `You extract contact and project info from user messages. Reply with a JSON object containing ONLY the fields the user clearly provided. Use exact keys: name, email, phone, address, roofSize. roofSize is a number (square metres) when the user gives roof/area size (e.g. "400 sqm", "400m2", "square metre is 400"). For name: only extract when the user explicitly introduces themselves (e.g. "my name is John", "I'm Jane", "call me Sarah"). Never extract words like "how", "what", "it" or question words as names—e.g. "Hey how much..." has no name. Omit any key not provided. Example: {"email":"jane@example.com","roofSize":400}. If nothing relevant, reply: {}. No other text.`;
 
 	const userPrompt =
 		contextStr.length > 0
@@ -106,10 +120,23 @@ export async function extractContactFromMessage(
 
 	const regexFallback = extractFromRegex(userMessage);
 
+	// Reject common non-names (e.g. "how" from "Hey how much...")
+	const NOT_NAMES = new Set(
+		'how what when where why who which can could would should may might will shall must is are was were do does did has have had am been get got go going come coming want need like love think know see say tell ask give take make find help work try it'.split(
+			' '
+		)
+	);
+	function isValidName(s: string): boolean {
+		const lower = s.trim().toLowerCase();
+		if (lower.length < 2) return false;
+		if (NOT_NAMES.has(lower)) return false;
+		return /^[a-zA-Z]+(?:\s+[a-zA-Z]+)?$/.test(s.trim());
+	}
+
 	try {
 		const out: ExtractedContact = {};
-		if (typeof parsed.name === 'string' && parsed.name.trim())
-			out.name = parsed.name.trim();
+		const parsedName = typeof parsed.name === 'string' ? parsed.name.trim() : '';
+		if (parsedName && isValidName(parsedName)) out.name = parsedName;
 		else if (regexFallback.name) out.name = regexFallback.name;
 
 		if (typeof parsed.email === 'string' && parsed.email.trim())
