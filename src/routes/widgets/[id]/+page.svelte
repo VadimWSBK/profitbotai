@@ -2,14 +2,8 @@
 	import WidgetPreview from '$lib/components/WidgetPreview.svelte';
 	import IconUrlField from '$lib/components/IconUrlField.svelte';
 	import { defaultWidgetConfig, type WidgetConfig, type WebhookTrigger } from '$lib/widget-config';
-	import { getModels } from '$lib/llm-providers';
 
-	function slugFromName(name: string): string {
-		const base = name.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '') || 'trigger';
-		return base;
-	}
-
-	type MainTab = 'customize' | 'connect' | 'train' | 'embed';
+	type MainTab = 'customize' | 'agent' | 'embed';
 	type CustomizeTab = 'bubble' | 'tooltip' | 'window' | 'footer' | 'advanced';
 
 	const customizeTabs: CustomizeTab[] = ['bubble', 'tooltip', 'window', 'footer', 'advanced'];
@@ -62,11 +56,6 @@
 	let saving = $state(false);
 	let embedCopied = $state(false);
 	let botMessageSettingsOpen = $state(true);
-	let trainStatus = $state<{ configured: boolean; documentCount: number } | null>(null);
-	let trainUploading = $state(false);
-	let trainScraping = $state(false);
-	let trainUploadFile = $state<File | null>(null);
-	let trainScrapeUrl = $state('');
 
 	async function save() {
 		saving = true;
@@ -116,88 +105,11 @@
 		config.window.starterPrompts = [...config.window.starterPrompts, ''];
 	}
 
-	function addTrigger() {
-		if (!config.webhookTriggers) config.webhookTriggers = [];
-		const name = 'New trigger';
-		const id = slugFromName(name);
-		const existingIds = new Set(config.webhookTriggers.map((t) => t.id));
-		let uniqueId = id;
-		let n = 1;
-		while (existingIds.has(uniqueId)) {
-			uniqueId = `${id}_${n}`;
-			n += 1;
-		}
-		config.webhookTriggers = [
-			...config.webhookTriggers,
-			{ id: uniqueId, name, description: '', webhookUrl: '', enabled: true }
-		];
-	}
-
-	function removeTrigger(index: number) {
-		if (!config.webhookTriggers) return;
-		config.webhookTriggers = config.webhookTriggers.filter((_, i) => i !== index);
-	}
-
 	function getEmbedSnippet(): string {
 		const origin = typeof window !== 'undefined' ? window.location.origin : 'https://your-domain.com';
 		return `<script src="${origin}/embed/chat-widget.js" data-widget-id="${widgetId}"><\/script>`;
 	}
 
-	async function fetchTrainStatus() {
-		if (!widgetId) return;
-		try {
-			const res = await fetch(`/api/widgets/${widgetId}/train`);
-			const data = await res.json().catch(() => ({}));
-			trainStatus = { configured: data.configured ?? false, documentCount: data.documentCount ?? 0 };
-		} catch {
-			trainStatus = { configured: false, documentCount: 0 };
-		}
-	}
-
-	async function trainUpload() {
-		if (!trainUploadFile || !widgetId) return;
-		trainUploading = true;
-		try {
-			const form = new FormData();
-			form.append('file', trainUploadFile);
-			const res = await fetch(`/api/widgets/${widgetId}/train/upload`, { method: 'POST', body: form });
-			const data = await res.json().catch(() => ({}));
-			if (!res.ok) throw new Error(data.error || 'Upload failed');
-			alert(`Added ${data.chunks ?? 0} chunks to the knowledge base.`);
-			trainUploadFile = null;
-			fetchTrainStatus();
-		} catch (e) {
-			alert(e instanceof Error ? e.message : 'Upload failed');
-		} finally {
-			trainUploading = false;
-		}
-	}
-
-	async function trainScrape() {
-		const url = trainScrapeUrl.trim();
-		if (!url || !widgetId) return;
-		trainScraping = true;
-		try {
-			const res = await fetch(`/api/widgets/${widgetId}/train/scrape`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ url })
-			});
-			const data = await res.json().catch(() => ({}));
-			if (!res.ok) throw new Error(data.error || 'Scrape failed');
-			alert(`Added ${data.chunks ?? 0} chunks to the knowledge base.`);
-			trainScrapeUrl = '';
-			fetchTrainStatus();
-		} catch (e) {
-			alert(e instanceof Error ? e.message : 'Scrape failed');
-		} finally {
-			trainScraping = false;
-		}
-	}
-
-	$effect(() => {
-		if (mainTab === 'train' && widgetId) fetchTrainStatus();
-	});
 </script>
 
 <svelte:head>
@@ -248,17 +160,10 @@
 		</button>
 		<button
 			type="button"
-			class="pb-3 text-sm font-medium border-b-2 transition-colors {mainTab === 'connect' ? 'border-amber-600 text-amber-600' : 'border-transparent text-gray-500 hover:text-gray-700'}"
-			onclick={() => (mainTab = 'connect')}
+			class="pb-3 text-sm font-medium border-b-2 transition-colors {mainTab === 'agent' ? 'border-amber-600 text-amber-600' : 'border-transparent text-gray-500 hover:text-gray-700'}"
+			onclick={() => (mainTab = 'agent')}
 		>
-			Connect
-		</button>
-		<button
-			type="button"
-			class="pb-3 text-sm font-medium border-b-2 transition-colors {mainTab === 'train' ? 'border-amber-600 text-amber-600' : 'border-transparent text-gray-500 hover:text-gray-700'}"
-			onclick={() => (mainTab = 'train')}
-		>
-			Train Bot
+			Agent
 		</button>
 		<button
 			type="button"
@@ -510,231 +415,28 @@
 				<p class="text-gray-500 text-sm mb-6">Extra options coming soon.</p>
 			{/if}
 		</div>
-	{:else if mainTab === 'connect'}
+	{:else if mainTab === 'agent'}
 		<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-			<h3 class="text-lg font-semibold text-gray-900 mb-1">Connect</h3>
-			<p class="text-gray-500 text-sm mb-6">Use an n8n webhook or a Direct LLM (API keys set in Settings).</p>
-
+			<h3 class="text-lg font-semibold text-gray-900 mb-1">Agent</h3>
+			<p class="text-gray-500 text-sm mb-6">
+				Choose which agent powers this widget. All training (Connect and Train Bot) is configured in <a href="/agents" class="text-amber-600 hover:underline">Agents</a>.
+			</p>
 			<label class="block mb-4">
-				<span class="text-sm font-medium text-gray-700 mb-2 block">Backend</span>
-				<select bind:value={config.chatBackend} class="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm">
-					<option value="n8n">n8n Webhook</option>
-					<option value="direct">Direct LLM</option>
+				<span class="text-sm font-medium text-gray-700 mb-1">Agent</span>
+				<select bind:value={config.agentId} class="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm">
+					<option value="">— None —</option>
+					{#each (data?.agents ?? []) as agent}
+						<option value={agent.id}>{agent.name}</option>
+					{/each}
 				</select>
 			</label>
-
-			{#if config.chatBackend === 'n8n'}
-				<label class="block">
-					<span class="text-sm font-medium text-gray-700 mb-1">n8n Webhook URL</span>
-					<input type="url" bind:value={config.n8nWebhookUrl} class="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm" placeholder="https://your-n8n.com/webhook/..." />
-				</label>
-			{:else}
-				{#if llmKeysAvailable.length === 0}
-					<p class="text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm">Add at least one LLM API key in <a href="/settings" class="underline font-medium">Settings</a> to use Direct LLM.</p>
-				{:else}
-					<div class="space-y-4">
-						<label class="block">
-							<span class="text-sm font-medium text-gray-700 mb-1">Primary LLM</span>
-							<select bind:value={config.llmProvider} class="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm">
-								<option value="">— Select —</option>
-								{#each llmKeysAvailable as pid}
-									<option value={pid}>{pid === 'openai' ? 'OpenAI' : pid === 'anthropic' ? 'Anthropic' : pid === 'google' ? 'Google (Gemini)' : pid}</option>
-								{/each}
-							</select>
-						</label>
-						{#if config.llmProvider}
-							<label class="block">
-								<span class="text-sm font-medium text-gray-700 mb-1">Primary model</span>
-								<select bind:value={config.llmModel} class="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono">
-									{#each getModels(config.llmProvider) as model}
-										<option value={model}>{model}</option>
-									{/each}
-								</select>
-							</label>
-						{/if}
-						<label class="block">
-							<span class="text-sm font-medium text-gray-700 mb-1">Fallback LLM (optional)</span>
-							<select bind:value={config.llmFallbackProvider} class="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm">
-								<option value="">— None —</option>
-								{#each llmKeysAvailable.filter((p) => p !== config.llmProvider) as pid}
-									<option value={pid}>{pid === 'openai' ? 'OpenAI' : pid === 'anthropic' ? 'Anthropic' : pid === 'google' ? 'Google (Gemini)' : pid}</option>
-								{/each}
-							</select>
-						</label>
-						{#if config.llmFallbackProvider}
-							<label class="block">
-								<span class="text-sm font-medium text-gray-700 mb-1">Fallback model</span>
-								<select bind:value={config.llmFallbackModel} class="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono">
-									{#each getModels(config.llmFallbackProvider) as model}
-										<option value={model}>{model}</option>
-									{/each}
-								</select>
-							</label>
-						{/if}
-						<label class="block">
-							<span class="text-sm font-medium text-gray-700 mb-1">Live agent timeout (minutes)</span>
-							<p class="text-xs text-gray-500 mb-1">If a live agent hasn&apos;t replied in this many minutes, the AI takes over again and apologizes for the delay.</p>
-							<input type="number" min="1" max="120" bind:value={config.agentTakeoverTimeoutMinutes} class="w-full max-w-[120px] px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-						</label>
-
-						<div class="mt-6 pt-6 border-t border-gray-200">
-							<h4 class="text-sm font-semibold text-gray-900 mb-1">Agent (optional)</h4>
-							<p class="text-xs text-gray-500 mb-3">Use an agent from <a href="/agents" class="text-amber-600 hover:underline">Agents</a> for this widget. The agent&apos;s system prompt and training apply here.</p>
-							<label class="block mb-3">
-								<span class="text-sm font-medium text-gray-700 mb-1">Agent</span>
-								<select bind:value={config.agentId} class="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm">
-									<option value="">— None —</option>
-									{#each (data?.agents ?? []) as agent}
-										<option value={agent.id}>{agent.name}</option>
-									{/each}
-								</select>
-							</label>
-							<label class="flex items-start gap-2">
-								<input type="checkbox" bind:checked={config.agentAutonomy} class="mt-1 rounded border-gray-300 text-amber-600 focus:ring-amber-500" />
-								<div>
-									<span class="text-sm font-medium text-gray-700">Enable agent autonomy</span>
-									<p class="text-xs text-gray-500 mt-0.5">Let the agent use tools: search contacts, generate quote, send email—without creating workflows. The bot can look up contacts, create quotes, and send emails from conversation based on your training and system prompt.</p>
-								</div>
-							</label>
-						</div>
-
-						<div class="mt-6 pt-6 border-t border-gray-200">
-							<h4 class="text-sm font-semibold text-gray-900 mb-1">Webhook triggers</h4>
-							<p class="text-xs text-gray-500 mb-1">When the AI recognises the user&apos;s intent, it calls the matching webhook and uses the result in the reply (e.g. order status).</p>
-							<p class="text-xs text-amber-700 bg-amber-50 rounded-lg px-2 py-1.5 mb-3"><strong>Quote:</strong> Quote generation is built-in—no webhook needed. When a visitor asks for a quote, the bot collects name, email and roof size (sqm) then generates the PDF automatically. Do not add a separate webhook trigger for quotes.</p>
-							<div class="space-y-4">
-								{#each (config.webhookTriggers ?? []) as trigger, i}
-									<div class="border border-gray-200 rounded-lg p-4 bg-gray-50/50 space-y-3">
-										<div class="flex items-center justify-between gap-2">
-											<label class="block flex-1 min-w-0">
-												<span class="text-xs font-medium text-gray-500">Name</span>
-												<input type="text" bind:value={trigger.name} class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mt-0.5" placeholder="e.g. Roof quote" />
-											</label>
-											<label class="block w-32 shrink-0">
-												<span class="text-xs font-medium text-gray-500">ID (slug)</span>
-												<input type="text" bind:value={trigger.id} class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono mt-0.5" placeholder="roof_quote" />
-											</label>
-											<label class="flex items-center gap-2 pt-6">
-												<input type="checkbox" bind:checked={trigger.enabled} class="rounded border-gray-300 text-amber-600 focus:ring-amber-500" />
-												<span class="text-xs font-medium text-gray-600">Enabled</span>
-											</label>
-											<button type="button" class="p-2 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 shrink-0" title="Remove trigger" onclick={() => removeTrigger(i)}>🗑</button>
-										</div>
-										<label class="block">
-											<span class="text-xs font-medium text-gray-500">Description (for AI to recognise intent)</span>
-											<textarea bind:value={trigger.description} class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mt-0.5 min-h-[60px]" placeholder="e.g. User asks for a roof sealing quote or cost by area in sqm" rows="2"></textarea>
-										</label>
-										<label class="block">
-											<span class="text-xs font-medium text-gray-500">Webhook URL (N8N)</span>
-											<input type="url" bind:value={trigger.webhookUrl} class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono mt-0.5" placeholder="https://your-n8n.com/webhook/roof-quote" />
-										</label>
-									</div>
-								{/each}
-								<button type="button" onclick={addTrigger} class="text-sm text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1">
-									+ Add trigger
-								</button>
-							</div>
-						</div>
-					</div>
-				{/if}
-			{/if}
-		</div>
-	{:else if mainTab === 'train'}
-		<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-			<h3 class="text-lg font-semibold text-gray-900 mb-1">Train Bot</h3>
-			<p class="text-gray-500 text-sm mb-6">
-				Define how the bot should act and add knowledge. These instructions are sent with every message to your n8n webhook so your AI Agent can use them.
-			</p>
-
-			<div class="border border-gray-200 rounded-lg p-4 mb-6 bg-gray-50/50">
-				<h4 class="text-sm font-semibold text-gray-900 mb-3">Bot instructions (role, tone, rules)</h4>
-				<p class="text-xs text-gray-500 mb-4">Sent to n8n as <code class="bg-gray-200 px-1 rounded">systemPrompt</code>, <code class="bg-gray-200 px-1 rounded">role</code>, <code class="bg-gray-200 px-1 rounded">tone</code>, and <code class="bg-gray-200 px-1 rounded">instructions</code>. In n8n, map these into your AI Agent node&apos;s system message.</p>
-				<div class="space-y-4">
-					<label class="block">
-						<span class="text-sm font-medium text-gray-700 mb-1">Role</span>
-						<input
-							type="text"
-							bind:value={config.bot.role}
-							placeholder="e.g. You are a helpful sales assistant for NetZero Coating."
-							class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-						/>
-					</label>
-					<label class="block">
-						<span class="text-sm font-medium text-gray-700 mb-1">Tone</span>
-						<input
-							type="text"
-							bind:value={config.bot.tone}
-							placeholder="e.g. Professional and friendly, concise"
-							class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-						/>
-					</label>
-					<label class="block">
-						<span class="text-sm font-medium text-gray-700 mb-1">Instructions / rules</span>
-						<textarea
-							bind:value={config.bot.instructions}
-							placeholder="e.g. Answer only about our products. Keep replies under 3 sentences. Do not discuss competitors."
-							class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm min-h-[80px]"
-							rows="3"
-						></textarea>
-					</label>
-				</div>
-			</div>
-
-			<h4 class="text-sm font-semibold text-gray-800 mb-2">Knowledge base (RAG)</h4>
-			<p class="text-gray-500 text-sm mb-4">
-				Add knowledge from PDFs or web pages. Content is chunked, embedded (OpenAI or Gemini), and stored in Supabase. In n8n, connect the same Supabase project and use <strong>Supabase Vector Store</strong> → &quot;Retrieve documents for AI Agent as Tool&quot; so your bot can answer from this data.
-			</p>
-			{#if trainStatus && !trainStatus.configured}
-				<p class="text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm mb-6">
-					Add an API key in <strong>Settings → LLM keys</strong> (Google or OpenAI), or set <code class="bg-amber-100 px-1 rounded">GEMINI_API_KEY</code>/<code class="bg-amber-100 px-1 rounded">OPENAI_API_KEY</code> in <code class="bg-amber-100 px-1 rounded">.env</code>. Train Bot uses the same key as your chatbot.
-				</p>
-			{/if}
-			{#if trainStatus}
-				<p class="text-sm text-gray-600 mb-6">Knowledge base: <strong>{trainStatus.documentCount}</strong> chunk(s) stored for this widget.</p>
-			{/if}
-			<div class="space-y-6">
+			<label class="flex items-start gap-2">
+				<input type="checkbox" bind:checked={config.agentAutonomy} class="mt-1 rounded border-gray-300 text-amber-600 focus:ring-amber-500" />
 				<div>
-					<h4 class="text-sm font-medium text-gray-800 mb-2">Upload PDF</h4>
-					<div class="flex flex-wrap items-end gap-3">
-						<label class="flex-1 min-w-[200px]">
-							<span class="sr-only">Choose PDF</span>
-							<input
-								type="file"
-								accept="application/pdf"
-								class="block w-full text-sm text-gray-600 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-amber-50 file:text-amber-800 file:font-medium"
-								onchange={(e) => (trainUploadFile = (e.currentTarget.files ?? [])[0] ?? null)}
-							/>
-						</label>
-						<button
-							type="button"
-							disabled={!trainUploadFile || trainUploading || !trainStatus?.configured}
-							onclick={trainUpload}
-							class="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 disabled:pointer-events-none text-white font-medium rounded-lg"
-						>
-							{trainUploading ? 'Uploading…' : 'Add to knowledge base'}
-						</button>
-					</div>
+					<span class="text-sm font-medium text-gray-700">Enable agent autonomy</span>
+					<p class="text-xs text-gray-500 mt-0.5">Let the agent use tools: search contacts, generate quote, send email—without creating workflows.</p>
 				</div>
-				<div>
-					<h4 class="text-sm font-medium text-gray-800 mb-2">Scrape a webpage</h4>
-					<div class="flex flex-wrap gap-3">
-						<input
-							type="url"
-							bind:value={trainScrapeUrl}
-							placeholder="https://example.com/page"
-							class="flex-1 min-w-[200px] px-3 py-2 border border-gray-300 rounded-lg text-sm"
-						/>
-						<button
-							type="button"
-							disabled={!trainScrapeUrl.trim() || trainScraping || !trainStatus?.configured}
-							onclick={trainScrape}
-							class="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 disabled:pointer-events-none text-white font-medium rounded-lg"
-						>
-							{trainScraping ? 'Scraping…' : 'Add to knowledge base'}
-						</button>
-					</div>
-				</div>
-			</div>
+			</label>
 		</div>
 	{:else if mainTab === 'embed'}
 		<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">

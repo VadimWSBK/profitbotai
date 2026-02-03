@@ -1,7 +1,7 @@
 /**
  * Train Bot: chunk text, generate embeddings (OpenAI or Gemini), store in Supabase widget_documents.
  * n8n can use the same Supabase project and "Retrieve documents for AI Agent as Tool" for RAG.
- * PDF text extraction uses pdf-parse; web scraping uses fetch + cheerio.
+ * PDF text extraction uses pdf-parse v2 (PDFParse + getText); web scraping uses fetch + cheerio.
  *
  * Embedding API key (priority): env OPENAI_API_KEY/GEMINI_API_KEY → widget owner's LLM key from Settings.
  * Uses the same key source as the chatbot, so if chat works with your Gemini key, Train Bot will too.
@@ -48,6 +48,65 @@ export async function isTrainBotConfigured(supabase: SupabaseClient, widgetId: s
 	if (env.OPENAI_API_KEY || env.GEMINI_API_KEY) return true;
 	const key = await getEmbeddingKeyForWidget(supabase, widgetId);
 	return key != null;
+}
+
+/**
+ * Resolve embedding API key for an agent: env vars first, then agent owner's (created_by) LLM key.
+ */
+export async function getEmbeddingKeyForAgent(agentId: string): Promise<EmbeddingKey | null> {
+	if (env.OPENAI_API_KEY?.trim()) return { provider: 'openai', key: env.OPENAI_API_KEY.trim() };
+	if (env.GEMINI_API_KEY?.trim()) return { provider: 'google', key: env.GEMINI_API_KEY.trim() };
+	const admin = getSupabaseAdmin();
+	const { data: agent, error: agentErr } = await admin.from('agents').select('created_by').eq('id', agentId).single();
+	if (agentErr || !agent?.created_by) return null;
+	const { data: keys } = await admin.from('user_llm_keys').select('provider, api_key').eq('user_id', agent.created_by).in('provider', ['google', 'openai']);
+	if (!keys?.length) return null;
+	const google = keys.find((k) => k.provider === 'google');
+	if (google?.api_key?.trim()) return { provider: 'google', key: google.api_key.trim() };
+	const openai = keys.find((k) => k.provider === 'openai');
+	if (openai?.api_key?.trim()) return { provider: 'openai', key: openai.api_key.trim() };
+	return null;
+}
+
+export async function isAgentTrainConfigured(agentId: string): Promise<boolean> {
+	if (env.OPENAI_API_KEY || env.GEMINI_API_KEY) return true;
+	const key = await getEmbeddingKeyForAgent(agentId);
+	return key != null;
+}
+
+export type AgentIngestMetadata = {
+	source: 'pdf' | 'url';
+	agent_id: string;
+	filename?: string;
+	url?: string;
+};
+
+/** Chunk text, embed, and insert into agent_documents. */
+export async function ingestChunksForAgent(
+	agentId: string,
+	text: string,
+	metadata: AgentIngestMetadata,
+	embeddingKey: EmbeddingKey
+): Promise<{ chunks: number; error?: string }> {
+	const chunks = chunkText(text);
+	if (chunks.length === 0) return { chunks: 0 };
+
+	const embeddings = await getEmbeddings(chunks, embeddingKey);
+	const supabase = getSupabaseAdmin();
+
+	const rows = chunks.map((content, i) => ({
+		agent_id: agentId,
+		content,
+		embedding: embeddings[i] ?? [],
+		metadata: { ...metadata, agent_id: agentId }
+	}));
+
+	const { error } = await supabase.from('agent_documents').insert(rows);
+	if (error) {
+		console.error('agent_documents insert error:', error);
+		return { chunks: chunks.length, error: error.message };
+	}
+	return { chunks: chunks.length };
 }
 
 /** Split text into overlapping chunks for embedding. */

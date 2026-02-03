@@ -44,8 +44,70 @@ export const POST: RequestHandler = async (event) => {
 		if (widgetError || !widget) return json({ error: 'Widget not found' }, { status: 404 });
 
 		const config = (widget.config as Record<string, unknown>) ?? {};
-		const chatBackend = config.chatBackend as string | undefined;
-		if (chatBackend !== 'direct') return json({ error: 'Widget is not configured for Direct LLM' }, { status: 400 });
+		const agentId = typeof config.agentId === 'string' ? config.agentId.trim() : '';
+		const admin = getSupabaseAdmin();
+
+		// When widget has an agent, use agent's connect + bot config; otherwise use widget config.
+		type EffectiveConfig = {
+			chatBackend: string;
+			llmProvider: string;
+			llmModel: string;
+			llmFallbackProvider?: string;
+			llmFallbackModel?: string;
+			agentTakeoverTimeoutMinutes: number;
+			webhookTriggers: WebhookTrigger[];
+			bot: { role?: string; tone?: string; instructions?: string };
+			agentAutonomy: boolean;
+			agentSystemPrompt?: string;
+			agentAllowedTools?: string[] | null;
+			keyOwnerId: string | null; // user id to resolve LLM key (widget or agent owner)
+		};
+		let effectiveConfig: EffectiveConfig;
+
+		if (agentId) {
+			const { data: agentRow, error: agentErr } = await admin
+				.from('agents')
+				.select('chat_backend, llm_provider, llm_model, llm_fallback_provider, llm_fallback_model, agent_takeover_timeout_minutes, webhook_triggers, bot_role, bot_tone, bot_instructions, system_prompt, allowed_tools, created_by')
+				.eq('id', agentId)
+				.single();
+			if (agentErr || !agentRow) return json({ error: 'Agent not found' }, { status: 404 });
+			if ((agentRow.chat_backend as string) !== 'direct') return json({ error: 'Agent is configured for n8n; use n8n webhook for chat' }, { status: 400 });
+			effectiveConfig = {
+				chatBackend: 'direct',
+				llmProvider: (agentRow.llm_provider as string) ?? '',
+				llmModel: (agentRow.llm_model as string) ?? '',
+				llmFallbackProvider: (agentRow.llm_fallback_provider as string) || undefined,
+				llmFallbackModel: (agentRow.llm_fallback_model as string) || undefined,
+				agentTakeoverTimeoutMinutes: typeof agentRow.agent_takeover_timeout_minutes === 'number' ? agentRow.agent_takeover_timeout_minutes : 5,
+				webhookTriggers: (Array.isArray(agentRow.webhook_triggers) ? agentRow.webhook_triggers : []) as WebhookTrigger[],
+				bot: {
+					role: (agentRow.bot_role as string) ?? '',
+					tone: (agentRow.bot_tone as string) ?? '',
+					instructions: (agentRow.bot_instructions as string) ?? ''
+				},
+				agentAutonomy: Boolean(config.agentAutonomy),
+				agentSystemPrompt: (agentRow.system_prompt as string) ?? '',
+				agentAllowedTools: Array.isArray(agentRow.allowed_tools) ? (agentRow.allowed_tools as string[]) : null,
+				keyOwnerId: agentRow.created_by as string | null
+			};
+		} else {
+			const chatBackend = config.chatBackend as string | undefined;
+			if (chatBackend !== 'direct') return json({ error: 'Widget is not configured for Direct LLM' }, { status: 400 });
+			effectiveConfig = {
+				chatBackend: 'direct',
+				llmProvider: (config.llmProvider as string) ?? '',
+				llmModel: (config.llmModel as string) ?? '',
+				llmFallbackProvider: (config.llmFallbackProvider as string) || undefined,
+				llmFallbackModel: (config.llmFallbackModel as string) || undefined,
+				agentTakeoverTimeoutMinutes: Math.max(1, Math.min(120, Number((config.agentTakeoverTimeoutMinutes as number) ?? 5))),
+				webhookTriggers: (config.webhookTriggers as WebhookTrigger[] | undefined) ?? [],
+				bot: (config.bot as { role?: string; tone?: string; instructions?: string }) ?? {},
+				agentAutonomy: Boolean(config.agentAutonomy),
+				agentSystemPrompt: undefined,
+				agentAllowedTools: null,
+				keyOwnerId: widget.created_by as string | null
+			};
+		}
 
 		// Get or create conversation
 		let { data: conv, error: convErr } = await supabase
@@ -85,7 +147,7 @@ export const POST: RequestHandler = async (event) => {
 		let resumingAfterAgentTimeout = false;
 		// If human took over: no in-chat notice. If live agent hasn't replied in timeout, switch back to AI.
 		if (!conv.is_ai_active) {
-			const timeoutMinutes = Math.max(1, Math.min(120, Number((config.agentTakeoverTimeoutMinutes as number) ?? 5)));
+			const timeoutMinutes = effectiveConfig.agentTakeoverTimeoutMinutes;
 			const { data: lastAgent } = await supabase
 				.from('widget_conversation_messages')
 				.select('created_at')
@@ -112,10 +174,10 @@ export const POST: RequestHandler = async (event) => {
 			conv = { ...conv, is_ai_active: true };
 		}
 
-		const llmProvider = (config.llmProvider as string) ?? '';
-		const llmModel = (config.llmModel as string) ?? '';
-		const llmFallbackProvider = (config.llmFallbackProvider as string) | undefined;
-		const llmFallbackModel = (config.llmFallbackModel as string) | undefined;
+		const llmProvider = effectiveConfig.llmProvider;
+		const llmModel = effectiveConfig.llmModel;
+		const llmFallbackProvider = effectiveConfig.llmFallbackProvider;
+		const llmFallbackModel = effectiveConfig.llmFallbackModel;
 		if (!llmProvider) return json({ error: 'No primary LLM selected' }, { status: 400 });
 
 		const ownerId = widget.created_by as string | null;
@@ -130,11 +192,23 @@ export const POST: RequestHandler = async (event) => {
 			.update({ agent_typing_until: typingUntil, agent_typing_by: null })
 			.eq('id', conv.id);
 
-		const { data: apiKey, error: keyError } = await supabase.rpc('get_owner_llm_key_for_chat', {
-			p_widget_id: widgetId,
-			p_provider: llmProvider
-		});
-		if (keyError || !apiKey) return json({ error: 'Owner has no API key for this provider' }, { status: 400 });
+		let apiKey: string | null = null;
+		if (agentId && effectiveConfig.keyOwnerId) {
+			const { data: keyRow } = await admin
+				.from('user_llm_keys')
+				.select('api_key')
+				.eq('user_id', effectiveConfig.keyOwnerId)
+				.eq('provider', llmProvider)
+				.single();
+			apiKey = keyRow?.api_key ?? null;
+		} else {
+			const { data: keyData, error: keyError } = await supabase.rpc('get_owner_llm_key_for_chat', {
+				p_widget_id: widgetId,
+				p_provider: llmProvider
+			});
+			if (!keyError && keyData) apiKey = keyData;
+		}
+		if (!apiKey) return json({ error: 'Owner has no API key for this provider' }, { status: 400 });
 
 		// Use stored chat from Supabase as the only source of context (includes the message we just saved)
 		const llmHistory = await getConversationContextForLlm(supabase, conv.id, {
@@ -201,7 +275,7 @@ export const POST: RequestHandler = async (event) => {
 			: null;
 
 		// 2. Run intent classification: built-in quote (no n8n) + optional webhook triggers
-		const webhookTriggers = (config.webhookTriggers as WebhookTrigger[] | undefined) ?? [];
+		const webhookTriggers = effectiveConfig.webhookTriggers;
 		const builtInQuoteTrigger: WebhookTrigger = {
 			id: 'quote',
 			name: 'Quote',
@@ -325,10 +399,8 @@ export const POST: RequestHandler = async (event) => {
 			}
 		}
 
-		const agentAutonomy = Boolean(config.agentAutonomy);
-		const agentId = typeof config.agentId === 'string' ? config.agentId.trim() : '';
-
-		const bot = (config.bot as Record<string, string> | undefined) ?? {};
+		const agentAutonomy = effectiveConfig.agentAutonomy;
+		const bot = effectiveConfig.bot;
 		const parts: string[] = [
 			'CRITICAL: Reply only with natural conversational text. Never output technical strings, commands, codes, or syntax (e.g. workflow_start, contacts_query, or similar). Speak like a human to a human. Your entire reply must be readable by the customer with no internal jargon.',
 			'For quotes: we only generate a quote once we have the customer\'s name, email, and roof size (square metres). If the user asks for a quote before we have all three, politely ask for the missing piece(s) only. Do not say the quote is being generated or will arrive by email until we actually have name, email, and roof size.'
@@ -338,18 +410,9 @@ export const POST: RequestHandler = async (event) => {
 				'You have access to tools. Use them when appropriate: search_contacts to look up contacts by name or email; get_current_contact to see what we have on file for this chat; generate_quote to create a quote PDF (need name, email, roof size in sqm); send_email to send an email (e.g. with the quote link). Use the tools, then reply naturally to the customer. Do not mention "calling a tool" or technical names—just do the action and respond in plain language.'
 			);
 		}
-		let agentAllowedTools: string[] | null = null;
-		if (agentAutonomy && agentId) {
-			const adminForAgent = getSupabaseAdmin();
-			const { data: agentRow } = await adminForAgent
-				.from('agents')
-				.select('system_prompt, name, allowed_tools')
-				.eq('id', agentId)
-				.maybeSingle();
-			if (agentRow?.system_prompt?.trim()) {
-				parts.push(`Agent instructions (${agentRow.name ?? 'Agent'}):\n${agentRow.system_prompt.trim()}`);
-			}
-			if (Array.isArray(agentRow?.allowed_tools)) agentAllowedTools = agentRow.allowed_tools as string[];
+		const agentAllowedTools = effectiveConfig.agentAllowedTools ?? null;
+		if (effectiveConfig.agentSystemPrompt?.trim()) {
+			parts.push(`Agent instructions:\n${effectiveConfig.agentSystemPrompt.trim()}`);
 		}
 		if (bot.role?.trim()) parts.push(bot.role.trim());
 		if (bot.tone?.trim()) parts.push(`Tone: ${bot.tone.trim()}`);
@@ -494,10 +557,22 @@ export const POST: RequestHandler = async (event) => {
 			return result.toUIMessageStreamResponse();
 		} catch (primaryErr) {
 			if (llmFallbackProvider && llmFallbackModel) {
-				const { data: fallbackKey } = await supabase.rpc('get_owner_llm_key_for_chat', {
-					p_widget_id: widgetId,
-					p_provider: llmFallbackProvider
-				});
+				let fallbackKey: string | null = null;
+				if (agentId && effectiveConfig.keyOwnerId) {
+					const { data: keyRow } = await admin
+						.from('user_llm_keys')
+						.select('api_key')
+						.eq('user_id', effectiveConfig.keyOwnerId)
+						.eq('provider', llmFallbackProvider)
+						.single();
+					fallbackKey = keyRow?.api_key ?? null;
+				} else {
+					const { data: keyData } = await supabase.rpc('get_owner_llm_key_for_chat', {
+						p_widget_id: widgetId,
+						p_provider: llmFallbackProvider
+					});
+					fallbackKey = keyData ?? null;
+				}
 				if (fallbackKey) {
 					try {
 						const result = await runStream(llmFallbackProvider, llmFallbackModel, fallbackKey);

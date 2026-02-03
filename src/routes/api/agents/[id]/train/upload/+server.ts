@@ -1,22 +1,20 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getEmbeddingKeyForWidget, ingestChunks } from '$lib/train-bot.server';
-import { getSupabaseClient } from '$lib/supabase.server';
+import { getEmbeddingKeyForAgent, ingestChunksForAgent } from '$lib/train-bot.server';
 
 const MAX_PDF_SIZE = 10 * 1024 * 1024; // 10MB
 
 /**
- * POST /api/widgets/[id]/train/upload – upload a PDF; extract text, chunk, embed, store in widget_documents.
+ * POST /api/agents/[id]/train/upload – upload a PDF; extract text, chunk, embed, store in agent_documents.
  */
 export const POST: RequestHandler = async (event) => {
-	const widgetId = event.params.id;
-	if (!widgetId) return json({ error: 'Missing widget id' }, { status: 400 });
+	const agentId = event.params.id;
+	if (!agentId) return json({ error: 'Missing agent id' }, { status: 400 });
 	if (!event.locals.user) return json({ error: 'Unauthorized' }, { status: 401 });
 
-	const supabase = getSupabaseClient(event);
-	const embeddingKey = await getEmbeddingKeyForWidget(supabase, widgetId);
+	const embeddingKey = await getEmbeddingKeyForAgent(agentId);
 	if (!embeddingKey)
-		return json({ error: 'Train Bot needs an API key. Add Google or OpenAI in Settings → LLM keys, or set GEMINI_API_KEY/OPENAI_API_KEY in .env.' }, { status: 503 });
+		return json({ error: 'Train needs an API key. Add Google or OpenAI in Settings → LLM keys, or set GEMINI_API_KEY/OPENAI_API_KEY in .env.' }, { status: 503 });
 
 	const formData = await event.request.formData().catch(() => null);
 	if (!formData) return json({ error: 'Invalid form data' }, { status: 400 });
@@ -35,16 +33,16 @@ export const POST: RequestHandler = async (event) => {
 		const text = parseResult?.text ?? '';
 		if (!text?.trim()) return json({ error: 'No text could be extracted from the PDF' }, { status: 400 });
 
-		const ingestResult = await ingestChunks(widgetId, text, {
+		const ingestResult = await ingestChunksForAgent(agentId, text, {
 			source: 'pdf',
-			widget_id: widgetId,
+			agent_id: agentId,
 			filename: file.name
 		}, embeddingKey);
 		if (ingestResult.error) return json({ error: ingestResult.error }, { status: 500 });
 		return json({ ok: true, chunks: ingestResult.chunks });
 	} catch (e) {
 		const msg = e instanceof Error ? e.message : 'Upload failed';
-		console.error('POST /api/widgets/[id]/train/upload:', e);
+		console.error('POST /api/agents/[id]/train/upload:', e);
 		return json({ error: msg }, { status: 500 });
 	}
 };
