@@ -120,7 +120,21 @@ The chat widget renders Markdown, so `[Download Quote](url)` will show as a clic
 - **URL:** `https://app.profitbot.ai/api/conversations/{{ $json.conversationId }}/send-email`
 - **Method:** POST  
 - **Headers:** `X-API-Key`: your `SIGNED_URL_API_KEY`
-- **Body (JSON):** `{ "subject": "{{ $json.subject }}", "body": "{{ $json.body }}" }`
+- **Body (JSON):** In the HTTP Request node:
+  1. Set **Send Body** = ON
+  2. Set **Body Content Type** = `JSON`
+  3. Set **Specify Body** = `Using JSON`
+  4. Click the **fx** (expression) button next to the JSON field
+  5. Enter this expression (not as a string, but as an expression that evaluates to JSON):
+     ```javascript
+     {
+       "subject": $json.subject || "",
+       "body": $json.body || ""
+     }
+     ```
+     Or if your subject/body come from a different node's output, use the correct path (e.g. `$json["Send email"].subject` or `$json["AI Agent"].subject`).
+  
+  **Important:** The JSON field must be an **expression** (click fx), not a string literal. If you see "JSON parameter needs to be valid JSON" error, you're entering it as a string. Use the expression editor (fx button) and enter the object directly without quotes around the whole thing.
 
 4. **DIY checkout: table with product images + “GO TO CHECKOUT” button**  
    To show the same breakdown as the direct LLM (product table with images, summary, and button), add a **Tool** that calls the app’s DIY checkout API, then have **Respond to Webhook** return both the reply text and the **checkoutPreview** object so the widget can render it.
@@ -299,6 +313,50 @@ If n8n shows success but the reply doesn’t appear in the chat (or you see “O
 - In the **“When chat message received”** (chat trigger) node, open its settings and set **Respond** (or “Response” / “Webhook Response”) to **“Using Respond to Webhook Node”** (or “When last node finishes” / “Using ‘Respond to Webhook’ node”, depending on your n8n version). Do **not** use “Immediately” or “When trigger is called”.
 - Then the same HTTP request is only completed when the workflow reaches **Respond to Webhook** with the AI reply. The widget will receive that response and show it straight away.
 - Also ensure **Respond to Webhook** returns JSON with an **`output`** key (e.g. `{ "output": "{{ $json.output }}" }`) so the widget can read it.
+
+### Error handling: Show human-friendly messages instead of technical errors
+
+When something goes wrong in your workflow (API call fails, tool error, etc.), you want to show a friendly message to the user, not technical error details.
+
+**Best practice: Always return 200 status with a friendly error message**
+
+1. **Wrap your workflow in error handling:**
+   - Add a **Try-Catch** node (or use n8n's built-in error handling) around your AI Agent and tools
+   - When an error occurs, catch it and return a friendly message instead of letting n8n return a 500 error
+
+2. **Example workflow structure:**
+   ```
+   When chat message received
+   → Try node (or AI Agent with error handling)
+     → AI Agent
+     → Tools (HTTP Request nodes, etc.)
+   → Catch node (on error)
+     → Set friendly error message
+     → Respond to Webhook with: { "output": "I apologize, but I'm having trouble processing your request right now. Please try again in a moment." }
+   → Respond to Webhook (on success)
+     → { "output": "{{ $json.output }}" }
+   ```
+
+3. **In your Respond to Webhook node (success path):**
+   - Always return **HTTP 200** status (even if there was a logical error)
+   - Return JSON with `output` field containing a user-friendly message:
+     ```json
+     {
+       "output": "{{ $json.output ?? 'I apologize, but I encountered an issue. Please try again.' }}"
+     }
+     ```
+
+4. **For tool errors specifically:**
+   - If a tool (HTTP Request) fails, catch the error in n8n
+   - Return a friendly message like: `"I'm having trouble accessing that information right now. Could you please try again?"`
+   - **Never** return the raw error message (e.g. "HTTP 500", "Connection refused", "Invalid JSON")
+
+5. **Example: Error handling for Send Email tool**
+   - If the email API call fails, catch the error
+   - Return: `{ "output": "I apologize, but I couldn't send the email right now. Please try again later or contact us directly." }`
+   - Don't return: `{ "error": "Failed to send email: Connection timeout" }`
+
+**Why this matters:** The chat widget will show whatever is in the `output` field. If you return a 500 error or include technical error details, users will see those instead of a helpful message. Always return 200 with a friendly `output` message, even when something goes wrong.
 
 ---
 

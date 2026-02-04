@@ -65,7 +65,7 @@
 		<div
 			class="chat-window-container absolute flex flex-col items-end gap-2"
 			class:is-open={open}
-			style="right: 0; bottom: {bubble.bubbleSizePx + 12}px;"
+			style="right: 0; bottom: {bubble.bubbleSizePx + 12}px; z-index: 1;"
 			in:fly={{ y: 12, duration: 200, easing: cubicOut }}
 			out:fly={{ y: 8, duration: 150, easing: cubicOut }}
 		>
@@ -74,7 +74,7 @@
 	{/if}
 
 	<!-- Tooltip left, bubble right -->
-	<div class="flex flex-row items-end gap-2">
+	<div class="flex flex-row items-end gap-2 relative z-10">
 		{#if tooltip.displayTooltip && !open}
 			<div
 				class="tooltip-preview px-3 py-2 shadow-lg max-w-[220px] whitespace-normal cursor-pointer order-first"
@@ -94,7 +94,7 @@
 		{/if}
 		<button
 		type="button"
-		class="bubble-preview flex items-center justify-center flex-shrink-0 cursor-pointer hover:opacity-90 transition-opacity border-0 rounded-none"
+		class="bubble-preview flex items-center justify-center flex-shrink-0 cursor-pointer hover:opacity-90 transition-opacity border-0 rounded-none relative z-20"
 		style="
 			width: {bubble.bubbleSizePx}px;
 			height: {bubble.bubbleSizePx}px;
@@ -104,7 +104,7 @@
 		onclick={() => (open = !open)}
 		aria-label={open ? 'Close chat' : 'Open chat'}
 		aria-expanded={open}
-	>
+		>
 		{#if showCustomIcon}
 			<img
 				src={bubble.customIconUrl}
