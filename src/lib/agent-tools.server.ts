@@ -594,22 +594,21 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 			if (!result.ok) return { error: result.error ?? 'Failed to create checkout link' };
 			if (!result.checkoutUrl) return { error: 'Checkout link was not returned by Shopify.' };
 
-			// Build checkout preview markdown: product images (from product_pricing), table with name, variant ID, qty, price, total
+			// Build checkout preview: left = product title above image, right = quantity. Simple 2-col table (Product | Qty).
 			const fmt = (n: number) => n.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-			const imageLines = lineItems
-				.filter((li) => li.imageUrl)
-				.map((li) => `![${li.title}](${li.imageUrl})`)
-				.join(' ');
-			const tableRows = lineItems.map(
-				(li) =>
-					`| ${li.title} | ${li.variantId ?? '—'} | ${li.quantity} | $${li.price} | $${fmt(Number.parseFloat(li.price) * li.quantity)} |`
-			);
+			const productBlocks = lineItems.map((li) => {
+				const lines = [`**${li.title}**`];
+				if (li.imageUrl) lines.push(`![${li.title}](${li.imageUrl})`);
+				return lines.join('\n\n');
+			});
+			const tableRows = lineItems.map((li) => `| ${li.title} | ${li.quantity} |`);
 			const previewParts: string[] = [
 				'**Your checkout preview**',
 				'',
-				imageLines ? imageLines + '\n' : '',
-				'| Product | Variant ID | Qty | Price each | Total |',
-				'|---------|------------|-----|------------|-------|',
+				productBlocks.join('\n\n'),
+				'',
+				'| Product | Qty |',
+				'|---------|-----|',
 				...tableRows,
 				'',
 				`**Subtotal:** $${fmt(subtotal)} ${currency}`,

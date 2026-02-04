@@ -63,7 +63,8 @@
 >
 	{#if open}
 		<div
-			class="absolute flex flex-col items-end gap-2 chat-window-container"
+			class="chat-window-container absolute flex flex-col items-end gap-2"
+			class:is-open={open}
 			style="right: 0; bottom: {bubble.bubbleSizePx + 12}px;"
 			in:fly={{ y: 12, duration: 200, easing: cubicOut }}
 			out:fly={{ y: 8, duration: 150, easing: cubicOut }}
@@ -129,3 +130,27 @@
 	</button>
 	</div>
 </div>
+
+<style>
+	/* Mobile: full-screen chat (industry standard for chat widgets) */
+	@media (max-width: 768px) {
+		.chat-window-container.is-open {
+			position: fixed;
+			inset: 0;
+			right: 0;
+			bottom: 0;
+			left: 0;
+			top: 0;
+			width: 100%;
+			height: 100%;
+			max-height: 100dvh;
+			align-items: stretch;
+			justify-content: stretch;
+		}
+		.chat-window-container.is-open :global(.chat-window) {
+			flex: 1;
+			min-width: 0;
+			min-height: 0;
+		}
+	}
+</style>

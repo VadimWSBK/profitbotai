@@ -477,7 +477,7 @@ export const POST: RequestHandler = async (event) => {
 		];
 		if (agentAutonomy) {
 			parts.push(
-				'You have access to tools. Use them when appropriate: search_contacts; get_current_contact; generate_quote for Done For You quotes ONLY (we coat the roof for the customer—never for DIY); send_email; shopify_check_orders; shopify_create_draft_order; shopify_create_diy_checkout_link for one-click DIY purchase (use discount_percent: 10 or 15 when customer asks for a discount); shopify_cancel_order; shopify_refund_order. For DIY quotes, calculate in chat—do not use generate_quote. After giving a DIY quote, offer a checkout link via shopify_create_diy_checkout_link so the customer can buy with one click. Use the tools, then reply naturally. Do not mention "calling a tool" or technical names.'
+				'You have access to tools. Use them when appropriate: search_contacts; get_current_contact; generate_quote for Done For You quotes ONLY (we coat the roof for the customer—never for DIY); send_email; shopify_check_orders; shopify_create_draft_order; shopify_create_diy_checkout_link for one-click DIY purchase (use discount_percent: 10 or 15 when customer asks for a discount); shopify_cancel_order; shopify_refund_order. For DIY quotes: call shopify_create_diy_checkout_link first (with roof_size_sqm or bucket counts), then include the full previewMarkdown from the tool in your reply so the customer sees the checkout table and Buy now link directly. Do not first post a long Item/Details table—lead with the checkout preview and link. Use the tools, then reply naturally. Do not mention "calling a tool" or technical names.'
 			);
 		}
 		const agentAllowedTools = effectiveConfig.agentAllowedTools ?? null;

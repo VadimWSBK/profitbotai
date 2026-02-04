@@ -134,7 +134,7 @@ const RULES = [
 	},
 	{
 		content:
-			'DIY QUOTE (in-chat only): When customer wants DIY, calculate and present in chat. Do NOT use generate_quote tool. Clearly state it is a DIY Product Quote. Present using a markdown table (| Column | Value |) or a clean list with "Label: value" per line—no ** or asterisks. Include: roof size, litres required, recommended buckets, total cost, shipping. Do not generate a PDF for DIY.',
+			'DIY QUOTE: When customer wants DIY, do NOT use generate_quote. Call shopify_create_diy_checkout_link first (with roof_size_sqm or bucket counts) and include the full previewMarkdown in your reply so the customer sees the checkout table and Buy now link directly. Do not first post a long Item/Details table—lead with the checkout preview and link. If Shopify is not connected, then calculate in chat and present roof size, litres, buckets, total, shipping in a short table or list.',
 		tags: ['quote', 'diy', 'delivery']
 	},
 	{
@@ -159,7 +159,7 @@ const RULES = [
 	},
 	{
 		content:
-			'DIY CHECKOUT LINK (when Shopify connected): After presenting a DIY quote, offer a one-click checkout link. Use shopify_create_diy_checkout_link with roof_size_sqm (or bucket counts). Say "Would you like a direct checkout link to purchase these buckets with one click?" Then call the tool and share [Buy now](url). Requires Shopify connected in Settings → Integrations.',
+			'DIY CHECKOUT LINK (when Shopify connected): When customer asks for a DIY quote, call shopify_create_diy_checkout_link immediately with roof_size_sqm (or bucket counts) and paste the full previewMarkdown from the tool into your reply so the customer sees the checkout table (product, qty) and Buy now link. Do not ask "would you like a link?" first—show the checkout table and link directly.',
 		tags: ['quote', 'diy', 'checkout', 'shopify']
 	},
 	{
@@ -169,7 +169,7 @@ const RULES = [
 	},
 	{
 		content:
-			'CHECKOUT PREVIEW: When sharing a checkout link from shopify_create_diy_checkout_link, include the full previewMarkdown from the tool response so the customer sees their cart (products, amounts, discount, total) before the Buy now link.',
+			'CHECKOUT PREVIEW: Always include the full previewMarkdown from shopify_create_diy_checkout_link in your reply so the customer sees the checkout table (product image + title, qty), subtotal, discount if any, total, and Buy now link. Never share only the link.',
 		tags: ['checkout', 'preview', 'diy', 'shopify']
 	},
 	{

@@ -546,8 +546,10 @@
 				);
 			} else {
 				const displayText = match.type === 'markdown' ? match.text : url;
+				const isCtaButton = /buy\s*now|complete\s*your\s*purchase/i.test(displayText);
+				const linkClass = isCtaButton ? 'chat-message-link chat-cta-button' : 'chat-message-link underline';
 				parts.push(
-					`<a href="${escape(url)}" target="_blank" rel="noopener noreferrer" class="chat-message-link underline">${escape(displayText)}</a>`
+					`<a href="${escape(url)}" target="_blank" rel="noopener noreferrer" class="${linkClass}">${escape(displayText)}</a>`
 				);
 			}
 			lastIndex = match.end;
@@ -572,7 +574,7 @@
 </script>
 
 <div
-	class="chat-window flex flex-col overflow-hidden shadow-2xl"
+	class="chat-window flex flex-col overflow-hidden shadow-2xl chat-window--desktop-size"
 	style="
 		width: {win.widthPx}px;
 		height: {win.heightPx}px;
@@ -662,14 +664,16 @@
 							</div>
 						{/if}
 						<div
-							class="px-3 py-2 max-w-[85%] min-w-0 rounded-lg flex items-start gap-2"
+							class="px-3 py-2 max-w-[85%] min-w-0 rounded-lg flex items-start gap-2 overflow-hidden"
 							style="
 								background-color: {botStyle.backgroundColor};
 								color: {botStyle.textColor};
 								border-radius: {win.messageBorderRadius}px;
 							"
 						>
-							<span class="flex-1 min-w-0 break-words whitespace-pre-wrap">{@html formatMessage(msg.content)}</span>
+							<div class="flex-1 min-w-0 overflow-x-auto overflow-y-visible max-w-full break-words">
+								{@html formatMessage(msg.content)}
+							</div>
 							{#if botStyle.showCopyToClipboardIcon}
 								<button type="button" class="shrink-0 opacity-70 hover:opacity-100" onclick={() => navigator.clipboard.writeText(msg.content)} title="Copy">
 									<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
@@ -799,6 +803,30 @@
 </div>
 
 <style>
+	/* Mobile: full viewport, safe areas (industry standard for chat widgets) */
+	@media (max-width: 768px) {
+		.chat-window.chat-window--desktop-size {
+			width: 100% !important;
+			min-width: 0;
+			max-width: 100vw;
+			height: 100% !important;
+			min-height: 100dvh;
+			border-radius: 0;
+			box-shadow: none;
+			padding-left: env(safe-area-inset-left);
+			padding-right: env(safe-area-inset-right);
+			padding-top: env(safe-area-inset-top);
+			padding-bottom: env(safe-area-inset-bottom);
+			box-sizing: border-box;
+		}
+		.chat-window.chat-window--desktop-size header {
+			border-radius: 0;
+		}
+		.chat-window.chat-window--desktop-size form {
+			padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
+		}
+	}
+
 	.typing-dot {
 		width: 6px;
 		height: 6px;
@@ -864,6 +892,21 @@
 	}
 	:global(.chat-message-link:hover) {
 		opacity: 0.9;
+	}
+	:global(.chat-cta-button) {
+		display: inline-block;
+		text-decoration: none;
+		padding: 0.5em 1em;
+		margin-top: 0.5em;
+		border-radius: 8px;
+		font-weight: 600;
+		background-color: rgba(255, 255, 255, 0.25);
+		border: 1px solid rgba(255, 255, 255, 0.4);
+		transition: background-color 0.15s, border-color 0.15s;
+	}
+	:global(.chat-cta-button:hover) {
+		background-color: rgba(255, 255, 255, 0.35);
+		border-color: rgba(255, 255, 255, 0.6);
 	}
 	:global(.chat-table-wrapper) {
 		overflow-x: auto;
