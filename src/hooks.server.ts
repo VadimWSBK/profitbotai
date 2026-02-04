@@ -30,6 +30,8 @@ function isPublicPath(pathname: string, method: string): boolean {
 	if (/^\/api\/forms\/[^/]+$/.test(pathname)) return method === 'GET';
 	// Allow anonymous POST for quote form submit (embed form submission)
 	if (/^\/api\/forms\/[^/]+\/submit$/.test(pathname)) return true;
+	// Allow anonymous GET for quote download redirect (short link in chat → fresh signed URL)
+	if (pathname === '/api/quote/download') return method === 'GET';
 	return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'));
 }
 

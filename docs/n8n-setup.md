@@ -13,6 +13,20 @@ Optional: to restrict results by widget, use **Metadata Filter** in n8n (e.g. `w
 
 ---
 
+## 1b. Agent rules (RAG) from Supabase
+
+Your **Instructions / rules (RAG)** are stored in the `agent_rules` table (one rule per row, with `content`, `embedding`, `tags`, `agent_id`). The n8n agent can use them as a second vector store so the AI gets relevant rules at chat time.
+
+- **Migration**: `20260204200000_match_agent_rules_for_n8n.sql` adds `public.match_agent_rules_documents(filter, match_count, query_embedding)` with the same signature as `match_documents`.
+- **Table**: In n8n add a **second** Supabase Vector Store (or use this instead of `widget_documents` if you only need rules). Set **Table Name** = `agent_rules`.
+- **Query name**: Set **Query Name** to `match_agent_rules_documents`.
+- **Embedding**: Same as above — 1536 dimensions (e.g. Gemini `gemini-embedding-001` with output dimensionality 1536).
+- **Metadata filter**: The RPC filters by `agent_id`. In the Vector Store node set **Metadata Filter** so that `agent_id` equals the agent UUID. The chat widget sends `agentId` in the webhook body when the widget uses an agent — use **`{{ $json.agentId }}`** (or the path your trigger exposes, e.g. `{{ $json.body.agentId }}`).
+
+The widget now includes **`agentId`** in the webhook payload when the widget is configured with an agent, so n8n can pass it into the Vector Store metadata filter and only relevant rules for that agent are retrieved.
+
+---
+
 ## 2. Implementing app tools in n8n (quotes, tables, checkout links)
 
 Your app already has tools when using **Direct LLM** (search contacts, generate quote, send email, Shopify checkout link, etc.). In n8n you can expose the same behaviour by adding **Tool** nodes that call your app (or Supabase) and wiring them to the AI Agent.
@@ -35,6 +49,16 @@ Use your app’s base URL (e.g. `https://your-domain.com`) and pass **X-API-Key*
 | **Append quote to contact** | POST `/api/widgets/{widgetId}/contacts/pdf-quote` | Session only for now | `conversationId` or `email`, `pdfUrl` |
 
 Set header **X-API-Key** to the same value as `SIGNED_URL_API_KEY` in your `.env` when calling from n8n.
+
+**Quote download link in chat (avoid "signature verification failed")**  
+The API returns a long `pdfUrl` (Supabase signed URL with a JWT). If that URL is passed through n8n → AI → chat, it can get **truncated**, so the user gets "InvalidJWT / signature verification failed" when opening it. Use the **short download link** instead: have the AI share  
+`https://app.profitbot.ai/api/quote/download?path=<fileName>`  
+where `<fileName>` is the `fileName` from the quote generate response (e.g. `a82d5354-.../quote_Customer_20260204195252.pdf`). URL-encode the path if needed. When the user clicks, the app redirects to a fresh signed URL so the link always works.
+
+**Show the link as a hyperlink ("Download Quote")**  
+In the AI Agent’s **System Message** (or instructions), add something like:  
+*"When you share a quote download link, always use this Markdown format so it appears as a hyperlink: [Download Quote](URL). For the URL use the short link: https://app.profitbot.ai/api/quote/download?path= plus the fileName from the quote tool result (URL-encode the fileName, e.g. replace / with %2F). Example: [Download Quote](https://app.profitbot.ai/api/quote/download?path=conv-id%2Fquote_Customer_20260204195252.pdf). Never paste the long pdfUrl in the message."*  
+The chat widget renders Markdown, so `[Download Quote](url)` will show as a clickable “Download Quote” link.
 
 ### Practical pattern
 
@@ -68,8 +92,8 @@ The chat widget sends these fields in the webhook body to n8n:
 - `sessionId` – session id
 - `widgetId` – widget UUID (so n8n can call quote/contacts APIs)
 - `conversationId` – conversation UUID (get/create via `/api/widgets/[id]/conversation` before sending to n8n)
-- `systemPrompt` – combined role + tone + instructions (when set in widget config)
-- `role`, `tone`, `instructions` – individual bot fields (when set)
+- `agentId` – agent UUID when the widget uses an agent (required for agent_rules Vector Store metadata filter)
+- `systemPrompt` – combined role + tone + instructions (when set in widget config); n8n only needs this for the System Message
 
 So n8n can use **System Message** = `{{ $json.systemPrompt }}` with no Supabase node. Optionally you can still load from Supabase if you prefer (see below).
 
@@ -97,9 +121,7 @@ The vector store is for RAG: “retrieve documents relevant to this query.” Ro
 
 2. **System Message**  
    In the AI Agent node, open **Options** (or the section that has “System Message”, “Instructions”, or “System prompt”). Set it to **`{{ $json.systemPrompt }}`**.  
-   Your trigger already receives `systemPrompt`, `role`, `tone`, and `instructions` from the widget; using `systemPrompt` is enough (it’s the combined role + tone + instructions).  
-   If your node only has separate fields, you can use:  
-   `{{ $json.role }}\n\nTone: {{ $json.tone }}\n\n{{ $json.instructions }}`
+   Your trigger receives `systemPrompt` from the widget (combined role + tone + instructions). The widget no longer sends `role`, `tone`, or `instructions` separately.
 
 3. Save the node and run again; the agent will use the user message and your Gaz persona.
 
@@ -184,10 +206,19 @@ If you use **Respond to Webhook** and the AI Agent’s output item has the reply
 
 The widget also supports streaming: if the response has a non-JSON `Content-Type` and a body (e.g. SSE with `data: ...` lines or plain text), it will append chunks to the message as they arrive. For most setups, returning JSON with `output` is enough.
 
+### Reply not showing in real time / “Message could not be send” / only appears after refresh
+
+If n8n shows success but the reply doesn’t appear in the chat (or you see “Ooop. Message could not be send.” and it only shows up after refresh), the browser is usually getting the **wrong** HTTP response:
+
+- The **“When chat message received”** node must **not** send the response itself. It must wait for your **Respond to Webhook** node to send it.
+- In the **“When chat message received”** (chat trigger) node, open its settings and set **Respond** (or “Response” / “Webhook Response”) to **“Using Respond to Webhook Node”** (or “When last node finishes” / “Using ‘Respond to Webhook’ node”, depending on your n8n version). Do **not** use “Immediately” or “When trigger is called”.
+- Then the same HTTP request is only completed when the workflow reaches **Respond to Webhook** with the AI reply. The widget will receive that response and show it straight away.
+- Also ensure **Respond to Webhook** returns JSON with an **`output`** key (e.g. `{ "output": "{{ $json.output }}" }`) so the widget can read it.
+
 ---
 
 ## Summary
 
-- **Vector store**: Use table `widget_documents` and query name `match_documents`; embedding dimension 1536 (e.g. Gemini with output dimensionality 1536).
+- **Vector store**: Use table `widget_documents` and query name `match_documents`; embedding dimension 1536 (e.g. Gemini with output dimensionality 1536). For **agent rules (RAG)** add a second Vector Store: table `agent_rules`, query name `match_agent_rules_documents`, metadata filter `agent_id` = `{{ $json.agentId }}`.
 - **Tools in n8n**: Add Tool nodes that call `POST /api/quote/generate` (with X-API-Key), Supabase for contacts, and (optionally) your send-email and checkout endpoints once they accept X-API-Key. Pass `widgetId` and `conversationId` from the chat trigger into every tool call.
 - **Response**: The widget waits for the webhook’s HTTP response (no separate callback). Add a **Respond to Webhook** node connected to the AI Agent output, and return JSON with `{ "output": "..." }` (or `message` / `reply` / `text`) so the chat can display the reply.

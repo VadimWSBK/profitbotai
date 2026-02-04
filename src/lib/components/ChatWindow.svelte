@@ -204,10 +204,8 @@
 						sessionId: effectiveSessionId,
 						...(widgetId && { widgetId }),
 						...(conversationId && { conversationId }),
-						...(systemPrompt && { systemPrompt }),
-						...(bot.role?.trim() && { role: bot.role.trim() }),
-						...(bot.tone?.trim() && { tone: bot.tone.trim() }),
-						...(bot.instructions?.trim() && { instructions: bot.instructions.trim() })
+						...(config.agentId && { agentId: config.agentId }),
+						...(systemPrompt && { systemPrompt })
 					})
 				});
 				const contentType = res.headers.get('content-type') ?? '';
