@@ -8,6 +8,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSupabaseClient, getSupabaseAdmin } from '$lib/supabase.server';
 import { sendContactEmail } from '$lib/send-quote-email.server';
+import { getPrimaryEmail } from '$lib/contact-email-jsonb';
 
 export const POST: RequestHandler = async (event) => {
 	const user = event.locals.user;
@@ -40,14 +41,15 @@ export const POST: RequestHandler = async (event) => {
 		.select('id, name, email')
 		.eq('conversation_id', id)
 		.maybeSingle();
-	if (!contactRow?.email) return json({ error: 'Contact has no email' }, { status: 400 });
+	const toEmail = contactRow ? getPrimaryEmail(contactRow.email) : null;
+	if (!toEmail) return json({ error: 'Contact has no email' }, { status: 400 });
 
 	const widget = Array.isArray(conv.widgets) ? conv.widgets[0] : conv.widgets;
 	const ownerId = (widget as { created_by?: string })?.created_by;
 	if (!ownerId) return json({ error: 'Could not determine widget owner' }, { status: 500 });
 
 	const result = await sendContactEmail(supabase, ownerId, {
-		toEmail: (contactRow as { email: string }).email,
+		toEmail,
 		subject,
 		body: emailBody,
 		contactId: (contactRow as { id: string }).id,

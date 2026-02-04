@@ -3,6 +3,7 @@
  * Pure JS, no Chromium. Uses pdfmake (Roboto fonts shipped with package).
  */
 
+import { getPrimaryEmail } from '$lib/contact-email-jsonb';
 import type { QuoteSettings, QuotePayload, QuoteBankDetails } from '$lib/quote-html';
 
 const formatCurrency = (n: number, currency = 'USD') =>
@@ -65,7 +66,7 @@ export function buildQuoteDocDefinition(settings: QuoteSettings, payload: QuoteP
 						{ text: 'CUSTOMER:', style: 'sectionTitle', margin: [0, 8, 0, 2] },
 						{ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 200, y2: 0, lineWidth: 0.5 }] },
 						{ text: customer.name ?? 'N/A', fontSize: 9, margin: [0, 4, 0, 0] },
-						{ text: customer.email ?? 'N/A', fontSize: 9 },
+						{ text: getPrimaryEmail(customer.email) ?? 'N/A', fontSize: 9 },
 						...(customer.phone ? [{ text: customer.phone, fontSize: 9 }] : []),
 						{ text: project.fullAddress ?? 'N/A', fontSize: 9 }
 					]

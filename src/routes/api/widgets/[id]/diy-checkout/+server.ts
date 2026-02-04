@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSupabaseAdmin } from '$lib/supabase.server';
 import { createDiyCheckoutForOwner } from '$lib/diy-checkout.server';
+import { getPrimaryEmail } from '$lib/contact-email-jsonb';
 
 /**
  * POST /api/widgets/[id]/diy-checkout
@@ -84,7 +85,7 @@ export const POST: RequestHandler = async (event) => {
 				.eq('conversation_id', conversationId)
 				.eq('widget_id', widgetId)
 				.maybeSingle();
-			if (contact?.email) contactEmail = contact.email as string;
+			if (contact?.email) contactEmail = getPrimaryEmail(contact.email) ?? undefined;
 		}
 
 		const result = await createDiyCheckoutForOwner(admin, ownerId, {

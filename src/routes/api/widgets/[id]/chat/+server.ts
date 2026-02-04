@@ -12,6 +12,7 @@ import { getQuoteWorkflowForWidget, runQuoteWorkflow } from '$lib/run-workflow.s
 import { getRelevantRulesForAgent } from '$lib/agent-rules.server';
 import { getProductPricingForOwner, formatProductPricingForAgent } from '$lib/product-pricing.server';
 import type { WebhookTrigger } from '$lib/widget-config';
+import { getPrimaryEmail } from '$lib/contact-email-jsonb';
 
 /**
  * POST /api/widgets/[id]/chat – Direct LLM chat (no n8n).
@@ -250,14 +251,15 @@ export const POST: RequestHandler = async (event) => {
 			if (extractedContact.roofSize != null && Number(extractedContact.roofSize) >= 0)
 				updates.roof_size_sqm = Number(extractedContact.roofSize);
 			if (extractedContact.email) {
+				const norm = extractedContact.email.trim().toLowerCase();
 				const { data: existing } = await supabase
 					.from('contacts')
 					.select('id')
-					.eq('email', extractedContact.email)
+					.contains('email', [norm])
 					.neq('conversation_id', conv.id)
 					.limit(1)
 					.maybeSingle();
-				if (!existing) updates.email = extractedContact.email;
+				if (!existing) updates.email = [norm];
 			}
 			if (Object.keys(updates).length > 0) {
 				const { error: contactErr } = await supabase
@@ -540,19 +542,20 @@ export const POST: RequestHandler = async (event) => {
 		const emailInMessage = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/.exec(message);
 		if (emailInMessage) {
 			const searchEmail = emailInMessage[0].toLowerCase();
-			const currentEmail = currentContact?.email?.toLowerCase();
+			const currentEmail = (currentContact ? getPrimaryEmail(currentContact.email) : null)?.toLowerCase();
 			if (currentEmail !== searchEmail) {
 				const { data: found } = await supabase
 					.from('contacts')
 					.select('name, email, phone, address, pdf_quotes')
 					.eq('widget_id', widgetId)
-					.eq('email', searchEmail)
+					.contains('email', [searchEmail])
 					.limit(1)
 					.maybeSingle();
-				if (found && (found.name || found.email || found.phone || found.address || (Array.isArray(found.pdf_quotes) && found.pdf_quotes.length > 0))) {
+				const foundPrimaryEmail = found ? getPrimaryEmail(found.email) : null;
+				if (found && (found.name || foundPrimaryEmail || found.phone || found.address || (Array.isArray(found.pdf_quotes) && found.pdf_quotes.length > 0))) {
 					contactLines.push(`Contact lookup for ${searchEmail}:`);
 					if (found.name) contactLines.push(`- Name: ${found.name}`);
-					if (found.email) contactLines.push(`- Email: ${found.email}`);
+					if (foundPrimaryEmail) contactLines.push(`- Email: ${foundPrimaryEmail}`);
 					if (found.phone) contactLines.push(`- Phone: ${found.phone}`);
 					if (found.address) contactLines.push(`- Address: ${found.address}`);
 					if (Array.isArray(found.pdf_quotes) && found.pdf_quotes.length > 0) {

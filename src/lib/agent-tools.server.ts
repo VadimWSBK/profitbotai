@@ -8,6 +8,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { tool, type Tool } from 'ai';
 import { z } from 'zod';
 import { env } from '$env/dynamic/private';
+import { getPrimaryEmail, mergeEmailIntoList, emailsToJsonb } from '$lib/contact-email-jsonb';
 import { generateQuoteForConversation, type GenerateQuoteForConversationResult } from '$lib/quote-pdf.server';
 import { sendQuoteEmail, sendContactEmail } from '$lib/send-quote-email.server';
 import { AGENT_TOOL_IDS, type AgentToolId } from '$lib/agent-tools';
@@ -55,15 +56,16 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 			if (!c) return { error: 'Missing context', contacts: [] };
 			const q = query.trim().toLowerCase();
 			if (!q) return { contacts: [], message: 'Provide a search term (name or email).' };
+			// Search by name only (email is jsonb array; partial match would need RPC)
 			const { data: rows } = await admin
 				.from('contacts')
 				.select('name, email, phone, address')
 				.eq('widget_id', c.widgetId)
-				.or(`name.ilike.%${q}%,email.ilike.%${q}%`)
+				.ilike('name', `%${q}%`)
 				.limit(10);
 			const contacts = (rows ?? []).map((r) => ({
 				name: r.name ?? '',
-				email: r.email ?? '',
+				email: getPrimaryEmail(r.email) ?? '',
 				phone: r.phone ?? '',
 				address: r.address ?? '',
 			}));
@@ -79,13 +81,14 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 			const c = getContext(experimental_context);
 			if (!c) return { error: 'Missing context' };
 			const contact = c.contact;
-			if (!contact || (!contact.name && !contact.email && !contact.phone && !contact.address && contact.roof_size_sqm == null)) {
+			const primaryEmail = getPrimaryEmail(contact?.email);
+			if (!contact || (!contact.name && !primaryEmail && !contact.phone && !contact.address && contact.roof_size_sqm == null)) {
 				return { contact: null, message: 'No contact details stored yet for this conversation.' };
 			}
 			return {
 				contact: {
 					name: contact.name ?? '',
-					email: contact.email ?? '',
+					email: primaryEmail ?? '',
 					phone: contact.phone ?? '',
 					address: contact.address ?? '',
 					roof_size_sqm: contact.roof_size_sqm != null ? Number(contact.roof_size_sqm) : null,
@@ -110,9 +113,9 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 		) => {
 			const c = getContext(experimental_context);
 			if (!c) return { error: 'Missing context' };
-			const updates: Record<string, string | number> = {};
+			const updates: Record<string, string | number | string[]> = {};
 			if (name != null && name.trim()) updates.name = name.trim();
-			if (email != null && email.trim()) updates.email = email.trim().toLowerCase();
+			if (email != null && email.trim()) updates.email = emailsToJsonb(email);
 			if (phone != null && phone.trim()) updates.phone = phone.trim();
 			if (address != null && address.trim()) updates.address = address.trim();
 			if (roof_size_sqm != null && Number(roof_size_sqm) >= 0) updates.roof_size_sqm = Number(roof_size_sqm);
@@ -146,12 +149,20 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 		) => {
 			const c = getContext(experimental_context);
 			if (!c) return { error: 'Missing context' };
-			const updates: Record<string, string | number> = {};
+			const updates: Record<string, string | number | string[]> = {};
 			if (name != null && name.trim()) updates.name = name.trim();
-			if (email != null && email.trim()) updates.email = email.trim().toLowerCase();
 			if (phone != null && phone.trim()) updates.phone = phone.trim();
 			if (address != null && address.trim()) updates.address = address.trim();
 			if (roof_size_sqm != null && Number(roof_size_sqm) >= 0) updates.roof_size_sqm = Number(roof_size_sqm);
+			if (email != null && email.trim()) {
+				const { data: cur } = await admin
+					.from('contacts')
+					.select('email')
+					.eq('conversation_id', c.conversationId)
+					.eq('widget_id', c.widgetId)
+					.maybeSingle();
+				updates.email = mergeEmailIntoList(cur?.email, email.trim().toLowerCase());
+			}
 			if (Object.keys(updates).length === 0) return { error: 'Provide at least one field to update.' };
 			const { error } = await admin
 				.from('contacts')
@@ -197,7 +208,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 			if (!c) return { error: 'Missing context' };
 			const contact = c.contact;
 			if (!contact?.name?.trim()) return { error: 'Contact name is required for a quote. Ask the user for their name.' };
-			if (!contact?.email?.trim()) return { error: 'Contact email is required for a quote. Ask the user for their email.' };
+			if (!getPrimaryEmail(contact?.email)?.trim()) return { error: 'Contact email is required for a quote. Ask the user for their email.' };
 			const roofSize = roof_size_sqm ?? c.extractedRoofSize ?? (c.contact?.roof_size_sqm != null ? Number(c.contact.roof_size_sqm) : undefined);
 			if (roofSize == null || Number(roofSize) < 0) {
 				return { error: 'Roof size (square metres) is required. Ask the user for their roof size or area.' };
@@ -578,7 +589,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 
 			const noteParts = lineItems.map((li) => `${li.quantity}× ${li.title}`).join(', ');
 			const result = await createDraftOrder(config, {
-				email: email?.trim() || c.contact?.email?.trim() || undefined,
+				email: email?.trim() || getPrimaryEmail(c.contact?.email)?.trim() || undefined,
 				line_items: lineItems.map((li) => ({
 					title: li.title,
 					quantity: li.quantity,

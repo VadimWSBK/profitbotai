@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSupabaseClient } from '$lib/supabase.server';
+import { getPrimaryEmail, parseEmailsFromDb, emailsToJsonb } from '$lib/contact-email-jsonb';
 import { resolvePdfQuotesToSignedUrls } from '$lib/quote-pdf-urls.server';
 import { getTagAddedWorkflows, runTagAddedWorkflow } from '$lib/run-workflow.server';
 
@@ -82,6 +83,7 @@ export const GET: RequestHandler = async (event) => {
 		? (rawTags as unknown[]).filter((t): t is string => typeof t === 'string')
 		: [];
 
+	const emails = parseEmailsFromDb(r.email);
 	const contact = {
 		id: r.id,
 		conversationId: r.conversation_id,
@@ -92,7 +94,8 @@ export const GET: RequestHandler = async (event) => {
 			return Array.isArray(w) ? w[0]?.name ?? null : (w as { name: string }).name ?? null;
 		})(),
 		name: r.name ?? null,
-		email: r.email ?? null,
+		email: getPrimaryEmail(r.email) ?? null,
+		emails: emails.length > 0 ? emails : null,
 		phone: r.phone ?? null,
 		address: r.address ?? null,
 		streetAddress: r.street_address ?? null,
@@ -131,7 +134,13 @@ export const PATCH: RequestHandler = async (event) => {
 	const updates: Record<string, unknown> = {};
 
 	if (typeof body.name === 'string') updates.name = body.name.trim() || null;
-	if (typeof body.email === 'string') updates.email = body.email.trim() || null;
+	if (Array.isArray(body.emails)) {
+		const arr = emailsToJsonb(body.emails as string[]);
+		if (arr.length > 0) updates.email = arr;
+	} else if (typeof body.email === 'string') {
+		const v = body.email.trim();
+		if (v) updates.email = emailsToJsonb(v);
+	}
 	if (typeof body.phone === 'string') updates.phone = body.phone.trim() || null;
 	if (typeof body.address === 'string') updates.address = body.address.trim() || null;
 	if (typeof body.streetAddress === 'string') updates.street_address = body.streetAddress.trim() || null;
@@ -150,7 +159,7 @@ export const PATCH: RequestHandler = async (event) => {
 
 	// Fetch contact before update to detect newly added tags (for "Tag added" workflows)
 	let tagsAdded: string[] = [];
-	let contactBefore: { widget_id: string | null; conversation_id: string | null; name: string | null; email: string | null; phone: string | null; address: string | null } | null = null;
+	let contactBefore: { widget_id: string | null; conversation_id: string | null; name: string | null; email: unknown; phone: string | null; address: string | null } | null = null;
 	if (Array.isArray(updates.tags)) {
 		const { data: before } = await supabase
 			.from('contacts')
@@ -192,7 +201,7 @@ export const PATCH: RequestHandler = async (event) => {
 		if (ownerId) {
 			const contact = {
 				name: contactBefore.name ?? null,
-				email: contactBefore.email ?? null,
+				email: getPrimaryEmail(contactBefore.email) ?? null,
 				phone: contactBefore.phone ?? null,
 				address: contactBefore.address ?? null
 			};

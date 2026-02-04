@@ -75,7 +75,7 @@ export async function syncReceivedEmailsForUser(
 		const { data: contactRow } = await supabase
 			.from('contacts')
 			.select('id, conversation_id')
-			.ilike('email', senderEmail)
+			.contains('email', [senderEmail])
 			.limit(1)
 			.maybeSingle();
 

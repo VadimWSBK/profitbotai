@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSupabaseClient, getSupabaseAdmin } from '$lib/supabase.server';
+import { getPrimaryEmail, parseEmailsFromDb, emailsToJsonb } from '$lib/contact-email-jsonb';
 
 /**
  * GET /api/widgets/[id]/contacts?conversationId=...
@@ -29,11 +30,13 @@ export const GET: RequestHandler = async (event) => {
 			return json({ error: error.message }, { status: 500 });
 		}
 		if (!data) return json({ contact: null });
+		const emails = parseEmailsFromDb(data.email);
 		return json({
 			contact: {
 				id: data.id,
 				name: data.name ?? null,
-				email: data.email ?? null,
+				email: getPrimaryEmail(data.email) ?? null,
+				emails: emails.length > 0 ? emails : null,
 				phone: data.phone ?? null,
 				address: data.address ?? null,
 				streetAddress: data.street_address ?? null,
@@ -69,6 +72,7 @@ export const PATCH: RequestHandler = async (event) => {
 		conversationId?: string;
 		name?: string;
 		email?: string;
+		emails?: string[];
 		phone?: string;
 		address?: string;
 		street_address?: string;
@@ -86,10 +90,16 @@ export const PATCH: RequestHandler = async (event) => {
 	const conversationId = typeof body?.conversationId === 'string' ? body.conversationId.trim() : '';
 	if (!conversationId) return json({ error: 'Missing conversationId' }, { status: 400 });
 
-	const updates: Record<string, string | number> = {};
+	const updates: Record<string, string | number | string[]> = {};
 	// Only update string fields when a non-empty value is sent (so n8n can send all params and empty = leave existing)
 	if (typeof body?.name === 'string') { const v = body.name.trim(); if (v) updates.name = v; }
-	if (typeof body?.email === 'string') { const v = body.email.trim(); if (v) updates.email = v; }
+	if (Array.isArray(body?.emails)) {
+		const arr = emailsToJsonb(body.emails);
+		if (arr.length > 0) updates.email = arr;
+	} else if (typeof body?.email === 'string') {
+		const v = body.email.trim();
+		if (v) updates.email = emailsToJsonb(v);
+	}
 	if (typeof body?.phone === 'string') { const v = body.phone.trim(); if (v) updates.phone = v; }
 	if (typeof body?.address === 'string') { const v = body.address.trim(); if (v) updates.address = v; }
 	if (typeof body?.street_address === 'string') { const v = body.street_address.trim(); if (v) updates.street_address = v; }

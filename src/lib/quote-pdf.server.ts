@@ -4,6 +4,7 @@
  */
 
 import { read } from '$app/server';
+import { getPrimaryEmail } from '$lib/contact-email-jsonb';
 import { computeQuoteFromSettings } from '$lib/quote-html';
 import { buildQuoteDocDefinition } from '$lib/quote-pdfmake.server';
 import type { QuoteSettings } from '$lib/quote-html';
@@ -94,7 +95,7 @@ export async function generateQuoteForConversation(
 		currency: settingsRow.currency ?? 'USD'
 	};
 
-	const customer = { name: contact.name ?? '', email: contact.email ?? '', phone: contact.phone ?? '' };
+	const customer = { name: contact.name ?? '', email: getPrimaryEmail(contact.email) ?? '', phone: contact.phone ?? '' };
 	const roofFromExtracted = extracted?.roofSize;
 	const roofFromContact = contact.roof_size_sqm != null ? Number(contact.roof_size_sqm) : null;
 	const project = {
@@ -196,7 +197,7 @@ export async function generateQuoteForForm(
 		currency: settingsRow.currency ?? 'USD'
 	};
 
-	const customer = { name: contact.name ?? '', email: contact.email ?? '', phone: contact.phone ?? '' };
+	const customer = { name: contact.name ?? '', email: getPrimaryEmail(contact.email) ?? '', phone: contact.phone ?? '' };
 	const roof = Math.max(0, Number(roofSize) ?? 0);
 	const computed = computeQuoteFromSettings(settings, roof);
 	const payload = {
@@ -226,13 +227,14 @@ export async function generateQuoteForForm(
 		if (createErr) return { error: `Storage: ${createErr.message}` };
 	}
 
-	const email = (contact.email ?? '').replaceAll(/[@.]/g, '_');
+	const primaryEmail = getPrimaryEmail(contact.email) ?? '';
+	const email = primaryEmail.replaceAll(/[@.]/g, '_');
 	const ts = new Date().toISOString().replaceAll(/\D/g, '').slice(0, 14);
 	const fileName = `form_${formId}/email_${email}_${ts}.pdf`;
 	const { error: uploadErr } = await admin.storage.from(BUCKET).upload(fileName, pdfBuffer, {
 		contentType: 'application/pdf',
 		upsert: true,
-		metadata: { email: contact.email ?? '', form_id: formId }
+		metadata: { email: primaryEmail, form_id: formId }
 	});
 	if (uploadErr) return { error: uploadErr.message };
 

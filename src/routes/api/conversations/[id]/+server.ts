@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSupabaseClient, getSupabaseAdmin } from '$lib/supabase.server';
 import { syncReceivedEmailsForUser } from '$lib/sync-received-emails.server';
+import { getPrimaryEmail } from '$lib/contact-email-jsonb';
 
 const MESSAGES_PAGE_SIZE = 20;
 
@@ -44,7 +45,7 @@ export const GET: RequestHandler = async (event) => {
 		? {
 				id: (contactRow as { id: string }).id,
 				name: (contactRow as { name: string | null }).name ?? null,
-				email: (contactRow as { email: string | null }).email ?? null
+				email: getPrimaryEmail(contactRow.email) ?? null
 			}
 		: null;
 

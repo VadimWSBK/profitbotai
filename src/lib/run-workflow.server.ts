@@ -4,6 +4,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { getPrimaryEmail } from '$lib/contact-email-jsonb';
 import { chatWithLlm } from '$lib/chat-llm.server';
 import { generateQuoteForConversation, generateQuoteForForm } from '$lib/quote-pdf.server';
 import { sendQuoteEmail } from '$lib/send-quote-email.server';
@@ -71,7 +72,7 @@ function splitName(fullName: string): { first_name: string; last_name: string } 
 /** Substitute {{contact.name}}, {{contact.first_name}}, {{contact.last_name}}, {{contact.email}}, etc. in a prompt string. */
 function substitutePrompt(
 	template: string,
-	contact: { name?: string | null; email?: string | null; phone?: string | null; address?: string | null },
+	contact: { name?: string | null; email?: string | unknown; phone?: string | null; address?: string | null },
 	extras: Record<string, string> = {}
 ): string {
 	let out = template;
@@ -81,7 +82,7 @@ function substitutePrompt(
 		'contact.name': fullName,
 		'contact.first_name': first_name,
 		'contact.last_name': last_name,
-		'contact.email': (contact?.email ?? '').trim(),
+		'contact.email': (getPrimaryEmail(contact?.email) ?? '').trim(),
 		'contact.phone': (contact?.phone ?? '').trim(),
 		'contact.address': (contact?.address ?? '').trim(),
 		...extras
@@ -276,7 +277,7 @@ export async function runQuoteWorkflow(
 	const executionId = await startWorkflowExecution(admin, workflow.id, 'message_in_chat', {
 		conversation_id: ctx.conversationId,
 		widget_id: ctx.widgetId,
-		contact_email: contact?.email ?? null
+		contact_email: getPrimaryEmail(contact?.email) ?? null
 	});
 
 	let runError: string | null = null;
@@ -325,7 +326,7 @@ export async function runQuoteWorkflow(
 					// Only send when workflow has subject/body configured (no default "quote is ready" email)
 					const data = node.data ?? {};
 					const emailToRaw = (data.emailTo as string) ?? '{{contact.email}}';
-					const toEmail = substitutePrompt(emailToRaw, contact, {}).trim().toLowerCase() || (contact?.email ?? '').trim().toLowerCase();
+					const toEmail = substitutePrompt(emailToRaw, contact, {}).trim().toLowerCase() || (getPrimaryEmail(contact?.email) ?? '').trim().toLowerCase();
 					const subjectRaw = (data.emailSubject as string) ?? '';
 					const bodyRaw = (data.emailBody as string) ?? '';
 					const subject = subjectRaw.trim() ? substitutePrompt(subjectRaw, contact, { 'quote.downloadUrl': signedUrl }) : undefined;
@@ -632,7 +633,7 @@ export async function runTagAddedWorkflow(
 				} else if (actionType === 'Send email') {
 					const data = node.data ?? {};
 					const emailToRaw = (data.emailTo as string) ?? '{{contact.email}}';
-					const toEmail = substitutePrompt(emailToRaw, contact, {}).trim().toLowerCase() || (contact?.email ?? '').trim().toLowerCase();
+					const toEmail = substitutePrompt(emailToRaw, contact, {}).trim().toLowerCase() || (getPrimaryEmail(contact?.email) ?? '').trim().toLowerCase();
 					const subjectRaw = (data.emailSubject as string) ?? '';
 					const bodyRaw = (data.emailBody as string) ?? '';
 					const subject = subjectRaw.trim() ? substitutePrompt(subjectRaw, contact, {}) : undefined;
@@ -769,7 +770,7 @@ export async function runEmailReceivedWorkflow(
 					const data = node.data ?? {};
 					const emailExtras: Record<string, string> = { 'quote.downloadUrl': signedUrl ?? '', 'ai.response': lastAiResponse ?? '' };
 					const emailToRaw = (data.emailTo as string) ?? '{{contact.email}}';
-					const toEmail = substitutePrompt(emailToRaw, contact, {}).trim().toLowerCase() || (contact?.email ?? '').trim().toLowerCase();
+					const toEmail = substitutePrompt(emailToRaw, contact, {}).trim().toLowerCase() || (getPrimaryEmail(contact?.email) ?? '').trim().toLowerCase();
 					const subjectRaw = (data.emailSubject as string) ?? '';
 					const bodyRaw = (data.emailBody as string) ?? '';
 					const subject = subjectRaw.trim() ? substitutePrompt(subjectRaw, contact, emailExtras) : undefined;
@@ -946,7 +947,7 @@ export async function runFormWorkflow(
 
 	const executionId = await startWorkflowExecution(admin, workflow.id, 'form_submit', {
 		form_id: ctx.formId,
-		contact_email: contact?.email ?? null
+		contact_email: getPrimaryEmail(contact?.email) ?? null
 	});
 
 	let runError: string | null = null;
@@ -976,7 +977,7 @@ export async function runFormWorkflow(
 					// Only send when workflow has this action and has subject/body configured (no default "quote is ready" email)
 					const data = node.data ?? {};
 					const emailToRaw = (data.emailTo as string) ?? '{{contact.email}}';
-					const toEmail = substitutePrompt(emailToRaw, contact, {}).trim().toLowerCase() || (contact?.email ?? '').trim().toLowerCase();
+					const toEmail = substitutePrompt(emailToRaw, contact, {}).trim().toLowerCase() || (getPrimaryEmail(contact?.email) ?? '').trim().toLowerCase();
 					const subjectRaw = (data.emailSubject as string) ?? '';
 					const bodyRaw = (data.emailBody as string) ?? '';
 					const subject = subjectRaw.trim() ? substitutePrompt(subjectRaw, contact, { 'quote.downloadUrl': signedUrl ?? '' }) : undefined;
@@ -1020,13 +1021,13 @@ export async function runFormWorkflow(
 							errorMessage: 'No message configured'
 						});
 					} else {
-						const toEmail = (contact?.email ?? '').trim().toLowerCase();
+						const toEmail = (getPrimaryEmail(contact?.email) ?? '').trim().toLowerCase();
 						const { data: contactRow } = toEmail
 							? await admin
 									.from('contacts')
 									.select('conversation_id')
 									.eq('widget_id', workflow.widgetId)
-									.eq('email', toEmail)
+									.contains('email', [toEmail])
 									.not('conversation_id', 'is', null)
 									.limit(1)
 									.maybeSingle()
