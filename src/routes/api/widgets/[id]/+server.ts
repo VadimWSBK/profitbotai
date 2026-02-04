@@ -30,12 +30,30 @@ export const GET: RequestHandler = async (event) => {
 
 		// Map DB row to app WidgetConfig shape
 		const config = (data.config as Record<string, unknown>) ?? {};
-		const chatBackend = (config.chatBackend as string) ?? 'n8n';
-		// Use env N8N_CHAT_WEBHOOK_URL when chat backend is n8n and widget has no stored URL
-		const n8nUrl =
+		let chatBackend = (config.chatBackend as string) ?? 'n8n';
+		let n8nUrl =
 			(data.n8n_webhook_url as string)?.trim() ||
 			(chatBackend === 'n8n' ? (env.N8N_CHAT_WEBHOOK_URL ?? '').trim() : '') ||
 			'';
+
+		// When widget has an agent, use agent's chat backend so embed doesn't poll our API when agent is n8n
+		const agentId = (config.agentId as string)?.trim();
+		if (agentId) {
+			const { data: agentRow } = await supabase
+				.from('agents')
+				.select('chat_backend, n8n_webhook_url')
+				.eq('id', agentId)
+				.single();
+			if (agentRow) {
+				chatBackend = (agentRow.chat_backend as string) ?? chatBackend;
+				const agentN8n = (agentRow.n8n_webhook_url as string)?.trim();
+				n8nUrl =
+					agentN8n ||
+					(chatBackend === 'n8n' ? (env.N8N_CHAT_WEBHOOK_URL ?? '').trim() : '') ||
+					n8nUrl;
+			}
+		}
+
 		const widget = {
 			id: data.id,
 			name: data.name,
