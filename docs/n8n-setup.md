@@ -62,12 +62,14 @@ Set header **X-API-Key** to the same value as `SIGNED_URL_API_KEY` in your `.env
 
 ### Passing context from the chat trigger
 
-The chat widget now sends these fields in the webhook body to n8n:
+The chat widget sends only these fields in the webhook body to n8n:
 
 - `message` – user message
 - `sessionId` – session id
 - `widgetId` – widget UUID (so n8n can call quote/contacts APIs)
 - `conversationId` – conversation UUID (get/create via `/api/widgets/[id]/conversation` before sending to n8n)
+
+**Role, tone, instructions (system prompt)** are not sent in the body. n8n can load them from Supabase: query `widgets` by `id` = `widgetId`, then use `config->bot->role`, `config->bot->tone`, `config->bot->instructions`; or if the widget uses an agent, query `agents` and use `system_prompt`, `bot_role`, `bot_tone`, `bot_instructions`. Build the AI Agent system prompt from those fields in n8n (e.g. with a Supabase node before the Agent, or in the Agent’s system message).
 
 In n8n, the "When chat message received" trigger exposes the webhook body. Use expressions like:
 
@@ -86,7 +88,43 @@ Contacts and send-email accept **X-API-Key** (same as `SIGNED_URL_API_KEY`). Use
 
 ---
 
+## 3. Sending the AI reply back to the chat widget
+
+There is **no separate callback URL**. The widget sends a single POST to your n8n webhook and **waits for that same HTTP response** to display the bot message. n8n must **respond to that request** with the AI’s reply.
+
+### What to do in n8n
+
+1. **Connect the AI Agent’s output to a response**  
+   The “When chat message received” trigger holds the HTTP request open until the workflow responds. Connect the **AI Agent** node’s output to a **Respond to Webhook** node (or your trigger’s “Respond” / response option, if it has one).
+
+2. **Respond to Webhook node**  
+   Add a **Respond to Webhook** node after the AI Agent. In it:
+   - **Respond With**: e.g. “JSON” or “First Incoming Item”.
+   - **Response Body**: the text you want shown in the chat. The widget looks for a string in this order: `output`, then `message`, then `reply`, then `text`.  
+   - So either set the response body to a JSON object with one of those keys, e.g.  
+     `{ "output": "{{ $json.output ?? $json.message ?? $json.text }}" }`  
+     or, if the Agent node outputs the reply in a field like `output` or `message`, map that into the response (e.g. `{ "output": "{{ $json.output }}" }`).
+
+3. **Exact format the widget expects (JSON response)**  
+   For a non-streaming JSON response, the widget uses the first of these that exists: `data.output`, `data.message`, `data.reply`, `data.text`. So a minimal valid response is:  
+   `{ "output": "Here is the reply from the AI." }`
+
+If you use **Respond to Webhook** and the AI Agent’s output item has the reply in a field (often `output` or `message`), set the response body to:
+
+```json
+{ "output": "{{ $json.output }}" }
+```
+
+(or the correct field name from your Agent node’s output). Then the widget will show that string in the chat.
+
+### Streaming (optional)
+
+The widget also supports streaming: if the response has a non-JSON `Content-Type` and a body (e.g. SSE with `data: ...` lines or plain text), it will append chunks to the message as they arrive. For most setups, returning JSON with `output` is enough.
+
+---
+
 ## Summary
 
 - **Vector store**: Use table `widget_documents` and query name `match_documents`; embedding dimension 1536 (e.g. Gemini with output dimensionality 1536).
 - **Tools in n8n**: Add Tool nodes that call `POST /api/quote/generate` (with X-API-Key), Supabase for contacts, and (optionally) your send-email and checkout endpoints once they accept X-API-Key. Pass `widgetId` and `conversationId` from the chat trigger into every tool call.
+- **Response**: The widget waits for the webhook’s HTTP response (no separate callback). Add a **Respond to Webhook** node connected to the AI Agent output, and return JSON with `{ "output": "..." }` (or `message` / `reply` / `text`) so the chat can display the reply.

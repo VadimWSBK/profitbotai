@@ -181,12 +181,6 @@
 		if (useN8n) {
 			let n8nStreamHandled = false;
 			try {
-				const bot = config.bot ?? { role: '', tone: '', instructions: '' };
-				const parts: string[] = [];
-				if (bot.role?.trim()) parts.push(bot.role.trim());
-				if (bot.tone?.trim()) parts.push(`Tone: ${bot.tone.trim()}`);
-				if (bot.instructions?.trim()) parts.push(bot.instructions.trim());
-				const systemPrompt = parts.length > 0 ? parts.join('\n\n') : undefined;
 				const effectiveSessionId = sessionId && sessionId !== 'preview' ? sessionId : 'preview';
 				let conversationId: string | undefined;
 				if (widgetId && effectiveSessionId !== 'preview') {
@@ -200,6 +194,7 @@
 						// continue without conversationId
 					}
 				}
+				// Role, tone, instructions: n8n can load from Supabase (widgets.config.bot or agents) by widgetId
 				const res = await fetch(config.n8nWebhookUrl, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
@@ -207,9 +202,7 @@
 						message: trimmed,
 						sessionId: effectiveSessionId,
 						...(widgetId && { widgetId }),
-						...(conversationId && { conversationId }),
-						...(systemPrompt && { systemPrompt }),
-						...(systemPrompt && { role: bot.role?.trim() || undefined, tone: bot.tone?.trim() || undefined, instructions: bot.instructions?.trim() || undefined })
+						...(conversationId && { conversationId })
 					})
 				});
 				const contentType = res.headers.get('content-type') ?? '';
