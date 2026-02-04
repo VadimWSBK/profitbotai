@@ -797,13 +797,9 @@
 		padding: 0.75em 0;
 		vertical-align: top;
 	}
+	:global(.chat-checkout-table thead th:last-child),
 	:global(.chat-checkout-table td:last-child) {
-		padding-left: 1em;
-	}
-	:global(.chat-checkout-total-td) {
-		text-align: right;
-		font-weight: 600;
-		white-space: nowrap;
+		display: none;
 	}
 	:global(.checkout-img-wrap) {
 		position: relative;
@@ -837,6 +833,23 @@
 	:global(.checkout-product-cell) {
 		display: block;
 		font-size: 0.95em;
+	}
+	:global(.checkout-price-grid) {
+		display: flex;
+		gap: 1.5em;
+		margin-top: 0.5em;
+	}
+	:global(.checkout-price-block) {
+		display: flex;
+		flex-direction: column;
+		font-size: 0.85em;
+	}
+	:global(.checkout-price-label) {
+		opacity: 0.85;
+	}
+	:global(.checkout-price-value) {
+		margin-top: 0.1em;
+		font-weight: 600;
 	}
 	:global(.checkout-variant-line) {
 		display: block;

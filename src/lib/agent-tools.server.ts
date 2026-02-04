@@ -598,19 +598,27 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 			const fmt = (n: number) => n.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 			const totalItems = lineItems.reduce((sum, li) => sum + li.quantity, 0);
 			const tableRows = lineItems.map((li) => {
-				const lineTotal = Number.parseFloat(li.price) * li.quantity;
+				const unitPrice = Number.parseFloat(li.price);
+				const lineTotal = unitPrice * li.quantity;
 				// Image cell: image markdown then " × qty" for badge overlay (single line so table parse works)
 				const imageCell = li.imageUrl
 					? `![${li.title}](${li.imageUrl}) × ${li.quantity}`
 					: `— × ${li.quantity}`;
-				// Product cell: "name %% variant || qty × unit price" so frontend shows name, variant, then qty and unit price
+				// Product cell for checkout layout:
+				// "name %% variant %% unit price %% line total"
+				// Frontend renders:
+				// - line 1: name
+				// - line 2: variant
+				// - line 3+: 2-column grid: Unit Price / Total with amounts
 				const variantMatch = li.title.match(/\d+\s*L\b/i);
 				const variantLine = variantMatch ? variantMatch[0].trim() : '';
-				const qtyPriceLine = `${li.quantity} × $${li.price}`;
+				const unitPriceDisplay = `$${fmt(unitPrice)}`;
+				const lineTotalDisplay = `$${fmt(lineTotal)}`;
 				const productCell = variantLine
-					? `${li.title} %% ${variantLine} || ${qtyPriceLine}`
-					: `${li.title} || ${qtyPriceLine}`;
-				return `| ${imageCell} | ${productCell} | $${fmt(lineTotal)} |`;
+					? `${li.title} %% ${variantLine} %% ${unitPriceDisplay} %% ${lineTotalDisplay}`
+					: `${li.title} %% %% ${unitPriceDisplay} %% ${lineTotalDisplay}`;
+				// Keep Total column for structure, but UI hides it and uses the value inside productCell.
+				return `| ${imageCell} | ${productCell} | ${lineTotalDisplay} |`;
 			});
 			const previewParts: string[] = [
 				'**Your checkout preview**',

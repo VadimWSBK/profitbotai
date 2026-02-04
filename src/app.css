@@ -88,13 +88,9 @@ body:has(.app-layout) {
 	padding: 0.75em 0;
 	vertical-align: top;
 }
+.rich-message-content .chat-checkout-table thead th:last-child,
 .rich-message-content .chat-checkout-table td:last-child {
-	padding-left: 1em;
-}
-.rich-message-content .chat-checkout-total-td {
-	text-align: right;
-	font-weight: 600;
-	white-space: nowrap;
+	display: none;
 }
 .rich-message-content .checkout-img-wrap {
 	position: relative;
@@ -128,6 +124,23 @@ body:has(.app-layout) {
 .rich-message-content .checkout-product-cell {
 	display: block;
 	font-size: 0.95em;
+}
+.rich-message-content .checkout-price-grid {
+	display: flex;
+	gap: 1.5em;
+	margin-top: 0.5em;
+}
+.rich-message-content .checkout-price-block {
+	display: flex;
+	flex-direction: column;
+	font-size: 0.85em;
+}
+.rich-message-content .checkout-price-label {
+	color: rgb(107 114 128);
+}
+.rich-message-content .checkout-price-value {
+	margin-top: 0.1em;
+	font-weight: 600;
 }
 .rich-message-content .checkout-variant-line {
 	display: block;

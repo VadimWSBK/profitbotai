@@ -62,20 +62,59 @@ function renderTableCell(
 		}
 		return imgHtml + (rest ? ` ${escape(rest)}` : '');
 	}
-	const escaped = escape(cell);
 	if (opts.isCheckoutTable && opts.header?.toLowerCase() === 'product') {
-		const qtyPriceParts = cell.split(/\s*\|\|\s*/).map((p) => p.trim()).filter(Boolean);
-		const mainPart = qtyPriceParts[0] ?? '';
-		const qtyPriceLine = qtyPriceParts[1] ?? '';
-		const mainParts = mainPart.split(/\s*%%\s*/).map((p) => p.trim()).filter(Boolean);
-		const title = mainParts[0] ?? mainPart;
-		const variant = mainParts[1] ?? '';
+		// Backwards-compatible handling for older checkout preview where product cell used "name %% variant || qty × unit price"
+		if (cell.includes('||')) {
+			const qtyPriceParts = cell
+				.split(/\s*\|\|\s*/)
+				.map((p) => p.trim())
+				.filter(Boolean);
+			const mainPart = qtyPriceParts[0] ?? '';
+			const qtyPriceLine = qtyPriceParts[1] ?? '';
+			const mainParts = mainPart
+				.split(/\s*%%\s*/)
+				.map((p) => p.trim())
+				.filter(Boolean);
+			const title = mainParts[0] ?? mainPart;
+			const variant = mainParts[1] ?? '';
+			let html = `<span class="checkout-product-cell"><strong>${escape(title)}</strong>`;
+			if (variant) html += `<br /><span class="checkout-variant-line">${escape(variant)}</span>`;
+			if (qtyPriceLine) html += `<br /><span class="checkout-qty-price-line">${escape(qtyPriceLine)}</span>`;
+			html += '</span>';
+			return html;
+		}
+		// New layout: "name %% variant %% unit price %% line total"
+		const parts = cell
+			.split(/\s*%%\s*/)
+			.map((p) => p.trim());
+		const title = parts[0] ?? '';
+		const variant = parts[1] ?? '';
+		const unitPrice = parts[2] ?? '';
+		const total = parts[3] ?? '';
 		let html = `<span class="checkout-product-cell"><strong>${escape(title)}</strong>`;
-		if (variant) html += `<br /><span class="checkout-variant-line">${escape(variant)}</span>`;
-		if (qtyPriceLine) html += `<br /><span class="checkout-qty-price-line">${escape(qtyPriceLine)}</span>`;
+		if (variant) {
+			html += `<br /><span class="checkout-variant-line">${escape(variant)}</span>`;
+		}
+		if (unitPrice || total) {
+			html += '<div class="checkout-price-grid">';
+			if (unitPrice) {
+				html +=
+					'<div class="checkout-price-block"><div class="checkout-price-label">Unit Price</div><div class="checkout-price-value">' +
+					escape(unitPrice) +
+					'</div></div>';
+			}
+			if (total) {
+				html +=
+					'<div class="checkout-price-block checkout-price-block-total"><div class="checkout-price-label">Total</div><div class="checkout-price-value">' +
+					escape(total) +
+					'</div></div>';
+			}
+			html += '</div>';
+		}
 		html += '</span>';
 		return html;
 	}
+	const escaped = escape(cell);
 	const withBr = escaped.replace(/\n/g, '<br />');
 	if (opts.isCheckoutTable && opts.header?.toLowerCase() === 'total') {
 		return `<span class="checkout-total-cell">${withBr}</span>`;
