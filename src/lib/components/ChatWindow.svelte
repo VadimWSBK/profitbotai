@@ -558,12 +558,14 @@
 		return joined.replace(/\n/g, '<br />');
 	}
 
-	/** Format full message: tables as HTML tables, rest as links/images/line breaks. */
+	/** Format full message: tables as HTML tables (wrapped in scrollable div), rest as links/images/line breaks. */
 	function formatMessage(content: string): string {
 		const parts = splitTablesAndText(content);
 		return parts
 			.map((p) =>
-				p.type === 'table' ? markdownTableToHtml(p.content) : formatMessageWithLinks(p.content)
+				p.type === 'table'
+					? `<div class="chat-table-wrapper">${markdownTableToHtml(p.content)}</div>`
+					: formatMessageWithLinks(p.content)
 			)
 			.join('');
 	}
@@ -863,11 +865,19 @@
 	:global(.chat-message-link:hover) {
 		opacity: 0.9;
 	}
+	:global(.chat-table-wrapper) {
+		overflow-x: auto;
+		-webkit-overflow-scrolling: touch;
+		margin: 0.5em 0;
+		max-width: 100%;
+	}
+	:global(.chat-table-wrapper .chat-message-table) {
+		width: max-content;
+		min-width: 100%;
+	}
 	:global(.chat-message-table) {
-		width: 100%;
 		border-collapse: collapse;
 		font-size: 0.95em;
-		margin: 0.5em 0;
 	}
 	:global(.chat-message-table th),
 	:global(.chat-message-table td) {

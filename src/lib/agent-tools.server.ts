@@ -545,7 +545,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 			if (!imageBySize[10] && env.DIY_PRODUCT_IMAGE_10L?.trim()) imageBySize[10] = env.DIY_PRODUCT_IMAGE_10L.trim();
 			if (!imageBySize[5] && env.DIY_PRODUCT_IMAGE_5L?.trim()) imageBySize[5] = env.DIY_PRODUCT_IMAGE_5L.trim();
 
-			const lineItems: Array<{ title: string; quantity: number; price: string; imageUrl?: string }> = [];
+			const lineItems: Array<{ title: string; quantity: number; price: string; imageUrl?: string; variantId?: number }> = [];
 			for (const p of products) {
 				const qty = countsBySize[p.sizeLitres] ?? 0;
 				if (qty > 0) {
@@ -553,7 +553,8 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 						title: p.name,
 						quantity: qty,
 						price: p.price.toFixed(2),
-						imageUrl: p.imageUrl ?? imageBySize[p.sizeLitres]
+						imageUrl: p.imageUrl ?? imageBySize[p.sizeLitres],
+						variantId: p.shopifyVariantId ?? undefined
 					});
 				}
 			}
@@ -578,7 +579,12 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 			const noteParts = lineItems.map((li) => `${li.quantity}× ${li.title}`).join(', ');
 			const result = await createDraftOrder(config, {
 				email: email?.trim() || c.contact?.email?.trim() || undefined,
-				line_items: lineItems.map((li) => ({ title: li.title, quantity: li.quantity, price: li.price })),
+				line_items: lineItems.map((li) => ({
+					title: li.title,
+					quantity: li.quantity,
+					price: li.price,
+					variant_id: li.variantId
+				})),
 				note: `DIY quote: ${litres}L total (${noteParts})`,
 				tags: 'diy,chat',
 				currency,
@@ -588,21 +594,22 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 			if (!result.ok) return { error: result.error ?? 'Failed to create checkout link' };
 			if (!result.checkoutUrl) return { error: 'Checkout link was not returned by Shopify.' };
 
-			// Build checkout preview markdown: product images (if any), table with amounts, then link
+			// Build checkout preview markdown: product images (from product_pricing), table with name, variant ID, qty, price, total
 			const fmt = (n: number) => n.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 			const imageLines = lineItems
 				.filter((li) => li.imageUrl)
 				.map((li) => `![${li.title}](${li.imageUrl})`)
 				.join(' ');
 			const tableRows = lineItems.map(
-				(li) => `| ${li.title} | ${li.quantity} | $${li.price} | $${fmt(Number.parseFloat(li.price) * li.quantity)} |`
+				(li) =>
+					`| ${li.title} | ${li.variantId ?? '—'} | ${li.quantity} | $${li.price} | $${fmt(Number.parseFloat(li.price) * li.quantity)} |`
 			);
 			const previewParts: string[] = [
 				'**Your checkout preview**',
 				'',
 				imageLines ? imageLines + '\n' : '',
-				'| Product | Qty | Price each | Total |',
-				'|---------|-----|------------|-------|',
+				'| Product | Variant ID | Qty | Price each | Total |',
+				'|---------|------------|-----|------------|-------|',
 				...tableRows,
 				'',
 				`**Subtotal:** $${fmt(subtotal)} ${currency}`,

@@ -173,7 +173,7 @@ export type ShopifyProductWithImage = {
 	id: number;
 	title: string;
 	imageSrc: string | null;
-	variants: Array<{ id: number; price: string }>;
+	variants: Array<{ id: number; price: string; option1?: string | null; option2?: string | null; option3?: string | null }>;
 };
 
 /**
@@ -188,7 +188,7 @@ export async function listProductsWithImages(
 		id: number;
 		title: string;
 		image?: { src?: string } | null;
-		variants?: Array<{ id: number; price: string }>;
+		variants?: Array<{ id: number; price: string; option1?: string | null; option2?: string | null; option3?: string | null }>;
 	}> }>(config, 'products.json', {
 		query: {
 			limit,
@@ -201,7 +201,15 @@ export async function listProductsWithImages(
 		id: p.id,
 		title: p.title ?? '',
 		imageSrc: (p.image && typeof p.image === 'object' && p.image.src) ? p.image.src : null,
-		variants: Array.isArray(p.variants) ? p.variants.map((v) => ({ id: v.id, price: String(v.price ?? '') })) : []
+		variants: Array.isArray(p.variants)
+			? p.variants.map((v) => ({
+					id: v.id,
+					price: String(v.price ?? ''),
+					option1: v.option1 ?? null,
+					option2: v.option2 ?? null,
+					option3: v.option3 ?? null
+				}))
+			: []
 	}));
 	return { products };
 }
