@@ -627,12 +627,16 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 				'|--|---------|-------|',
 				...tableRows,
 				'',
-				`Subtotal · ${totalItems} items — $${fmt(subtotal)} ${currency}`,
+				'| Item | Details | Amount |',
+				'|------|---------|--------|',
+				`| Subtotal | ${totalItems} items | $${fmt(subtotal)} ${currency} |`,
 				...(appliedDiscount
-					? [`Order discount · ${appliedDiscount.value}% OFF — -$${fmt(discountAmount)}`, '']
-					: []),
-				`**Total** — ${currency} $${fmt(total)}`,
-				...(appliedDiscount ? [`Total savings — $${fmt(discountAmount)}`, ''] : []),
+					? [
+							`| Order discount | ${appliedDiscount.value}% OFF | -$${fmt(discountAmount)} |`,
+							`| Total | ${currency} | $${fmt(total)} |`,
+							`| Total savings |  | $${fmt(discountAmount)} |`
+						]
+					: [`| Total | ${currency} | $${fmt(total)} |`]),
 				'',
 				`[Buy now – complete your purchase](${result.checkoutUrl})`
 			];
