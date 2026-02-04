@@ -57,8 +57,10 @@ Use your app’s base URL (e.g. `https://your-domain.com`) and pass **X-API-Key*
 
 | Tool / goal              | Method & endpoint                               | Auth        | Body (typical) |
 |--------------------------|--------------------------------------------------|------------|----------------|
+| **Get current contact**  | GET `/api/widgets/{widgetId}/contacts?conversationId={id}` | X-API-Key or session | — |
+| **Get product pricing**  | GET `/api/widgets/{widgetId}/product-pricing`   | X-API-Key or session | — |
 | **Generate quote PDF**   | POST `/api/quote/generate`                      | X-API-Key  | `widgetId`, `conversationId`, `customer?`, `project?` (see endpoint types) |
-| **Update contact**       | PATCH `/api/widgets/{widgetId}/contacts`        | X-API-Key or session | `conversationId`, `name?`, `email?`, `phone?`, `address?`, `roof_size_sqm?` |
+| **Update contact**       | PATCH `/api/widgets/{widgetId}/contacts`        | X-API-Key or session | `conversationId`, `name?`, `email?`, `phone?`, `address?`, `street_address?`, `city?`, `state?`, `postcode?`, `country?`, `roof_size_sqm?` |
 | **Send email to contact** | POST `/api/conversations/{conversationId}/send-email` | X-API-Key or session | `subject`, `body` |
 | **Append quote to contact** | POST `/api/widgets/{widgetId}/contacts/pdf-quote` | Session only for now | `conversationId` or `email`, `pdfUrl` |
 
@@ -85,10 +87,21 @@ The chat widget renders Markdown, so `[Download Quote](url)` will show as a clic
      - `conversationId`: from chat trigger (e.g. `{{ $json.conversationId }}`).
      - Optionally `customer`, `project` if your payload provides them.
 
-2. **Contact data (search / get current contact)**  
-   If n8n has **Supabase** credentials (service role or key with access to `contacts`):
-   - Add a **Tool** “Get current contact” that runs a Supabase query: get contact by `conversation_id` and `widget_id` (from chat trigger).
-   - Add a **Tool** “Search contacts” that runs a Supabase query: filter `contacts` by `widget_id` and name/email (from tool input).
+2. **Contact and product pricing (so the AI has current contact + Shopify/product pricing)**  
+   Add **Tools** that call your app (no Supabase node needed in n8n):
+   - **Get current contact** — **Tool** with **HTTP Request** GET  
+     `https://your-domain.com/api/widgets/{{ $json.widgetId }}/contacts?conversationId={{ $json.conversationId }}`  
+     and header `X-API-Key: <SIGNED_URL_API_KEY>`. Returns `{ contact: { name, email, phone, address, roofSizeSqm, ... } }` or `{ contact: null }`.  
+     *Description for AI:* e.g. "Get the current contact for this conversation (name, email, phone, address, roof size). Use before asking for details or generating a quote so you only ask for missing info."
+   - **Get product pricing** — **Tool** with **HTTP Request** GET  
+     `https://your-domain.com/api/widgets/{{ $json.widgetId }}/product-pricing`  
+     and header `X-API-Key: <SIGNED_URL_API_KEY>`. Returns `{ products: [ { name, sizeLitres, price, currency, coverageSqm }, ... ] }` (DIY bucket sizes and prices).  
+     *Description for AI:* e.g. "Get current DIY product pricing (bucket sizes, prices, coverage in m²). Use when calculating a DIY quote or when the user asks about pricing."
+   - **Update contact** — **Tool** with **HTTP Request** PATCH  
+     `https://your-domain.com/api/widgets/{{ $json.widgetId }}/contacts`  
+     and header `X-API-Key: <SIGNED_URL_API_KEY>`. Body can include: `conversationId` (required), and any of `name`, `email`, `phone`, `address` (single line), or **split address**: `street_address`, `city`, `state`, `postcode`, `country`, plus `roof_size_sqm`. Only include fields you want to set; empty values are ignored.  
+     *Description for AI:* e.g. "Update the current contact. When the user gives an address, save it in the correct columns: street_address (street and number), city, state, postcode, country. Also accept name, email, phone, roof_size_sqm. Call as soon as the user provides any of these; use Get current contact first to avoid overwriting with empty values."  
+   The **vector store** is for agent rules (RAG). Contact and pricing are **structured data** — the AI gets them by calling these tools when needed.
 
 3. **Send email**  
    Use your existing Resend (or other) integration in n8n, or call your app’s send-email endpoint if you add API key auth for it. The logic is in `sendContactEmail`; from n8n you’d pass conversation/contact identifiers and email content.
@@ -234,7 +247,7 @@ If n8n shows success but the reply doesn’t appear in the chat (or you see “O
 ## Summary
 
 - **Vector store**: Use table `widget_documents` and query name `match_documents`; embedding **768 dimensions** (Gemini default in n8n). For **agent rules (RAG)** add a second Vector Store: table `agent_rules`, query name `match_agent_rules_documents`, metadata filter `agent_id` = `{{ $json.agentId }}`.
-- **Tools in n8n**: Add Tool nodes that call `POST /api/quote/generate` (with X-API-Key), Supabase for contacts, and (optionally) your send-email and checkout endpoints once they accept X-API-Key. Pass `widgetId` and `conversationId` from the chat trigger into every tool call.
+- **Tools in n8n**: Add Tool nodes that call `POST /api/quote/generate` (with X-API-Key), `GET /api/widgets/{id}/contacts` and `GET /api/widgets/{id}/product-pricing` for contact and DIY pricing, and (optionally) send-email and checkout endpoints. Pass `widgetId` and `conversationId` from the chat trigger; use header `X-API-Key` (same as `SIGNED_URL_API_KEY`).
 - **Response**: The widget waits for the webhook’s HTTP response (no separate callback). Add a **Respond to Webhook** node connected to the AI Agent output, and return JSON with `{ "output": "..." }` (or `message` / `reply` / `text`) so the chat can display the reply.
 
 ---
