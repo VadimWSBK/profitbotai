@@ -7,9 +7,11 @@ The **PGRST202 Could not find the function public.match_documents** error is fix
 - **Migration**: `20260204110000_match_documents_rpc.sql` adds `public.match_documents(filter, match_count, query_embedding)`.
 - **Table**: It queries `widget_documents` (content, embedding, metadata). Use **Table Name** = `widget_documents` in n8n.
 - **Query name**: In the Supabase Vector Store node options, set **Query Name** to `match_documents` (this is the default).
-- **Embedding**: Use the same dimensionality as your table (1536). If using Google Gemini, set **gemini-embedding-001** with **output dimensionality** 1536.
+- **Embedding**: Use **768 dimensions** (Supabase tables use `vector(768)`). In n8n use the default Embeddings Google Gemini model (e.g. `text-embedding-004` or `gemini-embedding-001`), which outputs 768 by default—no dimension setting needed.
 
 Optional: to restrict results by widget, use **Metadata Filter** in n8n (e.g. `widget_id` = the widget UUID from your chat context).
+
+**Note:** All vector columns use **768 dimensions** (migration `20260204210000_vector_768_dimensions.sql`). This matches the default output of n8n’s Embeddings Google Gemini node, so you don’t need to set a dimension option there.
 
 ---
 
@@ -20,7 +22,7 @@ Your **Instructions / rules (RAG)** are stored in the `agent_rules` table (one r
 - **Migration**: `20260204200000_match_agent_rules_for_n8n.sql` adds `public.match_agent_rules_documents(filter, match_count, query_embedding)` with the same signature as `match_documents`.
 - **Table**: In n8n add a **second** Supabase Vector Store (or use this instead of `widget_documents` if you only need rules). Set **Table Name** = `agent_rules`.
 - **Query name**: Set **Query Name** to `match_agent_rules_documents`.
-- **Embedding**: Same as above — 1536 dimensions (e.g. Gemini `gemini-embedding-001` with output dimensionality 1536).
+- **Embedding**: Same as above — **768 dimensions** (default for Gemini embedding models in n8n).
 - **Metadata filter**: The RPC filters by `agent_id`. In the Vector Store node set **Metadata Filter** so that `agent_id` equals the agent UUID. The chat widget sends `agentId` in the webhook body when the widget uses an agent — use **`{{ $json.agentId }}`** (or the path your trigger exposes, e.g. `{{ $json.body.agentId }}`).
 
 The widget now includes **`agentId`** in the webhook payload when the widget is configured with an agent, so n8n can pass it into the Vector Store metadata filter and only relevant rules for that agent are retrieved.
@@ -231,6 +233,17 @@ If n8n shows success but the reply doesn’t appear in the chat (or you see “O
 
 ## Summary
 
-- **Vector store**: Use table `widget_documents` and query name `match_documents`; embedding dimension 1536 (e.g. Gemini with output dimensionality 1536). For **agent rules (RAG)** add a second Vector Store: table `agent_rules`, query name `match_agent_rules_documents`, metadata filter `agent_id` = `{{ $json.agentId }}`.
+- **Vector store**: Use table `widget_documents` and query name `match_documents`; embedding **768 dimensions** (Gemini default in n8n). For **agent rules (RAG)** add a second Vector Store: table `agent_rules`, query name `match_agent_rules_documents`, metadata filter `agent_id` = `{{ $json.agentId }}`.
 - **Tools in n8n**: Add Tool nodes that call `POST /api/quote/generate` (with X-API-Key), Supabase for contacts, and (optionally) your send-email and checkout endpoints once they accept X-API-Key. Pass `widgetId` and `conversationId` from the chat trigger into every tool call.
 - **Response**: The widget waits for the webhook’s HTTP response (no separate callback). Add a **Respond to Webhook** node connected to the AI Agent output, and return JSON with `{ "output": "..." }` (or `message` / `reply` / `text`) so the chat can display the reply.
+
+---
+
+## 4. Messages menu and n8n history
+
+When a widget uses n8n, chat messages are stored in **n8n’s Postgres Chat Memory** (table `n8n_chat_histories`, keyed by `session_id`). The app’s **Messages** menu (conversation list and thread view) now uses that same source for those conversations:
+
+- Opening a conversation whose widget has an n8n webhook URL loads chat messages from **`n8n_chat_histories`** (by `session_id`) instead of `widget_conversation_messages`.
+- **Polling** (e.g. every 3s) with `since=<last message time>` returns new messages as n8n appends them, so new replies show in the Messages view without refresh.
+
+Ensure n8n is configured to use **Postgres Chat Memory** pointing at your Supabase project and that the table name is `n8n_chat_histories` (or matches what your n8n workflow uses). The widget’s get-or-create conversation call still creates a row in `widget_conversations` so the conversation appears in the list; only the message body is read from n8n’s table.

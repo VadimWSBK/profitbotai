@@ -15,7 +15,7 @@ import { env } from '$env/dynamic/private';
 
 const EMBEDDING_MODEL = 'text-embedding-3-small';
 const GEMINI_EMBED_MODEL = 'gemini-embedding-001';
-const EMBED_DIMENSION = 1536; // Supabase widget_documents.embedding vector(1536)
+const EMBED_DIMENSION = 768; // Supabase vector(768); matches n8n Gemini default
 const CHUNK_SIZE = 800;
 const CHUNK_OVERLAP = 100;
 
@@ -144,7 +144,7 @@ function normalizeL2(vec: number[]): number[] {
 	return vec.map((x) => x / norm);
 }
 
-/** Get embeddings via OpenAI (text-embedding-3-small, 1536 dims). */
+/** Get embeddings via OpenAI (text-embedding-3-small, 768 dims to match Supabase). */
 async function getEmbeddingsOpenAI(texts: string[], apiKey: string): Promise<number[][]> {
 	const client = new OpenAI({ apiKey });
 	const batchSize = 20;
@@ -153,7 +153,8 @@ async function getEmbeddingsOpenAI(texts: string[], apiKey: string): Promise<num
 		const batch = texts.slice(i, i + batchSize);
 		const res = await client.embeddings.create({
 			model: EMBEDDING_MODEL,
-			input: batch
+			input: batch,
+			dimensions: EMBED_DIMENSION
 		});
 		const order = res.data.toSorted((a, b) => (a.index ?? 0) - (b.index ?? 0));
 		for (const item of order) {
@@ -163,7 +164,7 @@ async function getEmbeddingsOpenAI(texts: string[], apiKey: string): Promise<num
 	return out;
 }
 
-/** Get embeddings via Gemini API (gemini-embedding-001, 1536 dims, RETRIEVAL_DOCUMENT, normalized). */
+/** Get embeddings via Gemini API (gemini-embedding-001, 768 dims, RETRIEVAL_DOCUMENT, normalized). */
 async function getEmbeddingsGemini(texts: string[], apiKey: string): Promise<number[][]> {
 	const batchSize = 20;
 	const out: number[][] = [];
