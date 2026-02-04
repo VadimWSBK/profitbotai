@@ -90,6 +90,19 @@ The vector store is for RAG: “retrieve documents relevant to this query.” Ro
 
 ---
 
+**Step-by-step: AI Agent node (when the widget sends systemPrompt)**
+
+1. **Prompt (User Message)**  
+   Set to **`{{ $json.message }}`** (not `chatInput` — the widget sends the user text in `message`). This fixes the “No prompt specified” error.
+
+2. **System Message**  
+   In the AI Agent node, open **Options** (or the section that has “System Message”, “Instructions”, or “System prompt”). Set it to **`{{ $json.systemPrompt }}`**.  
+   Your trigger already receives `systemPrompt`, `role`, `tone`, and `instructions` from the widget; using `systemPrompt` is enough (it’s the combined role + tone + instructions).  
+   If your node only has separate fields, you can use:  
+   `{{ $json.role }}\n\nTone: {{ $json.tone }}\n\n{{ $json.instructions }}`
+
+3. Save the node and run again; the agent will use the user message and your Gaz persona.
+
 **1. User message (prompt)**  
 The widget sends the user’s text in **`message`**, not `chatInput`. In the AI Agent node, set **Prompt (User Message)** to:
 
@@ -97,7 +110,7 @@ The widget sends the user’s text in **`message`**, not `chatInput`. In the AI 
 
 If your trigger puts the body under another key (e.g. `body`), use e.g. `{{ $json.body.message }}`. Do **not** use `chatInput` unless your trigger actually outputs that field.
 
-**2. System prompt (role, tone, instructions)**  
+**2. System prompt (role, tone, instructions)** — alternative: load from DB  
 Use a **Supabase node between the chat trigger and the AI Agent** to load the prompt, then pass it into the Agent. Do **not** add this as a tool — tools are for actions the AI chooses (e.g. quote, search); the system prompt is fixed context.
 
 **Flow:** When chat message received → **Supabase “Get a row”** (or get widget + optional agent) → **Merge** (so the Agent gets both the trigger payload and the Supabase row) → AI Agent.

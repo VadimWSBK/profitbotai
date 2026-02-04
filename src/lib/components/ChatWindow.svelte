@@ -107,11 +107,6 @@
 			messagesLoading = false;
 			return;
 		}
-		// Skip when using n8n: we don't store messages on our side for that path.
-		if (config.n8nWebhookUrl) {
-			messagesLoading = false;
-			return;
-		}
 		try {
 			const res = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
 			const data = await res.json().catch(() => ({}));

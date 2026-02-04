@@ -5,6 +5,7 @@ import { getSupabase } from '$lib/supabase.server';
 /**
  * GET /api/widgets/[id]/messages?session_id= – messages for this widget + session (for embed).
  * No auth; used by the chat widget to load history and poll for human agent replies.
+ * When the widget uses n8n, history is loaded from n8n_chat_histories (Postgres Chat Memory).
  */
 export const GET: RequestHandler = async (event) => {
 	const widgetId = event.params.id;
@@ -14,6 +15,40 @@ export const GET: RequestHandler = async (event) => {
 	}
 	try {
 		const supabase = getSupabase();
+		// Check if widget uses n8n – then load from n8n_chat_histories
+		const { data: widget } = await supabase
+			.from('widgets')
+			.select('n8n_webhook_url')
+			.eq('id', widgetId)
+			.single();
+		const useN8nHistory =
+			widget?.n8n_webhook_url != null && String(widget.n8n_webhook_url).trim() !== '';
+		if (useN8nHistory) {
+			const { data: n8nRows, error: n8nErr } = await supabase
+				.from('n8n_chat_histories')
+				.select('id, message')
+				.eq('session_id', sessionId.trim())
+				.order('id', { ascending: true });
+			if (n8nErr) {
+				console.error('n8n_chat_histories select:', n8nErr);
+				return json({ messages: [] });
+			}
+			type N8nMessage = { type?: string; content?: string };
+			const raw = (n8nRows ?? []) as { id: number; message: N8nMessage }[];
+			const messages = raw.map((r) => {
+				const msg = r.message ?? {};
+				const type = msg.type === 'human' || msg.type === 'user' ? 'user' : 'bot';
+				const content = typeof msg.content === 'string' ? msg.content : '';
+				return {
+					id: String(r.id),
+					role: type as 'user' | 'bot',
+					content,
+					createdAt: ''
+				};
+			});
+			return json({ messages, agentTyping: false, agentAvatarUrl: null });
+		}
+		// Direct LLM path: load from widget_conversation_messages
 		const { data: conv, error: convError } = await supabase
 			.from('widget_conversations')
 			.select('id, is_ai_active, agent_typing_until, agent_typing_by')
@@ -52,7 +87,6 @@ export const GET: RequestHandler = async (event) => {
 					: undefined
 		}));
 		const now = new Date().toISOString();
-		// Typing when: (human agent typing) or (AI generating: typing_until set and agent_typing_by null)
 		const agentTyping =
 			conv.agent_typing_until &&
 			conv.agent_typing_until > now &&
