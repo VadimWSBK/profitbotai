@@ -603,10 +603,13 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 				const imageCell = li.imageUrl
 					? `![${li.title}](${li.imageUrl}) × ${li.quantity}`
 					: `— × ${li.quantity}`;
-				// Product cell: "name %% variant" so frontend can show name bold + variant smaller
+				// Product cell: "name %% variant || qty × unit price" so frontend shows name, variant, then qty and unit price
 				const variantMatch = li.title.match(/\d+\s*L\b/i);
 				const variantLine = variantMatch ? variantMatch[0].trim() : '';
-				const productCell = variantLine ? `${li.title} %% ${variantLine}` : li.title;
+				const qtyPriceLine = `${li.quantity} × $${li.price}`;
+				const productCell = variantLine
+					? `${li.title} %% ${variantLine} || ${qtyPriceLine}`
+					: `${li.title} || ${qtyPriceLine}`;
 				return `| ${imageCell} | ${productCell} | $${fmt(lineTotal)} |`;
 			});
 			const previewParts: string[] = [

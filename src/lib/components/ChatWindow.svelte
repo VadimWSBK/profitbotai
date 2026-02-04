@@ -465,11 +465,17 @@
 		}
 		const escaped = escape(cell);
 		if (opts.isCheckoutTable && opts.header?.toLowerCase() === 'product') {
-			const parts = cell.split(/\s*%%\s*/).map((p) => p.trim()).filter(Boolean);
-			if (parts.length >= 2) {
-				return `<span class="checkout-product-cell"><strong>${escape(parts[0])}</strong><br /><span class="checkout-variant-line">${escape(parts.slice(1).join(' · '))}</span></span>`;
-			}
-			return `<span class="checkout-product-cell">${escaped}</span>`;
+			const qtyPriceParts = cell.split(/\s*\|\|\s*/).map((p) => p.trim()).filter(Boolean);
+			const mainPart = qtyPriceParts[0] ?? '';
+			const qtyPriceLine = qtyPriceParts[1] ?? '';
+			const mainParts = mainPart.split(/\s*%%\s*/).map((p) => p.trim()).filter(Boolean);
+			const title = mainParts[0] ?? mainPart;
+			const variant = mainParts[1] ?? '';
+			let html = `<span class="checkout-product-cell"><strong>${escape(title)}</strong>`;
+			if (variant) html += `<br /><span class="checkout-variant-line">${escape(variant)}</span>`;
+			if (qtyPriceLine) html += `<br /><span class="checkout-qty-price-line">${escape(qtyPriceLine)}</span>`;
+			html += '</span>';
+			return html;
 		}
 		const withBr = escaped.replace(/\n/g, '<br />');
 		if (opts.isCheckoutTable && opts.header?.toLowerCase() === 'total') {
@@ -1011,13 +1017,19 @@
 	:global(.checkout-img-wrap) {
 		position: relative;
 		display: inline-block;
-	}
-	:global(.chat-checkout-table .chat-table-cell-image) {
 		width: 64px;
 		height: 64px;
-		object-fit: cover;
+		flex-shrink: 0;
+		overflow: hidden;
 		border-radius: 6px;
+	}
+	:global(.chat-checkout-table .chat-table-cell-image) {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		object-position: center;
 		display: block;
+		border-radius: 6px;
 	}
 	:global(.qty-badge) {
 		position: absolute;
@@ -1040,6 +1052,13 @@
 		margin-top: 0.2em;
 		font-size: 0.85em;
 		opacity: 0.85;
+		font-weight: 400;
+	}
+	:global(.checkout-qty-price-line) {
+		display: block;
+		margin-top: 0.2em;
+		font-size: 0.85em;
+		opacity: 0.9;
 		font-weight: 400;
 	}
 	:global(.chat-table-cell-image) {

@@ -134,17 +134,17 @@ const RULES = [
 	},
 	{
 		content:
-			'DIY QUOTE: When customer wants DIY, do NOT use generate_quote. Call shopify_create_diy_checkout_link first (with roof_size_sqm or bucket counts) and include the full previewMarkdown in your reply so the customer sees the checkout table and Buy now link directly. Do not first post a long Item/Details table—lead with the checkout preview and link. If Shopify is not connected, then calculate in chat and present roof size, litres, buckets, total, shipping in a short table or list.',
+			'DIY QUOTE (one step when Shopify connected): When customer asks for a DIY quote and Shopify is connected, respond in ONE message only. Call shopify_create_diy_checkout_link with roof_size_sqm or bucket counts, then reply with a short intro (e.g. "Here is your one-click checkout for your 222 m² roof:") followed by the full previewMarkdown. Do NOT post an Item/Details table first. Do NOT ask "would you like a checkout link?"—give the breakdown and checkout link together in one step. If Shopify is not connected, then calculate in chat and present roof size, litres, buckets, total, shipping in a short table or list.',
 		tags: ['quote', 'diy', 'delivery']
 	},
 	{
 		content:
-			'DIY QUOTE FORMAT: Roof Size (m²), Total Product Required (litres), Recommended Buckets (X x 15L, Y x 10L, Z x 5L), Total Product Cost AUD, Free Australia wide shipping, 2–8 business days. Include colour recommendation: White provides best UV protection; darker colours reduce thermal performance.',
+			'DIY QUOTE FORMAT: When Shopify is connected, do NOT use a separate Item/Details table—use the checkout preview from shopify_create_diy_checkout_link (it shows product, qty, total and Buy now link). When Shopify is NOT connected, present: Roof Size (m²), Total Product Required (litres), Recommended Buckets (X x 15L, Y x 10L, Z x 5L), Total Product Cost AUD, Free Australia wide shipping. Include colour recommendation: White provides best UV protection; darker colours reduce thermal performance.',
 		tags: ['quote', 'diy', 'format']
 	},
 	{
 		content:
-			'QUOTE FORMATTING RULES (MANDATORY): When presenting a DIY quote or any quote summary in chat, NEVER use ** for bolding. Format as a markdown table or a clean structured list. Example table format:\n\n| Item | Details |\n|------|----------|\n| Coverage needed | 200 litres... |\n| Buckets required | 14 x 15L... |\n| Total price | $5,459.86 AUD |\n| Shipping | Free Australia-wide... |\n\nOr use a simple list with colons: "Coverage needed: 200 litres...", one line per item. Never use asterisks or markdown bold syntax.',
+			'QUOTE FORMATTING RULES: When Shopify is connected and customer wants DIY, do NOT present an Item/Details table—use only the checkout preview from shopify_create_diy_checkout_link. When Shopify is not connected or for non-DIY quotes, use a markdown table or "Label: value" list. Never use ** for bolding in quote text.',
 		tags: ['quote', 'format', 'diy', 'presentation']
 	},
 	{
@@ -159,7 +159,7 @@ const RULES = [
 	},
 	{
 		content:
-			'DIY CHECKOUT LINK (when Shopify connected): When customer asks for a DIY quote, call shopify_create_diy_checkout_link immediately with roof_size_sqm (or bucket counts) and paste the full previewMarkdown from the tool into your reply so the customer sees the checkout table (product, qty) and Buy now link. Do not ask "would you like a link?" first—show the checkout table and link directly.',
+			'DIY CHECKOUT LINK (one step, when Shopify connected): When customer asks for a DIY quote, in the SAME reply: (1) call shopify_create_diy_checkout_link with roof_size_sqm or bucket counts, (2) paste the full previewMarkdown so they see the checkout table and Buy now link. Never show an Item/Details breakdown first and then ask "would you like a checkout link?"—always give the breakdown and the checkout link together in one message.',
 		tags: ['quote', 'diy', 'checkout', 'shopify']
 	},
 	{
