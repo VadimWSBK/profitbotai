@@ -20,3 +20,134 @@ body:has(.app-layout) {
 	word-break: normal;
 	overflow-wrap: break-word;
 }
+
+/* Messages menu: render tables and checkout preview like the chat widget (shared with .rich-message-content) */
+.rich-message-content .chat-cta-button {
+	display: inline-block;
+	text-decoration: none;
+	padding: 0.5em 1em;
+	margin-top: 0.5em;
+	border-radius: 8px;
+	font-weight: 600;
+	background-color: rgb(217 119 6);
+	color: white;
+	border: 1px solid rgb(180 83 9);
+	transition: background-color 0.15s, border-color 0.15s;
+}
+.rich-message-content .chat-cta-button:hover {
+	background-color: rgb(180 83 9);
+	border-color: rgb(146 64 14);
+}
+.rich-message-content .chat-table-wrapper {
+	overflow-x: auto;
+	-webkit-overflow-scrolling: touch;
+	margin: 0.5em 0;
+	max-width: 100%;
+}
+.rich-message-content .chat-table-wrapper .chat-message-table {
+	width: max-content;
+	min-width: 100%;
+}
+.rich-message-content .chat-message-table {
+	border-collapse: collapse;
+	font-size: 0.95em;
+}
+.rich-message-content .chat-message-table th,
+.rich-message-content .chat-message-table td {
+	border: 1px solid rgb(209 213 219);
+	padding: 0.4em 0.6em;
+	text-align: left;
+}
+.rich-message-content .chat-message-table th {
+	font-weight: 600;
+}
+.rich-message-content .chat-checkout-table {
+	border: none;
+	border-collapse: collapse;
+	width: 100%;
+}
+.rich-message-content .chat-checkout-table thead th {
+	border: none;
+	background: transparent;
+	font-weight: 500;
+	font-size: 0.9em;
+	color: rgb(75 85 99);
+	padding-bottom: 0.5em;
+}
+.rich-message-content .chat-checkout-table th:first-child,
+.rich-message-content .chat-checkout-table td:first-child {
+	width: 1%;
+	white-space: nowrap;
+	vertical-align: top;
+	padding-right: 1em;
+}
+.rich-message-content .chat-checkout-table td {
+	border: none;
+	border-bottom: 1px solid rgb(229 231 235);
+	background: transparent;
+	padding: 0.75em 0;
+	vertical-align: top;
+}
+.rich-message-content .chat-checkout-table td:last-child {
+	padding-left: 1em;
+}
+.rich-message-content .chat-checkout-total-td {
+	text-align: right;
+	font-weight: 600;
+	white-space: nowrap;
+}
+.rich-message-content .checkout-img-wrap {
+	position: relative;
+	display: inline-block;
+	width: 64px;
+	height: 64px;
+	flex-shrink: 0;
+	overflow: hidden;
+	border-radius: 6px;
+}
+.rich-message-content .chat-checkout-table .chat-table-cell-image {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	object-position: center;
+	display: block;
+	border-radius: 6px;
+}
+.rich-message-content .qty-badge {
+	position: absolute;
+	top: 2px;
+	right: 2px;
+	background: rgb(17 24 39);
+	color: #fff;
+	padding: 2px 6px;
+	border-radius: 4px;
+	font-size: 0.75rem;
+	font-weight: 600;
+	line-height: 1.2;
+}
+.rich-message-content .checkout-product-cell {
+	display: block;
+	font-size: 0.95em;
+}
+.rich-message-content .checkout-variant-line {
+	display: block;
+	margin-top: 0.2em;
+	font-size: 0.85em;
+	color: rgb(107 114 128);
+	font-weight: 400;
+}
+.rich-message-content .checkout-qty-price-line {
+	display: block;
+	margin-top: 0.2em;
+	font-size: 0.85em;
+	color: rgb(75 85 99);
+	font-weight: 400;
+}
+.rich-message-content .chat-table-cell-image {
+	display: block;
+}
+.rich-message-content .chat-message-image {
+	max-width: 100%;
+	height: auto;
+	border-radius: 0.375rem;
+}

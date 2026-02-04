@@ -2,6 +2,7 @@
 	import { onDestroy, tick } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
 	import { page } from '$app/stores';
+	import { formatMessage } from '$lib/chat-message-format';
 
 	let { data } = $props();
 
@@ -648,7 +649,7 @@
 											<span class="text-xs text-gray-400">via email</span>
 										{/if}
 									</div>
-									<div class="whitespace-pre-wrap break-words [&_.email-quote]:whitespace-normal [&_a]:break-all">{@html formatMessageContent(msg.content)}</div>
+									<div class="break-words [&_.email-quote]:whitespace-normal [&_a]:break-all {msg.role === 'assistant' ? 'rich-message-content' : 'whitespace-pre-wrap'}">{@html msg.role === 'assistant' ? formatMessage(msg.content) : formatMessageContent(msg.content)}</div>
 									<div class="flex items-center gap-2 mt-1">
 										<span class="text-xs text-gray-500">{formatTime(msg.createdAt)}</span>
 										{#if msg.channel === 'email'}
