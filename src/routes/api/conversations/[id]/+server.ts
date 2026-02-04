@@ -71,14 +71,42 @@ export const GET: RequestHandler = async (event) => {
 			.order('id', { ascending: true });
 		if (!n8nErr && n8nRows?.length) {
 			type N8nMsg = { type?: string; content?: string };
+			// Filter out system/tool messages - only show user and assistant messages
+			const allowedTypes = new Set(['human', 'user', 'assistant', 'ai']);
 			const baseTime = new Date('2024-01-01T00:00:00.000Z').getTime();
-			const mapped = (n8nRows as { id: number; message: N8nMsg }[]).map((r) => {
-				const msg = r.message ?? {};
-				const role = msg.type === 'human' || msg.type === 'user' ? 'user' : 'assistant';
-				const content = typeof msg.content === 'string' ? msg.content : '';
-				const created_at = new Date(baseTime + Number(r.id) * 1000).toISOString();
-				return { id: String(r.id), role, content, read_at: null as string | null, created_at };
-			});
+			const mapped = (n8nRows as { id: number; message: N8nMsg }[])
+				.filter((r) => {
+					const msg = r.message ?? {};
+					const msgType = (msg.type ?? '').toLowerCase();
+					const content = typeof msg.content === 'string' ? msg.content : '';
+					// Exclude system/tool types
+					if (!allowedTypes.has(msgType)) return false;
+					// Also exclude messages that look like tool calls/results (even if marked as assistant)
+					if (
+						msgType === 'assistant' ||
+						msgType === 'ai' ||
+						msgType === 'tool' ||
+						msgType === 'system'
+					) {
+						// Filter out tool call patterns
+						if (
+							/^Calling\s+\w+\s+with\s+input:/i.test(content) ||
+							/^Tool\s+call:/i.test(content) ||
+							/^Function\s+call:/i.test(content) ||
+							(content.startsWith('{') && content.includes('"id"') && content.includes('"name"'))
+						) {
+							return false;
+						}
+					}
+					return true;
+				})
+				.map((r) => {
+					const msg = r.message ?? {};
+					const role = msg.type === 'human' || msg.type === 'user' ? 'user' : 'assistant';
+					const content = typeof msg.content === 'string' ? msg.content : '';
+					const created_at = new Date(baseTime + Number(r.id) * 1000).toISOString();
+					return { id: String(r.id), role, content, read_at: null as string | null, created_at };
+				});
 			if (since) {
 				chatMessages = mapped.filter((m) => m.created_at > since);
 			} else {

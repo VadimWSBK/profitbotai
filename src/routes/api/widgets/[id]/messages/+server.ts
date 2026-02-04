@@ -35,17 +35,45 @@ export const GET: RequestHandler = async (event) => {
 			}
 			type N8nMessage = { type?: string; content?: string };
 			const raw = (n8nRows ?? []) as { id: number; message: N8nMessage }[];
-			const messages = raw.map((r) => {
-				const msg = r.message ?? {};
-				const type = msg.type === 'human' || msg.type === 'user' ? 'user' : 'bot';
-				const content = typeof msg.content === 'string' ? msg.content : '';
-				return {
-					id: String(r.id),
-					role: type as 'user' | 'bot',
-					content,
-					createdAt: ''
-				};
-			});
+			// Filter out system/tool messages - only show user and assistant messages
+			const allowedTypes = new Set(['human', 'user', 'assistant', 'ai']);
+			const messages = raw
+				.filter((r) => {
+					const msg = r.message ?? {};
+					const msgType = (msg.type ?? '').toLowerCase();
+					const content = typeof msg.content === 'string' ? msg.content : '';
+					// Exclude system/tool types
+					if (!allowedTypes.has(msgType)) return false;
+					// Also exclude messages that look like tool calls/results (even if marked as assistant)
+					if (
+						msgType === 'assistant' ||
+						msgType === 'ai' ||
+						msgType === 'tool' ||
+						msgType === 'system'
+					) {
+						// Filter out tool call patterns
+						if (
+							/^Calling\s+\w+\s+with\s+input:/i.test(content) ||
+							/^Tool\s+call:/i.test(content) ||
+							/^Function\s+call:/i.test(content) ||
+							(content.startsWith('{') && content.includes('"id"') && content.includes('"name"'))
+						) {
+							return false;
+						}
+					}
+					return true;
+				})
+				.map((r) => {
+					const msg = r.message ?? {};
+					const type = msg.type === 'human' || msg.type === 'user' ? 'user' : 'bot';
+					const content = typeof msg.content === 'string' ? msg.content : '';
+					return {
+						id: String(r.id),
+						role: type as 'user' | 'bot',
+						content,
+						createdAt: ''
+					};
+				});
 			return json({ messages, agentTyping: false, agentAvatarUrl: null });
 		}
 		// Direct LLM path: load from widget_conversation_messages
