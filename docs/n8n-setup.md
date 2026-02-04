@@ -25,6 +25,18 @@ Your **Instructions / rules (RAG)** are stored in the `agent_rules` table (one r
 
 The widget now includes **`agentId`** in the webhook payload when the widget is configured with an agent, so n8n can pass it into the Vector Store metadata filter and only relevant rules for that agent are retrieved.
 
+**How retrieval works:** Rules are retrieved by **semantic similarity** between the user message (or query) and each rule’s **content**. Tags are stored in metadata for organization but are not used as filters in the RPC — so the agent gets rules whose *text* is relevant to what the user said (e.g. “quote” messages pull in quote-flow rules).
+
+**Making the agent use rules before the quote tool:** Your agent_rules contain quote-flow instructions (what to ask before generating a quote, contact collection, roof size extraction). To make the AI consistently **retrieve** those rules when the user asks for a quote (and follow them before calling the quote tool):
+
+1. **System prompt** — add one line, e.g.:  
+   *“Before using the quote generation tool, retrieve relevant instructions from the knowledge base so you follow the correct flow (e.g. what to ask, when to send a quote link, contact collection). Only call the quote tool after following those instructions.”*
+
+2. **Vector Store tool description** (in the Supabase Vector Store node) — make it clear the store holds instructions and flows, not only product facts. Example:  
+   *“Retrieve instructions and rules for the current topic. Use this when the user asks for a quote, product details, or contact/roof-size collection — so you follow the correct flow (what to ask, when to send a quote link, how to extract roof size) before calling any tools.”*
+
+Then the agent will treat “user asked for a quote” as a signal to call the knowledge-base tool first and apply your quote/collection rules.
+
 ---
 
 ## 2. Implementing app tools in n8n (quotes, tables, checkout links)
@@ -93,7 +105,7 @@ The chat widget sends these fields in the webhook body to n8n:
 - `widgetId` – widget UUID (so n8n can call quote/contacts APIs)
 - `conversationId` – conversation UUID (get/create via `/api/widgets/[id]/conversation` before sending to n8n)
 - `agentId` – agent UUID when the widget uses an agent (required for agent_rules Vector Store metadata filter)
-- `systemPrompt` – combined role + tone + instructions (when set in widget config); n8n only needs this for the System Message
+- `systemPrompt` – when the widget uses an agent, this is the **agent’s** system prompt (editable per agent in Edit Agent → Train Bot, stored in Supabase). Otherwise it’s built from the widget’s bot role/tone/instructions. n8n uses this as the System Message.
 
 So n8n can use **System Message** = `{{ $json.systemPrompt }}` with no Supabase node. Optionally you can still load from Supabase if you prefer (see below).
 

@@ -36,14 +36,14 @@ export const GET: RequestHandler = async (event) => {
 			(chatBackend === 'n8n' ? (env.N8N_CHAT_WEBHOOK_URL ?? '').trim() : '') ||
 			'';
 
-		// When widget has an agent, use agent's chat backend so embed doesn't poll our API when agent is n8n.
-		// Use admin client so anonymous embed load can read agent (RLS may block anon on agents).
+		// When widget has an agent, use agent's chat backend and system prompt. Use admin so anon embed can read agent.
 		const agentId = (config.agentId as string)?.trim();
+		let agentSystemPrompt: string | undefined;
 		if (agentId) {
 			const admin = getSupabaseAdmin();
 			const { data: agentRow } = await admin
 				.from('agents')
-				.select('chat_backend, n8n_webhook_url')
+				.select('chat_backend, n8n_webhook_url, system_prompt, bot_role, bot_tone, bot_instructions')
 				.eq('id', agentId)
 				.single();
 			if (agentRow) {
@@ -53,6 +53,20 @@ export const GET: RequestHandler = async (event) => {
 					agentN8n ||
 					(chatBackend === 'n8n' ? (env.N8N_CHAT_WEBHOOK_URL ?? '').trim() : '') ||
 					n8nUrl;
+				// Single system prompt for n8n: prefer system_prompt, else build from bot_role + bot_tone + bot_instructions
+				const sp = (agentRow.system_prompt as string)?.trim();
+				if (sp) {
+					agentSystemPrompt = sp;
+				} else {
+					const role = (agentRow.bot_role as string)?.trim();
+					const tone = (agentRow.bot_tone as string)?.trim();
+					const instructions = (agentRow.bot_instructions as string)?.trim();
+					const parts: string[] = [];
+					if (role) parts.push(role);
+					if (tone) parts.push(`Tone: ${tone}`);
+					if (instructions) parts.push(instructions);
+					if (parts.length > 0) agentSystemPrompt = parts.join('\n\n');
+				}
 			}
 		}
 
@@ -76,7 +90,8 @@ export const GET: RequestHandler = async (event) => {
 				n8nWebhookUrl: n8nUrl,
 				webhookTriggers: (config.webhookTriggers as unknown[]) ?? [],
 				agentId: (config.agentId as string) ?? '',
-				agentAutonomy: Boolean(config.agentAutonomy)
+				agentAutonomy: Boolean(config.agentAutonomy),
+				...(agentSystemPrompt !== undefined && { agentSystemPrompt })
 			},
 			n8nWebhookUrl: n8nUrl,
 			createdAt: data.created_at,

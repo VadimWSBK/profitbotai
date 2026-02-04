@@ -131,6 +131,8 @@ export interface WidgetConfig {
 	webhookTriggers?: WebhookTrigger[];
 	/** Optional agent id: use this agent's system prompt and training (direct only). */
 	agentId?: string;
+	/** When widget uses an agent: system prompt from agent (Supabase), sent with each message to n8n. */
+	agentSystemPrompt?: string;
 	/** When true, the agent can use tools: search contacts, generate quote, send email (direct only, no workflow required). */
 	agentAutonomy?: boolean;
 }

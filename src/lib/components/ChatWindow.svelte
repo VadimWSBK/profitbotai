@@ -189,13 +189,18 @@
 						// continue without conversationId
 					}
 				}
-				// Send bot context with each message (most efficient: no extra Supabase read in n8n)
-				const bot = config.bot ?? { role: '', tone: '', instructions: '' };
-				const systemParts: string[] = [];
-				if (bot.role?.trim()) systemParts.push(bot.role.trim());
-				if (bot.tone?.trim()) systemParts.push(`Tone: ${bot.tone.trim()}`);
-				if (bot.instructions?.trim()) systemParts.push(bot.instructions.trim());
-				const systemPrompt = systemParts.length > 0 ? systemParts.join('\n\n') : undefined;
+				// System prompt: when widget has an agent, use agent's (from Supabase); else build from widget bot config
+				let systemPrompt: string | undefined;
+				if (config.agentSystemPrompt?.trim()) {
+					systemPrompt = config.agentSystemPrompt.trim();
+				} else {
+					const bot = config.bot ?? { role: '', tone: '', instructions: '' };
+					const systemParts: string[] = [];
+					if (bot.role?.trim()) systemParts.push(bot.role.trim());
+					if (bot.tone?.trim()) systemParts.push(`Tone: ${bot.tone.trim()}`);
+					if (bot.instructions?.trim()) systemParts.push(bot.instructions.trim());
+					systemPrompt = systemParts.length > 0 ? systemParts.join('\n\n') : undefined;
+				}
 				const res = await fetch(config.n8nWebhookUrl, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
