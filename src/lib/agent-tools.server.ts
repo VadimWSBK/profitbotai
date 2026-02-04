@@ -594,63 +594,67 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 			if (!result.ok) return { error: result.error ?? 'Failed to create checkout link' };
 			if (!result.checkoutUrl) return { error: 'Checkout link was not returned by Shopify.' };
 
-			// Build checkout preview like Shopify order summary: Image (with qty badge) | Product (name + variant) | Total. No borders, clean layout.
 			const fmt = (n: number) => n.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 			const totalItems = lineItems.reduce((sum, li) => sum + li.quantity, 0);
-			const tableRows = lineItems.map((li) => {
-				const unitPrice = Number.parseFloat(li.price);
-				const lineTotal = unitPrice * li.quantity;
-				// Image cell: image markdown then " × qty" for badge overlay (single line so table parse works)
-				const imageCell = li.imageUrl
-					? `![${li.title}](${li.imageUrl}) × ${li.quantity}`
-					: `— × ${li.quantity}`;
-				// Product cell for checkout layout:
-				// "name %% variant %% unit price %% line total"
-				// Frontend renders:
-				// - line 1: name
-				// - line 2: variant
-				// - line 3+: 2-column grid: Unit Price / Total with amounts
+
+			// Data-driven UI: structured line items for frontend component (no markdown tables).
+			const lineItemsUI = lineItems.map((li) => {
+				const unitPrice = Number(li.price);
+				const quantity = li.quantity;
+				const lineTotal = unitPrice * quantity;
 				const variantMatch = li.title.match(/\d+\s*L\b/i);
-				const variantLine = variantMatch ? variantMatch[0].trim() : '';
-				const unitPriceDisplay = `$${fmt(unitPrice)}`;
-				const lineTotalDisplay = `$${fmt(lineTotal)}`;
-				const productCell = variantLine
-					? `${li.title} %% ${variantLine} %% ${unitPriceDisplay} %% ${lineTotalDisplay}`
-					: `${li.title} %% %% ${unitPriceDisplay} %% ${lineTotalDisplay}`;
-				// Keep Total column for structure, but UI hides it and uses the value inside productCell.
-				return `| ${imageCell} | ${productCell} | ${lineTotalDisplay} |`;
+				const variant = variantMatch ? variantMatch[0].trim() : null;
+				return {
+					imageUrl: li.imageUrl ?? null,
+					title: li.title,
+					variant,
+					quantity,
+					unitPrice: fmt(unitPrice),
+					lineTotal: fmt(lineTotal)
+				};
 			});
-			const previewParts: string[] = [
-				'**Your checkout preview**',
-				'',
-				'|  | Product | Total |',
-				'|--|---------|-------|',
-				...tableRows,
-				'',
-				`${totalItems} items`,
-				'',
-				'|  |  |  |',
-				'|--|--|--|',
+
+			const summary = {
+				totalItems,
+				subtotal: fmt(subtotal),
+				total: fmt(total),
+				currency,
 				...(appliedDiscount
-					? [
-							`| Discount | ${appliedDiscount.value}% OFF | -$${fmt(discountAmount)} |`,
-							'| Shipping | FREE | $0 |',
-							'',
-							`| Subtotal |  | $${fmt(subtotal)} |`,
-							`| Total |  | $${fmt(total)} |`,
-							'',
-							'GST included'
-						]
-					: [
-							'| Shipping | FREE | $0 |',
-							'',
-							`| Subtotal |  | $${fmt(subtotal)} |`,
-							`| Total |  | $${fmt(total)} |`,
-							'',
-							'GST included'
-						]),
+					? {
+							discountPercent: Number(appliedDiscount.value),
+							discountAmount: fmt(discountAmount)
+						}
+					: {})
+			};
+
+			// Persist structured preview so frontend can render component; message_id set in chat onFinish.
+			const { error: previewErr } = await admin
+				.from('widget_checkout_previews')
+				.insert({
+					conversation_id: c.conversationId,
+					widget_id: c.widgetId,
+					line_items_ui: lineItemsUI,
+					summary,
+					checkout_url: result.checkoutUrl
+				});
+			if (previewErr) console.error('Failed to save checkout preview:', previewErr);
+
+			// Fallback text for AI reply and for contexts without preview data (e.g. email, old messages).
+			const hasDiscount = !!appliedDiscount;
+			const previewParts: string[] = [
+				'**🧾 Your Checkout Preview**',
 				'',
-				`[Buy now – complete your purchase](${result.checkoutUrl})`
+				`**Items** ${totalItems}`,
+				...(hasDiscount ? [`**Discount** ${appliedDiscount!.value}% OFF`] : []),
+				'**Shipping** FREE',
+				'',
+				`**Subtotal** $${fmt(subtotal)} ${currency}`,
+				...(hasDiscount ? [`**Savings** -$${fmt(discountAmount)} ${currency}`] : []),
+				`**TOTAL** **$${fmt(total)} ${currency}**`,
+				'',
+				'_GST included_',
+				'',
+				'[GO TO CHECKOUT](' + result.checkoutUrl + ')'
 			];
 			const previewMarkdown = previewParts.filter(Boolean).join('\n');
 
@@ -662,6 +666,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 				discountAmount,
 				total,
 				lineItems: lineItems.map((li) => `${li.quantity}× ${li.title} ($${li.price} each)`),
+				lineItemsUI,
 				previewMarkdown,
 				message: `Checkout link created. You MUST include this exact preview in your reply so the customer sees their cart before clicking:\n\n${previewMarkdown}`
 			};

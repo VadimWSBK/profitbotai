@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { env } from '$env/dynamic/private';
 import { getSupabase, getSupabaseClient } from '$lib/supabase.server';
 
 /**
@@ -29,6 +30,12 @@ export const GET: RequestHandler = async (event) => {
 
 		// Map DB row to app WidgetConfig shape
 		const config = (data.config as Record<string, unknown>) ?? {};
+		const chatBackend = (config.chatBackend as string) ?? 'n8n';
+		// Use env N8N_CHAT_WEBHOOK_URL when chat backend is n8n and widget has no stored URL
+		const n8nUrl =
+			(data.n8n_webhook_url as string)?.trim() ||
+			(chatBackend === 'n8n' ? (env.N8N_CHAT_WEBHOOK_URL ?? '').trim() : '') ||
+			'';
 		const widget = {
 			id: data.id,
 			name: data.name,
@@ -40,18 +47,18 @@ export const GET: RequestHandler = async (event) => {
 				tooltip: config.tooltip ?? {},
 				window: config.window ?? {},
 				bot: config.bot ?? {},
-				chatBackend: (config.chatBackend as string) ?? 'n8n',
+				chatBackend,
 				llmProvider: config.llmProvider ?? '',
 				llmModel: config.llmModel ?? '',
 				llmFallbackProvider: config.llmFallbackProvider ?? '',
 				llmFallbackModel: config.llmFallbackModel ?? '',
 				agentTakeoverTimeoutMinutes: (config.agentTakeoverTimeoutMinutes as number) ?? 5,
-				n8nWebhookUrl: data.n8n_webhook_url ?? '',
+				n8nWebhookUrl: n8nUrl,
 				webhookTriggers: (config.webhookTriggers as unknown[]) ?? [],
 				agentId: (config.agentId as string) ?? '',
 				agentAutonomy: Boolean(config.agentAutonomy)
 			},
-			n8nWebhookUrl: data.n8n_webhook_url ?? '',
+			n8nWebhookUrl: n8nUrl,
 			createdAt: data.created_at,
 			updatedAt: data.updated_at
 		};

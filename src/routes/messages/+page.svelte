@@ -20,6 +20,11 @@
 		contactName?: string | null;
 		contactEmail?: string | null;
 	};
+	type CheckoutPreview = {
+		lineItemsUI: Array<{ imageUrl: string | null; title: string; variant: string | null; quantity: number; unitPrice: string; lineTotal: string }>;
+		summary: { totalItems: number; subtotal: string; total: string; currency: string; discountPercent?: number; discountAmount?: string };
+		checkoutUrl: string;
+	};
 	type Message = {
 		id: string;
 		role: string;
@@ -29,7 +34,20 @@
 		channel?: 'chat' | 'email';
 		status?: string;
 		direction?: 'outbound' | 'inbound';
+		checkoutPreview?: CheckoutPreview;
 	};
+	function stripCheckoutBlock(content: string): string {
+		const start = content.search(/\*\*[🧾\s]*Your [Cc]heckout [Pp]review\*\*/i);
+		if (start < 0) return content;
+		const before = content.slice(0, start).replace(/\n+$/, '');
+		const afterStart = content.slice(start);
+		const linkMatch = afterStart.match(/\[GO TO CHECKOUT\]\s*\([^)]+\)/i) ?? afterStart.match(/\[Buy now[^\]]*\]\s*\([^)]+\)/i);
+		if (linkMatch) {
+			const rest = afterStart.slice(linkMatch.index! + linkMatch[0].length).replace(/^\s*\n?/, '');
+			return (before + (rest ? '\n\n' + rest : '')).trim();
+		}
+		return before.trim() || content;
+	}
 	type ConversationDetail = {
 		id: string;
 		widgetId: string;
@@ -649,7 +667,51 @@
 											<span class="text-xs text-gray-400">via email</span>
 										{/if}
 									</div>
-									<div class="break-words [&_.email-quote]:whitespace-normal [&_a]:break-all {msg.role === 'assistant' ? 'rich-message-content' : 'whitespace-pre-wrap'}">{@html msg.role === 'assistant' ? formatMessage(msg.content) : formatMessageContent(msg.content)}</div>
+									<div class="break-words [&_.email-quote]:whitespace-normal [&_a]:break-all {msg.role === 'assistant' ? 'rich-message-content' : 'whitespace-pre-wrap'}">
+										{#if msg.role === 'assistant' && msg.checkoutPreview}
+											{#if stripCheckoutBlock(msg.content).trim()}
+												<div class="chat-message-intro">{@html formatMessage(stripCheckoutBlock(msg.content))}</div>
+											{/if}
+											<div class="checkout-preview-block checkout-preview-block--messages">
+												{#each msg.checkoutPreview.lineItemsUI as item}
+													<div class="line-item">
+														<div class="image-wrap">
+															{#if item.imageUrl}
+																<img src={item.imageUrl} alt={item.title} />
+															{/if}
+															<span class="qty-badge">{item.quantity}</span>
+														</div>
+														<div class="details">
+															<div class="title">{item.title}</div>
+															<div class="price-grid">
+																<div class="label">Unit Price</div>
+																<div class="label">Total</div>
+																<div class="value">${item.unitPrice}</div>
+																<div class="value">${item.lineTotal}</div>
+															</div>
+														</div>
+													</div>
+												{/each}
+												<div class="checkout-summary">
+													<div class="summary-row"><span class="summary-label">Items</span><span class="summary-value">{msg.checkoutPreview.summary.totalItems}</span></div>
+													{#if msg.checkoutPreview.summary.discountPercent != null}
+														<div class="summary-row"><span class="summary-label">Discount</span><span class="summary-value">{msg.checkoutPreview.summary.discountPercent}% OFF</span></div>
+													{/if}
+													<div class="summary-row"><span class="summary-label">Shipping</span><span class="summary-value">FREE</span></div>
+													<div class="summary-divider"></div>
+													<div class="summary-row"><span class="summary-label">Subtotal</span><span class="summary-value">${msg.checkoutPreview.summary.subtotal} {msg.checkoutPreview.summary.currency}</span></div>
+													{#if msg.checkoutPreview.summary.discountAmount != null}
+														<div class="summary-row"><span class="summary-label">Savings</span><span class="summary-value">-${msg.checkoutPreview.summary.discountAmount}</span></div>
+													{/if}
+													<div class="summary-row summary-total"><span class="summary-label">Total</span><span class="summary-value">${msg.checkoutPreview.summary.total} {msg.checkoutPreview.summary.currency}</span></div>
+													<div class="summary-footer">GST included</div>
+												</div>
+												<a href={msg.checkoutPreview.checkoutUrl} target="_blank" rel="noopener noreferrer" class="chat-cta-button">GO TO CHECKOUT</a>
+											</div>
+										{:else}
+											{@html msg.role === 'assistant' ? formatMessage(msg.content) : formatMessageContent(msg.content)}
+										{/if}
+									</div>
 									<div class="flex items-center gap-2 mt-1">
 										<span class="text-xs text-gray-500">{formatTime(msg.createdAt)}</span>
 										{#if msg.channel === 'email'}

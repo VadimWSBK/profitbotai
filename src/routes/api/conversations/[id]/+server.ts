@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getSupabaseClient } from '$lib/supabase.server';
+import { getSupabaseClient, getSupabaseAdmin } from '$lib/supabase.server';
 import { syncReceivedEmailsForUser } from '$lib/sync-received-emails.server';
 
 const MESSAGES_PAGE_SIZE = 20;
@@ -91,6 +91,23 @@ export const GET: RequestHandler = async (event) => {
 		emailRows = (emails ?? []) as typeof emailRows;
 	}
 
+	const assistantMessageIds = chatMessages.filter((m) => m.role === 'assistant').map((m) => m.id);
+	let previewByMessageId: Record<string, { line_items_ui: unknown; summary: unknown; checkout_url: string }> = {};
+	if (assistantMessageIds.length > 0) {
+		const admin = getSupabaseAdmin();
+		const { data: previewRows } = await admin
+			.from('widget_checkout_previews')
+			.select('message_id, line_items_ui, summary, checkout_url')
+			.in('message_id', assistantMessageIds);
+		previewByMessageId = (previewRows ?? []).reduce(
+			(acc, row) => {
+				if (row.message_id) acc[row.message_id] = { line_items_ui: row.line_items_ui, summary: row.summary, checkout_url: row.checkout_url ?? '' };
+				return acc;
+			},
+			{} as Record<string, { line_items_ui: unknown; summary: unknown; checkout_url: string }>
+		);
+	}
+
 	type UnifiedMessage = {
 		id: string;
 		role: string;
@@ -100,15 +117,26 @@ export const GET: RequestHandler = async (event) => {
 		channel: 'chat' | 'email';
 		status?: string;
 		direction?: 'outbound' | 'inbound';
+		checkoutPreview?: { lineItemsUI: unknown[]; summary: Record<string, unknown>; checkoutUrl: string };
 	};
-	const chatUnified: UnifiedMessage[] = chatMessages.map((m) => ({
-		id: m.id,
-		role: m.role,
-		content: m.content,
-		readAt: m.read_at,
-		createdAt: m.created_at,
-		channel: 'chat' as const
-	}));
+	const chatUnified: UnifiedMessage[] = chatMessages.map((m) => {
+		const preview = previewByMessageId[m.id];
+		return {
+			id: m.id,
+			role: m.role,
+			content: m.content,
+			readAt: m.read_at,
+			createdAt: m.created_at,
+			channel: 'chat' as const,
+			...(preview && {
+				checkoutPreview: {
+					lineItemsUI: Array.isArray(preview.line_items_ui) ? preview.line_items_ui : [],
+					summary: preview.summary != null && typeof preview.summary === 'object' ? preview.summary : {},
+					checkoutUrl: preview.checkout_url
+				}
+			})
+		};
+	});
 	const emailUnified: UnifiedMessage[] = emailRows.map((e) => ({
 		id: e.id,
 		role: e.direction === 'inbound' ? 'user' : 'assistant',
@@ -151,7 +179,8 @@ export const GET: RequestHandler = async (event) => {
 			createdAt: m.createdAt,
 			channel: m.channel,
 			...(m.status && { status: m.status }),
-			...(m.direction && { direction: m.direction })
+			...(m.direction && { direction: m.direction }),
+			...(m.channel === 'chat' && (m as UnifiedMessage).checkoutPreview && { checkoutPreview: (m as UnifiedMessage).checkoutPreview })
 		})),
 		hasMore
 	});

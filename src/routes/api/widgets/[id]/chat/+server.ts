@@ -623,10 +623,29 @@ export const POST: RequestHandler = async (event) => {
 				onFinish: async ({ text }: { text: string }) => {
 					await clearAiTyping();
 					if (text) {
-						const { error: insertErr } = await supabase
+						const { data: inserted, error: insertErr } = await supabase
 							.from('widget_conversation_messages')
-							.insert({ conversation_id: conv.id, role: 'assistant', content: text });
+							.insert({ conversation_id: conv.id, role: 'assistant', content: text })
+							.select('id')
+							.single();
 						if (insertErr) console.error('Failed to persist assistant message:', insertErr);
+						// Link latest checkout preview (from shopify_create_diy_checkout_link) to this message.
+						if (inserted?.id) {
+							const { data: previewRow } = await adminSupabaseForTyping
+								.from('widget_checkout_previews')
+								.select('id')
+								.eq('conversation_id', conv.id)
+								.is('message_id', null)
+								.order('created_at', { ascending: false })
+								.limit(1)
+								.maybeSingle();
+							if (previewRow?.id) {
+								await adminSupabaseForTyping
+									.from('widget_checkout_previews')
+									.update({ message_id: inserted.id })
+									.eq('id', previewRow.id);
+							}
+						}
 					}
 				}
 			};

@@ -141,8 +141,13 @@ export function markdownTableToHtml(tableContent: string): string {
 		headerCells[0]?.toLowerCase() === '' &&
 		headerCells[1]?.toLowerCase() === 'product' &&
 		headerCells[2]?.toLowerCase() === 'total';
-	const tableClass = isCheckoutTable ? 'chat-message-table chat-checkout-table' : 'chat-message-table';
-	let html = `<table class="${tableClass}"><thead><tr>`;
+	const isSummaryTable = !isCheckoutTable && headerCells.every((c) => !c);
+	const tableClass = isCheckoutTable
+		? 'chat-message-table chat-checkout-table'
+		: isSummaryTable
+			? 'chat-summary-table'
+			: 'chat-message-table';
+	let html = `<table class="${tableClass}"><thead${isSummaryTable ? ' class="chat-summary-head"' : ''}><tr>`;
 	for (const c of headerCells) html += `<th>${escapeHtml(c)}</th>`;
 	html += '</tr></thead><tbody>';
 	for (let r = bodyStart; r < lines.length; r++) {
@@ -215,8 +220,8 @@ export function formatMessageWithLinks(text: string): string {
 				`<img src="${escapeHtml(url)}" alt="${escapeHtml(match.alt)}" class="chat-message-image max-w-full h-auto rounded-md" />`
 			);
 		} else {
-			const displayText = match.type === 'markdown' ? match.text : url;
-			const isCtaButton = /buy\s*now|complete\s*your\s*purchase/i.test(displayText);
+		const displayText = match.type === 'markdown' ? match.text : url;
+		const isCtaButton = /buy\s*now|complete\s*your\s*purchase|go\s*to\s*checkout/i.test(displayText);
 			const linkClass = isCtaButton ? 'chat-message-link chat-cta-button' : 'chat-message-link underline';
 			parts.push(
 				`<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="${linkClass}">${escapeHtml(displayText)}</a>`

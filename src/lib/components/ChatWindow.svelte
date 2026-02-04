@@ -8,7 +8,46 @@
 
 	let { config, widgetId, onClose } = $props<{ config: WidgetConfig; widgetId?: string; onClose: () => void }>();
 
-	type Message = { role: 'user' | 'bot'; content: string; avatarUrl?: string };
+	type CheckoutPreview = {
+		lineItemsUI: Array<{
+			imageUrl: string | null;
+			title: string;
+			variant: string | null;
+			quantity: number;
+			unitPrice: string;
+			lineTotal: string;
+		}>;
+		summary: {
+			totalItems: number;
+			subtotal: string;
+			total: string;
+			currency: string;
+			discountPercent?: number;
+			discountAmount?: string;
+		};
+		checkoutUrl: string;
+	};
+	type Message = { role: 'user' | 'bot'; content: string; avatarUrl?: string; checkoutPreview?: CheckoutPreview };
+	function mapMessage(m: { role: string; content: string; avatarUrl?: string; checkoutPreview?: CheckoutPreview }): Message {
+		return {
+			role: (m.role === 'user' ? 'user' : 'bot') as 'user' | 'bot',
+			content: m.content,
+			avatarUrl: m.avatarUrl,
+			checkoutPreview: m.checkoutPreview
+		};
+	}
+	function stripCheckoutBlock(content: string): string {
+		const start = content.search(/\*\*[🧾\s]*Your [Cc]heckout [Pp]review\*\*/i);
+		if (start < 0) return content;
+		const before = content.slice(0, start).replace(/\n+$/, '');
+		const afterStart = content.slice(start);
+		const linkMatch = afterStart.match(/\[GO TO CHECKOUT\]\s*\([^)]+\)/i) ?? afterStart.match(/\[Buy now[^\]]*\]\s*\([^)]+\)/i);
+		if (linkMatch) {
+			const rest = afterStart.slice(linkMatch.index! + linkMatch[0].length).replace(/^\s*\n?/, '');
+			return (before + (rest ? '\n\n' + rest : '')).trim();
+		}
+		return before.trim() || content;
+	}
 
 	let sessionId = $state('');
 	let inputText = $state('');
@@ -76,11 +115,7 @@
 			const list = Array.isArray(data.messages) ? data.messages : [];
 			// Only overwrite messages on initial load so we never wipe the user's last message (e.g. if this request returns late)
 			if (messages.length === 0 && list.length > 0) {
-				messages = list.map((m: { role: string; content: string; avatarUrl?: string }) => ({
-					role: m.role as 'user' | 'bot',
-					content: m.content,
-					avatarUrl: m.avatarUrl
-				}));
+				messages = list.map(mapMessage);
 				showStarterPrompts = false;
 				requestAnimationFrame(() => scrollToBottom(true));
 			}
@@ -104,11 +139,7 @@
 				const res = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
 				const data = await res.json().catch(() => ({}));
 				const newList = Array.isArray(data.messages) ? data.messages : [];
-				const serverMessages = newList.map((m: { role: string; content: string; avatarUrl?: string }) => ({
-					role: m.role as 'user' | 'bot',
-					content: m.content,
-					avatarUrl: m.avatarUrl
-				}));
+				const serverMessages = newList.map(mapMessage);
 				// Only replace messages when server has at least as many as we have (avoids wiping optimistic or just-added messages)
 				if (serverMessages.length >= messages.length) {
 					messages = serverMessages;
@@ -180,11 +211,7 @@
 							const refetch = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
 							const refetchData = await refetch.json().catch(() => ({}));
 							const list = Array.isArray(refetchData.messages) ? refetchData.messages : [];
-							return list.map((m: { role: string; content: string; avatarUrl?: string }) => ({
-								role: m.role as 'user' | 'bot',
-								content: m.content,
-								avatarUrl: m.avatarUrl
-							}));
+							return list.map(mapMessage);
 						};
 						const pollIntervalMs = 1500;
 						const totalWaitMs = 20000;
@@ -219,11 +246,7 @@
 								const refetch = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
 								const refetchData = await refetch.json().catch(() => ({}));
 								const list = Array.isArray(refetchData.messages) ? refetchData.messages : [];
-								return list.map((m: { role: string; content: string; avatarUrl?: string }) => ({
-									role: m.role as 'user' | 'bot',
-									content: m.content,
-									avatarUrl: m.avatarUrl
-								}));
+								return list.map(mapMessage);
 							};
 							const pollIntervalMs = 1500;
 							const totalWaitMs = 20000;
@@ -271,6 +294,18 @@
 							}
 							requestAnimationFrame(() => scrollToBottom());
 						}
+						// Refetch so the new message has id and checkoutPreview (from shopify_create_diy_checkout_link).
+						try {
+							const refetchRes = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
+							const refetchData = await refetchRes.json().catch(() => ({}));
+							const list = Array.isArray(refetchData.messages) ? refetchData.messages : [];
+							if (list.length >= messages.length) {
+								messages = list.map(mapMessage);
+								requestAnimationFrame(() => scrollToBottom());
+							}
+						} catch {
+							// ignore
+						}
 					} catch {
 						streamParseFailed = true;
 					} finally {
@@ -283,12 +318,7 @@
 							const res = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
 							const data = await res.json().catch(() => ({}));
 							const list = Array.isArray(data.messages) ? data.messages : [];
-							const serverMessages = list.map((m: { role: string; content: string; avatarUrl?: string }) => ({
-								role: m.role as 'user' | 'bot',
-								content: m.content,
-								avatarUrl: m.avatarUrl
-							}));
-							return { messages: serverMessages, agentTyping: !!data.agentTyping };
+							return { messages: list.map(mapMessage), agentTyping: !!data.agentTyping };
 						};
 						const pollIntervalMs = 800;
 						const maxTotalMs = 5 * 60 * 1000;
@@ -330,12 +360,7 @@
 					const res = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
 					const data = await res.json().catch(() => ({}));
 					const list = Array.isArray(data.messages) ? data.messages : [];
-					const serverMessages = list.map((m: { role: string; content: string; avatarUrl?: string }) => ({
-						role: m.role as 'user' | 'bot',
-						content: m.content,
-						avatarUrl: m.avatarUrl
-					}));
-					return { messages: serverMessages, agentTyping: !!data.agentTyping };
+					return { messages: list.map(mapMessage), agentTyping: !!data.agentTyping };
 				};
 				const pollIntervalMs = 800;
 				const maxTotalMs = 5 * 60 * 1000;
@@ -368,6 +393,7 @@
 				return;
 			}
 		} else if (useN8n) {
+			let n8nStreamHandled = false;
 			try {
 				const bot = config.bot ?? { role: '', tone: '', instructions: '' };
 				const parts: string[] = [];
@@ -380,23 +406,80 @@
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({
 						message: trimmed,
-						sessionId: 'preview',
+						sessionId: sessionId && sessionId !== 'preview' ? sessionId : 'preview',
 						...(systemPrompt && { systemPrompt }),
 						...(systemPrompt && { role: bot.role?.trim() || undefined, tone: bot.tone?.trim() || undefined, instructions: bot.instructions?.trim() || undefined })
 					})
 				});
-				const data = await res.json().catch(() => ({}));
-				botReply = data.output ?? data.message ?? data.reply ?? data.text ?? botReply;
-				if (typeof botReply !== 'string') botReply = JSON.stringify(botReply);
+				const contentType = res.headers.get('content-type') ?? '';
+				// n8n can return streaming (SSE or text) or JSON
+				if (res.ok && res.body && !contentType.includes('application/json')) {
+					// Consume n8n stream: SSE (data: ...) or plain text chunks
+					n8nStreamHandled = true;
+					addBotMessage('');
+					const streamIndex = messages.length - 1;
+					const reader = res.body.getReader();
+					const decoder = new TextDecoder();
+					let buffer = '';
+					while (true) {
+						const { done, value } = await reader.read();
+						if (done) break;
+						buffer += decoder.decode(value, { stream: true });
+						// SSE: emit on newline and take "data: " lines
+						const lines = buffer.split('\n');
+						buffer = lines.pop() ?? '';
+						for (const line of lines) {
+							if (line.startsWith('data: ')) {
+								const payload = line.slice(6).trim();
+								if (payload === '[DONE]' || payload === '') continue;
+								try {
+									const parsed = JSON.parse(payload) as { text?: string; content?: string; delta?: string };
+									const chunk = parsed.text ?? parsed.content ?? parsed.delta ?? '';
+									if (chunk && typeof chunk === 'string') {
+										messages = messages.map((m, i) =>
+											i === streamIndex ? { ...m, content: m.content + chunk } : m
+										);
+										requestAnimationFrame(() => scrollToBottom());
+									}
+								} catch {
+									// treat as plain text
+									if (payload) {
+										messages = messages.map((m, i) =>
+											i === streamIndex ? { ...m, content: m.content + payload } : m
+										);
+										requestAnimationFrame(() => scrollToBottom());
+									}
+								}
+							}
+						}
+					}
+					// Flush remaining buffer as plain text
+					if (buffer.trim()) {
+						messages = messages.map((m, i) =>
+							i === streamIndex ? { ...m, content: m.content + buffer } : m
+						);
+					}
+					// If stream yielded nothing, show error
+					if (messages[streamIndex]?.content === '') {
+						messages = messages.map((m, i) =>
+							i === streamIndex ? { ...m, content: config.window.customErrorMessage } : m
+						);
+					}
+				} else {
+					const data = await res.json().catch(() => ({}));
+					botReply = data.output ?? data.message ?? data.reply ?? data.text ?? botReply;
+					if (typeof botReply !== 'string') botReply = JSON.stringify(botReply);
+				}
 			} catch {
 				botReply = config.window.customErrorMessage;
 			}
+			if (!n8nStreamHandled) addBotMessage(botReply);
 		} else {
 			botReply = config.chatBackend === 'direct'
 				? 'Configure Direct LLM in the Connect tab (add API keys in Settings).'
 				: "Preview mode — add your n8n webhook URL or select Direct LLM in the Connect tab.";
+			addBotMessage(botReply);
 		}
-		addBotMessage(botReply);
 		loading = false;
 	}
 
@@ -513,7 +596,49 @@
 							"
 						>
 							<div class="flex-1 min-w-0 overflow-x-auto overflow-y-visible max-w-full break-words">
-								{@html formatMessage(msg.content)}
+								{#if msg.checkoutPreview}
+									{#if stripCheckoutBlock(msg.content).trim()}
+										<div class="chat-message-intro">{@html formatMessage(stripCheckoutBlock(msg.content))}</div>
+									{/if}
+									<div class="checkout-preview-block">
+										{#each msg.checkoutPreview.lineItemsUI as item}
+											<div class="line-item">
+												<div class="image-wrap">
+													{#if item.imageUrl}
+														<img src={item.imageUrl} alt={item.title} />
+													{/if}
+													<span class="qty-badge">{item.quantity}</span>
+												</div>
+												<div class="details">
+													<div class="title">{item.title}</div>
+													<div class="price-grid">
+														<div class="label">Unit Price</div>
+														<div class="label">Total</div>
+														<div class="value">${item.unitPrice}</div>
+														<div class="value">${item.lineTotal}</div>
+													</div>
+												</div>
+											</div>
+										{/each}
+										<div class="checkout-summary">
+											<div class="summary-row"><span class="summary-label">Items</span><span class="summary-value">{msg.checkoutPreview.summary.totalItems}</span></div>
+											{#if msg.checkoutPreview.summary.discountPercent != null}
+												<div class="summary-row"><span class="summary-label">Discount</span><span class="summary-value">{msg.checkoutPreview.summary.discountPercent}% OFF</span></div>
+											{/if}
+											<div class="summary-row"><span class="summary-label">Shipping</span><span class="summary-value">FREE</span></div>
+											<div class="summary-divider"></div>
+											<div class="summary-row"><span class="summary-label">Subtotal</span><span class="summary-value">${msg.checkoutPreview.summary.subtotal} {msg.checkoutPreview.summary.currency}</span></div>
+											{#if msg.checkoutPreview.summary.discountAmount != null}
+												<div class="summary-row"><span class="summary-label">Savings</span><span class="summary-value">-${msg.checkoutPreview.summary.discountAmount}</span></div>
+											{/if}
+											<div class="summary-row summary-total"><span class="summary-label">Total</span><span class="summary-value">${msg.checkoutPreview.summary.total} {msg.checkoutPreview.summary.currency}</span></div>
+											<div class="summary-footer">GST included</div>
+										</div>
+										<a href={msg.checkoutPreview.checkoutUrl} target="_blank" rel="noopener noreferrer" class="chat-cta-button">GO TO CHECKOUT</a>
+									</div>
+								{:else}
+									{@html formatMessage(msg.content)}
+								{/if}
 							</div>
 							{#if botStyle.showCopyToClipboardIcon}
 								<button type="button" class="shrink-0 opacity-70 hover:opacity-100" onclick={() => navigator.clipboard.writeText(msg.content)} title="Copy">
@@ -770,6 +895,35 @@
 		font-weight: 600;
 		opacity: 1;
 	}
+	:global(.chat-summary-table) {
+		border-collapse: collapse;
+		width: 100%;
+		margin-top: 0.25rem;
+		font-size: 0.95em;
+	}
+	:global(.chat-summary-table .chat-summary-head) {
+		display: none;
+	}
+	:global(.chat-summary-table td) {
+		border: none;
+		padding: 0.25em 0;
+	}
+	:global(.chat-summary-table tr + tr td) {
+		border-top: 1px solid rgba(255, 255, 255, 0.16);
+	}
+	:global(.chat-summary-table td:first-child) {
+		font-weight: 600;
+		padding-right: 1.5em;
+		white-space: nowrap;
+	}
+	:global(.chat-summary-table td:nth-child(2)) {
+		color: rgba(255, 255, 255, 0.85);
+	}
+	:global(.chat-summary-table td:last-child) {
+		text-align: right;
+		font-weight: 600;
+		white-space: nowrap;
+	}
 	:global(.chat-checkout-table) {
 		border: none;
 		border-collapse: collapse;
@@ -867,5 +1021,116 @@
 	}
 	:global(.chat-table-cell-image) {
 		display: block;
+	}
+
+	/* Data-driven checkout preview (line items + summary + button) */
+	:global(.checkout-preview-block) {
+		margin-top: 0.75em;
+	}
+	:global(.checkout-preview-block .line-item) {
+		display: flex;
+		gap: 16px;
+		align-items: flex-start;
+		margin-bottom: 1em;
+	}
+	:global(.checkout-preview-block .line-item:last-of-type) {
+		margin-bottom: 0.5em;
+	}
+	:global(.checkout-preview-block .image-wrap) {
+		position: relative;
+		width: 72px;
+		height: 72px;
+		border-radius: 8px;
+		background: rgba(255, 255, 255, 0.1);
+		overflow: hidden;
+		flex-shrink: 0;
+	}
+	:global(.checkout-preview-block .image-wrap img) {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+	:global(.checkout-preview-block .line-item .qty-badge) {
+		position: absolute;
+		top: -6px;
+		right: -6px;
+		background: #1f2937;
+		color: #fff;
+		font-size: 12px;
+		font-weight: 600;
+		padding: 4px 8px;
+		border-radius: 999px;
+	}
+	:global(.checkout-preview-block .details) {
+		flex: 1;
+		min-width: 0;
+	}
+	:global(.checkout-preview-block .details .title) {
+		font-weight: 600;
+		font-size: 16px;
+		margin-bottom: 8px;
+	}
+	:global(.checkout-preview-block .price-grid) {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 4px 24px;
+	}
+	:global(.checkout-preview-block .price-grid .label) {
+		font-size: 12px;
+		opacity: 0.85;
+	}
+	:global(.checkout-preview-block .price-grid .value) {
+		font-size: 16px;
+		font-weight: 600;
+	}
+	:global(.checkout-summary) {
+		margin-top: 1em;
+		padding-top: 0.75em;
+		border-top: 1px solid rgba(255, 255, 255, 0.2);
+	}
+	:global(.checkout-summary .summary-row) {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: 0.2em 0;
+	}
+	:global(.checkout-summary .summary-label) {
+		font-weight: 600;
+	}
+	:global(.checkout-summary .summary-value) {
+		font-weight: 600;
+	}
+	:global(.checkout-summary .summary-total) {
+		margin-top: 0.25em;
+		font-size: 1.05em;
+	}
+	:global(.checkout-summary .summary-divider) {
+		height: 1px;
+		background: rgba(255, 255, 255, 0.15);
+		margin: 0.5em 0;
+	}
+	:global(.checkout-summary .summary-footer) {
+		font-size: 0.85em;
+		opacity: 0.8;
+		margin-top: 0.5em;
+	}
+	:global(.checkout-preview-block .chat-cta-button) {
+		display: inline-block;
+		margin-top: 1em;
+		text-decoration: none;
+		padding: 0.6em 1.2em;
+		border-radius: 8px;
+		font-weight: 600;
+		background: rgba(255, 255, 255, 0.25);
+		border: 1px solid rgba(255, 255, 255, 0.4);
+		transition: background 0.15s, border-color 0.15s;
+		color: inherit;
+	}
+	:global(.checkout-preview-block .chat-cta-button:hover) {
+		background: rgba(255, 255, 255, 0.35);
+		border-color: rgba(255, 255, 255, 0.6);
+	}
+	:global(.chat-message-intro) {
+		margin-bottom: 0.5em;
 	}
 </style>

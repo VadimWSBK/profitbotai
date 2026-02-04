@@ -25,13 +25,31 @@ export const GET: RequestHandler = async (event) => {
 			p_conv_id: conv.id
 		});
 		if (error) return json({ error: error.message, messages: [] }, { status: 500 });
-		const rawRows = (rows ?? []) as { id: string; role: string; content: string; created_at: string; avatar_url: string | null }[];
+		type Row = {
+			id: string;
+			role: string;
+			content: string;
+			created_at: string;
+			avatar_url: string | null;
+			line_items_ui: unknown;
+			summary: unknown;
+			checkout_url: string | null;
+		};
+		const rawRows = (rows ?? []) as Row[];
 		const messages = rawRows.map((r) => ({
 			id: r.id,
 			role: r.role === 'human_agent' ? 'bot' : r.role === 'assistant' ? 'bot' : 'user',
 			content: r.content,
 			createdAt: r.created_at,
-			avatarUrl: r.role === 'human_agent' ? r.avatar_url : undefined
+			avatarUrl: r.role === 'human_agent' ? r.avatar_url : undefined,
+			checkoutPreview:
+				r.line_items_ui != null && r.checkout_url
+					? {
+							lineItemsUI: Array.isArray(r.line_items_ui) ? r.line_items_ui : [],
+							summary: r.summary != null && typeof r.summary === 'object' ? r.summary : {},
+							checkoutUrl: r.checkout_url
+						}
+					: undefined
 		}));
 		const now = new Date().toISOString();
 		// Typing when: (human agent typing) or (AI generating: typing_until set and agent_typing_by null)
