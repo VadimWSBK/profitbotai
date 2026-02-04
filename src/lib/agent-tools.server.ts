@@ -594,26 +594,34 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 			if (!result.ok) return { error: result.error ?? 'Failed to create checkout link' };
 			if (!result.checkoutUrl) return { error: 'Checkout link was not returned by Shopify.' };
 
-			// Build checkout preview: left = product title above image, right = quantity. Simple 2-col table (Product | Qty).
+			// Build checkout preview like Shopify order summary: Image (with qty badge) | Product (name + variant) | Total. No borders, clean layout.
 			const fmt = (n: number) => n.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-			const productBlocks = lineItems.map((li) => {
-				const lines = [`**${li.title}**`];
-				if (li.imageUrl) lines.push(`![${li.title}](${li.imageUrl})`);
-				return lines.join('\n\n');
+			const totalItems = lineItems.reduce((sum, li) => sum + li.quantity, 0);
+			const tableRows = lineItems.map((li) => {
+				const lineTotal = Number.parseFloat(li.price) * li.quantity;
+				// Image cell: image markdown then " × qty" for badge overlay (single line so table parse works)
+				const imageCell = li.imageUrl
+					? `![${li.title}](${li.imageUrl}) × ${li.quantity}`
+					: `— × ${li.quantity}`;
+				// Product cell: "name %% variant" so frontend can show name bold + variant smaller
+				const variantMatch = li.title.match(/\d+\s*L\b/i);
+				const variantLine = variantMatch ? variantMatch[0].trim() : '';
+				const productCell = variantLine ? `${li.title} %% ${variantLine}` : li.title;
+				return `| ${imageCell} | ${productCell} | $${fmt(lineTotal)} |`;
 			});
-			const tableRows = lineItems.map((li) => `| ${li.title} | ${li.quantity} |`);
 			const previewParts: string[] = [
 				'**Your checkout preview**',
 				'',
-				productBlocks.join('\n\n'),
-				'',
-				'| Product | Qty |',
-				'|---------|-----|',
+				'|  | Product | Total |',
+				'|--|---------|-------|',
 				...tableRows,
 				'',
-				`**Subtotal:** $${fmt(subtotal)} ${currency}`,
-				...(appliedDiscount ? [`**Discount (${appliedDiscount.value}%):** -$${fmt(discountAmount)}`, ''] : []),
-				`**Total:** $${fmt(total)} ${currency}`,
+				`Subtotal · ${totalItems} items — $${fmt(subtotal)} ${currency}`,
+				...(appliedDiscount
+					? [`Order discount · ${appliedDiscount.value}% OFF — -$${fmt(discountAmount)}`, '']
+					: []),
+				`**Total** — ${currency} $${fmt(total)}`,
+				...(appliedDiscount ? [`Total savings — $${fmt(discountAmount)}`, ''] : []),
 				'',
 				`[Buy now – complete your purchase](${result.checkoutUrl})`
 			];

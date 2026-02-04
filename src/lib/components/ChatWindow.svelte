@@ -443,7 +443,42 @@
 		return parts;
 	}
 
-	/** Convert a markdown table string to HTML. Escapes cell content. */
+	/** Render cell content: images (with optional qty badge), product lines, escape rest. */
+	function renderTableCell(
+		cell: string,
+		escape: (s: string) => string,
+		opts: { colIndex: number; isCheckoutTable: boolean; header?: string }
+	): string {
+		const imgRe = /!\[([^\]]*)\]\s*\((https?:\/\/[^)\s]+)\)?/;
+		const m = cell.match(imgRe);
+		if (m) {
+			const alt = escape(m[1] || '');
+			const url = escape(m[2] || '');
+			const rest = cell.replace(imgRe, '').trim();
+			const qtyMatch = rest.match(/×\s*(\d+)\s*$/);
+			const qty = qtyMatch ? qtyMatch[1] : '';
+			const imgHtml = `<img src="${url}" alt="${alt}" class="chat-table-cell-image" loading="lazy" />`;
+			if (qty && opts.isCheckoutTable) {
+				return `<div class="checkout-img-wrap"><span class="qty-badge">${escape(qty)}</span>${imgHtml}</div>`;
+			}
+			return imgHtml + (rest ? ` ${escape(rest)}` : '');
+		}
+		const escaped = escape(cell);
+		if (opts.isCheckoutTable && opts.header?.toLowerCase() === 'product') {
+			const parts = cell.split(/\s*%%\s*/).map((p) => p.trim()).filter(Boolean);
+			if (parts.length >= 2) {
+				return `<span class="checkout-product-cell"><strong>${escape(parts[0])}</strong><br /><span class="checkout-variant-line">${escape(parts.slice(1).join(' · '))}</span></span>`;
+			}
+			return `<span class="checkout-product-cell">${escaped}</span>`;
+		}
+		const withBr = escaped.replace(/\n/g, '<br />');
+		if (opts.isCheckoutTable && opts.header?.toLowerCase() === 'total') {
+			return `<span class="checkout-total-cell">${withBr}</span>`;
+		}
+		return withBr;
+	}
+
+	/** Convert a markdown table string to HTML. Escapes cell content; renders images in cells. */
 	function markdownTableToHtml(tableContent: string): string {
 		const escape = (s: string) =>
 			String(s)
@@ -464,14 +499,19 @@
 			return cells.length > 0 && cells.every((c) => /^[\s\-:]+$/.test(c));
 		};
 		const bodyStart = lines.length > 1 && isSep(lines[1]) ? 2 : 1;
-		let html = '<table class="chat-message-table"><thead><tr>';
+		const isCheckoutTable = headerCells[0]?.toLowerCase() === '' && headerCells[1]?.toLowerCase() === 'product' && headerCells[2]?.toLowerCase() === 'total';
+		const tableClass = isCheckoutTable ? 'chat-message-table chat-checkout-table' : 'chat-message-table';
+		let html = `<table class="${tableClass}"><thead><tr>`;
 		for (const c of headerCells) html += `<th>${escape(c)}</th>`;
 		html += '</tr></thead><tbody>';
 		for (let r = bodyStart; r < lines.length; r++) {
 			const cells = parseRow(lines[r]);
 			if (cells.length === 0) continue;
 			html += '<tr>';
-			for (const c of cells) html += `<td>${escape(c)}</td>`;
+			for (let i = 0; i < cells.length; i++) {
+				const tdClass = isCheckoutTable && i === cells.length - 1 ? 'chat-checkout-total-td' : '';
+				html += `<td${tdClass ? ` class="${tdClass}"` : ''}>${renderTableCell(cells[i], escape, { colIndex: i, isCheckoutTable, header: headerCells[i] })}</td>`;
+			}
 			html += '</tr>';
 		}
 		html += '</tbody></table>';
@@ -932,5 +972,77 @@
 	:global(.chat-message-table th) {
 		font-weight: 600;
 		opacity: 1;
+	}
+	:global(.chat-checkout-table) {
+		border: none;
+		border-collapse: collapse;
+		width: 100%;
+	}
+	:global(.chat-checkout-table thead th) {
+		border: none;
+		background: transparent;
+		font-weight: 500;
+		font-size: 0.9em;
+		opacity: 0.8;
+		padding-bottom: 0.5em;
+	}
+	:global(.chat-checkout-table th:first-child),
+	:global(.chat-checkout-table td:first-child) {
+		width: 1%;
+		white-space: nowrap;
+		vertical-align: top;
+		padding-right: 1em;
+	}
+	:global(.chat-checkout-table td) {
+		border: none;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+		background: transparent;
+		padding: 0.75em 0;
+		vertical-align: top;
+	}
+	:global(.chat-checkout-table td:last-child) {
+		padding-left: 1em;
+	}
+	:global(.chat-checkout-total-td) {
+		text-align: right;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+	:global(.checkout-img-wrap) {
+		position: relative;
+		display: inline-block;
+	}
+	:global(.chat-checkout-table .chat-table-cell-image) {
+		width: 64px;
+		height: 64px;
+		object-fit: cover;
+		border-radius: 6px;
+		display: block;
+	}
+	:global(.qty-badge) {
+		position: absolute;
+		top: 2px;
+		right: 2px;
+		background: rgba(0, 0, 0, 0.75);
+		color: #fff;
+		padding: 2px 6px;
+		border-radius: 4px;
+		font-size: 0.75rem;
+		font-weight: 600;
+		line-height: 1.2;
+	}
+	:global(.checkout-product-cell) {
+		display: block;
+		font-size: 0.95em;
+	}
+	:global(.checkout-variant-line) {
+		display: block;
+		margin-top: 0.2em;
+		font-size: 0.85em;
+		opacity: 0.85;
+		font-weight: 400;
+	}
+	:global(.chat-table-cell-image) {
+		display: block;
 	}
 </style>
