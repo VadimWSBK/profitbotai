@@ -627,16 +627,28 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 				'|--|---------|-------|',
 				...tableRows,
 				'',
-				'| Item | Details | Amount |',
-				'|------|---------|--------|',
-				`| Subtotal | ${totalItems} items | $${fmt(subtotal)} ${currency} |`,
+				`${totalItems} items`,
+				'',
+				'|  |  |  |',
+				'|--|--|--|',
 				...(appliedDiscount
 					? [
-							`| Order discount | ${appliedDiscount.value}% OFF | -$${fmt(discountAmount)} |`,
-							`| Total | ${currency} | $${fmt(total)} |`,
-							`| Total savings |  | $${fmt(discountAmount)} |`
+							`| Discount | ${appliedDiscount.value}% OFF | -$${fmt(discountAmount)} |`,
+							'| Shipping | FREE | $0 |',
+							'',
+							`| Subtotal |  | $${fmt(subtotal)} |`,
+							`| Total |  | $${fmt(total)} |`,
+							'',
+							'GST included'
 						]
-					: [`| Total | ${currency} | $${fmt(total)} |`]),
+					: [
+							'| Shipping | FREE | $0 |',
+							'',
+							`| Subtotal |  | $${fmt(subtotal)} |`,
+							`| Total |  | $${fmt(total)} |`,
+							'',
+							'GST included'
+						]),
 				'',
 				`[Buy now – complete your purchase](${result.checkoutUrl})`
 			];
