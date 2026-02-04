@@ -53,20 +53,17 @@ export const GET: RequestHandler = async (event) => {
 					agentN8n ||
 					(chatBackend === 'n8n' ? (env.N8N_CHAT_WEBHOOK_URL ?? '').trim() : '') ||
 					n8nUrl;
-				// Single system prompt for n8n: prefer system_prompt, else build from bot_role + bot_tone + bot_instructions
+				// System prompt for n8n: always combine Role + Tone + Additional instructions; append system_prompt if set
+				const role = (agentRow.bot_role as string)?.trim();
+				const tone = (agentRow.bot_tone as string)?.trim();
+				const instructions = (agentRow.bot_instructions as string)?.trim();
 				const sp = (agentRow.system_prompt as string)?.trim();
-				if (sp) {
-					agentSystemPrompt = sp;
-				} else {
-					const role = (agentRow.bot_role as string)?.trim();
-					const tone = (agentRow.bot_tone as string)?.trim();
-					const instructions = (agentRow.bot_instructions as string)?.trim();
-					const parts: string[] = [];
-					if (role) parts.push(role);
-					if (tone) parts.push(`Tone: ${tone}`);
-					if (instructions) parts.push(instructions);
-					if (parts.length > 0) agentSystemPrompt = parts.join('\n\n');
-				}
+				const parts: string[] = [];
+				if (role) parts.push(role);
+				if (tone) parts.push(`Tone: ${tone}`);
+				if (instructions) parts.push(instructions);
+				if (sp) parts.push(sp);
+				if (parts.length > 0) agentSystemPrompt = parts.join('\n\n');
 			}
 		}
 

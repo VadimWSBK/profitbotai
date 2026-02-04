@@ -71,8 +71,8 @@
 		requestAnimationFrame(updateScrollToBottomVisibility);
 	});
 
-	function addBotMessage(content: string) {
-		messages = [...messages, { role: 'bot', content }];
+	function addBotMessage(content: string, checkoutPreview?: CheckoutPreview) {
+		messages = [...messages, { role: 'bot', content, checkoutPreview }];
 		showStarterPrompts = false;
 		requestAnimationFrame(() => scrollToBottom());
 	}
@@ -172,6 +172,7 @@
 
 		loading = true;
 		let botReply = config.window.customErrorMessage;
+		let n8nCheckoutPreview: CheckoutPreview | undefined;
 		const useN8n = !!config.n8nWebhookUrl;
 		if (useN8n) {
 			let n8nStreamHandled = false;
@@ -271,11 +272,22 @@
 					const data = await res.json().catch(() => ({}));
 					botReply = data.output ?? data.message ?? data.reply ?? data.text ?? botReply;
 					if (typeof botReply !== 'string') botReply = JSON.stringify(botReply);
+					// If n8n returns checkoutPreview (from DIY checkout tool), show table + images + button
+					const preview = data.checkoutPreview;
+					if (
+						preview &&
+						typeof preview === 'object' &&
+						Array.isArray(preview.lineItemsUI) &&
+						preview.summary &&
+						typeof preview.checkoutUrl === 'string'
+					) {
+						n8nCheckoutPreview = preview as CheckoutPreview;
+					}
 				}
 			} catch {
 				botReply = config.window.customErrorMessage;
 			}
-			if (!n8nStreamHandled) addBotMessage(botReply);
+			if (!n8nStreamHandled) addBotMessage(botReply, n8nCheckoutPreview);
 		} else {
 			botReply = "Add your n8n webhook URL in the Connect tab to enable chat.";
 			addBotMessage(botReply);

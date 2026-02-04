@@ -63,6 +63,8 @@ Use your app’s base URL (e.g. `https://your-domain.com`) and pass **X-API-Key*
 | **Update contact**       | PATCH `/api/widgets/{widgetId}/contacts`        | X-API-Key or session | `conversationId`, `name?`, `email?`, `phone?`, `address?`, `street_address?`, `city?`, `state?`, `postcode?`, `country?`, `roof_size_sqm?` |
 | **Send email to contact** | POST `/api/conversations/{conversationId}/send-email` | X-API-Key or session | `subject`, `body` |
 | **Append quote to contact** | POST `/api/widgets/{widgetId}/contacts/pdf-quote` | Session only for now | `conversationId` or `email`, `pdfUrl` |
+| **Create DIY checkout**    | POST `/api/widgets/{widgetId}/diy-checkout`       | X-API-Key or session | `conversationId?`, `roof_size_sqm?`, `count_15l?`, `count_10l?`, `count_5l?`, `discount_percent?`, `email?` |
+| **Create discount**        | POST `/api/widgets/{widgetId}/create-discount`    | X-API-Key or session | `discount_percent` (10 or 15) |
 
 Set header **X-API-Key** to the same value as `SIGNED_URL_API_KEY` in your `.env` when calling from n8n.
 
@@ -103,13 +105,66 @@ The chat widget renders Markdown, so `[Download Quote](url)` will show as a clic
      *Description for AI:* e.g. "Update the current contact. When the user gives an address, save it in the correct columns: street_address (street and number), city, state, postcode, country. Also accept name, email, phone, roof_size_sqm. Call as soon as the user provides any of these; use Get current contact first to avoid overwriting with empty values."  
    The **vector store** is for agent rules (RAG). Contact and pricing are **structured data** — the AI gets them by calling these tools when needed.
 
-3. **Send email**  
-   Use your existing Resend (or other) integration in n8n, or call your app’s send-email endpoint if you add API key auth for it. The logic is in `sendContactEmail`; from n8n you’d pass conversation/contact identifiers and email content.
+3. **Send email (using the ProfitBot user's email client)**  
+   The app has an endpoint that sends email via the Resend account connected in **Settings → Integrations** for the widget owner. n8n can call it so the AI can send emails (quote link, follow-up, etc.) without configuring Resend in n8n.
+   - **Tool** (e.g. "Send email"): **HTTP Request** POST  
+     `https://app.profitbot.ai/api/conversations/{{ $json.conversationId }}/send-email`  
+     with header `X-API-Key: <SIGNED_URL_API_KEY>` and JSON body: `{ "subject": "...", "body": "..." }`.
+   - The recipient is the **contact for that conversation** (the app looks up the contact by `conversationId` and uses their email). The email is sent using the widget owner's Resend integration and stored in contact_emails for the Messages view.
+   - **Requirements:** The ProfitBot user must have Resend connected in Integrations and set a "From email" on a verified domain when sending to customers.
 
-4. **Checkout link / tables**  
-   These are implemented in your app via Shopify + product pricing. Options:
-   - **Option A**: In n8n, add a **Tool** that calls an internal HTTP endpoint (if you add one) that returns checkout URL or product table using your existing Shopify/product-pricing logic.
-   - **Option B**: Replicate the logic in n8n with a **Code** or **HTTP Request** node that uses Supabase (e.g. `product_pricing`) and Shopify API (if you store Shopify config in DB or env), then return the link or table as the tool result.
+**Send email tool – paste into n8n**
+
+- **Tool name:** `Send email`
+- **Description:** Send an email to the current contact for this conversation. Use when the customer asks to receive something by email (e.g. quote link, follow-up, summary). Pass the conversation ID from the chat trigger, and provide subject and body (plain text or simple HTML). The email is sent using the ProfitBot user's connected Resend account to the contact's email for this conversation. Get the contact first if you need their name for the body.
+- **URL:** `https://app.profitbot.ai/api/conversations/{{ $json.conversationId }}/send-email`
+- **Method:** POST  
+- **Headers:** `X-API-Key`: your `SIGNED_URL_API_KEY`
+- **Body (JSON):** `{ "subject": "{{ $json.subject }}", "body": "{{ $json.body }}" }`
+
+4. **DIY checkout: table with product images + “GO TO CHECKOUT” button**  
+   To show the same breakdown as the direct LLM (product table with images, summary, and button), add a **Tool** that calls the app’s DIY checkout API, then have **Respond to Webhook** return both the reply text and the **checkoutPreview** object so the widget can render it.
+   - **Tool** (e.g. “Create DIY checkout”): **HTTP Request** POST  
+     `https://your-domain.com/api/widgets/{{ $json.widgetId }}/diy-checkout`  
+     with header `X-API-Key: <SIGNED_URL_API_KEY>` and JSON body:
+     - `conversationId` (optional, from chat trigger) – used to pre-fill contact email
+     - `roof_size_sqm` (optional) – roof size in m²; app calculates bucket counts (1L covers 2 m²)
+     - Or explicit counts: `count_15l`, `count_10l`, `count_5l`
+     - `discount_percent` (optional, e.g. 10 or 15)
+     - `email` (optional)
+   - The API returns `{ checkoutUrl, lineItemsUI, summary }`. In your **Respond to Webhook** node, return JSON in this form so the widget shows the table and button:
+     ```json
+     {
+       "output": "Here is your one-click checkout for your 100 m² roof:",
+       "checkoutPreview": {
+         "lineItemsUI": <paste lineItemsUI from the tool response>,
+         "summary": <paste summary from the tool response>,
+         "checkoutUrl": <paste checkoutUrl from the tool response>
+       }
+     }
+     ```
+   - So: run the DIY checkout tool, then in the node that builds the webhook response set **output** to your intro text and **checkoutPreview** to the full object returned by the tool (e.g. `{{ $json.lineItemsUI }}`, `{{ $json.summary }}`, `{{ $json.checkoutUrl }}` from the HTTP Request node). The chat widget will render the product table with images and the “GO TO CHECKOUT” button.
+
+5. **Create discount (10% or 15%)**  
+   When the customer asks for a discount, the AI can call this tool first, then use the same percentage when calling the DIY checkout.
+   - **Tool** (e.g. “Create discount”): **HTTP Request** POST  
+     `https://app.profitbot.ai/api/widgets/{{ $json.widgetId }}/create-discount`  
+     with header `X-API-Key: <SIGNED_URL_API_KEY>` and JSON body: `{ "discount_percent": 10 }` or `{ "discount_percent": 15 }`.
+   - The API returns `{ discountPercent, code, message }` (e.g. `code` is `CHAT10` or `CHAT15`). Tell the customer the discount is applied and use the same `discount_percent` when you call the DIY checkout tool so the checkout link includes the discount.
+
+**Create discount tool – paste into n8n**
+
+- **Tool name:** `Create discount`
+- **Description:** Create a 10% or 15% discount for the customer. Use when the customer asks for a discount. Pass `discount_percent` 10 for a first request, or 15 if they ask for more. Returns a code (CHAT10 or CHAT15) and a message to tell the customer. You must then use the same discount_percent when calling the Create DIY checkout tool so the checkout link includes the discount.
+- **URL:** `https://app.profitbot.ai/api/widgets/{{ $json.widgetId }}/create-discount`
+- **Method:** POST  
+- **Headers:** `X-API-Key`: your `SIGNED_URL_API_KEY`
+- **Body (JSON):** `{ "discount_percent": "{{ $json.discount_percent }}" }` (use 10 or 15)
+
+**So the AI uses discount first, then DIY checkout**  
+Add this to your **System Message** (or agent instructions in ProfitBot) so the AI always does the right order:
+
+*When the customer asks for a discount: first call the Create discount tool with discount_percent 10 (or 15 if they ask for more). Tell them the discount is applied (e.g. mention the code CHAT10 or CHAT15). When they then ask for their checkout link or DIY quote, call the Create DIY checkout tool and pass the same discount_percent (10 or 15) so the checkout link includes the discount. Never create a DIY checkout with a discount unless you have already called Create discount with that percentage in this conversation.*
 
 ### Passing context from the chat trigger
 
@@ -123,6 +178,9 @@ The chat widget sends these fields in the webhook body to n8n:
 - `systemPrompt` – when the widget uses an agent, this is the **agent’s** system prompt (editable per agent in Edit Agent → Train Bot, stored in Supabase). Otherwise it’s built from the widget’s bot role/tone/instructions. n8n uses this as the System Message.
 
 So n8n can use **System Message** = `{{ $json.systemPrompt }}` with no Supabase node. Optionally you can still load from Supabase if you prefer (see below).
+
+**What is the system prompt?**  
+The app sends a **single** system prompt string: it is the combination of the agent’s **Role** + **Tone** + **Additional instructions** from Edit Agent → Train Bot (and any legacy System prompt field if set). So all three (Role, Tone, Additional instructions) are always combined into one `systemPrompt` that n8n receives. Put discount/checkout rules in **Additional instructions** (e.g. “When the customer asks for a discount, first call Create discount with 10 or 15, then use the same percentage when calling Create DIY checkout”).
 
 In n8n, the "When chat message received" trigger exposes the webhook body.
 
@@ -247,8 +305,8 @@ If n8n shows success but the reply doesn’t appear in the chat (or you see “O
 ## Summary
 
 - **Vector store**: Use table `widget_documents` and query name `match_documents`; embedding **768 dimensions** (Gemini default in n8n). For **agent rules (RAG)** add a second Vector Store: table `agent_rules`, query name `match_agent_rules_documents`, metadata filter `agent_id` = `{{ $json.agentId }}`.
-- **Tools in n8n**: Add Tool nodes that call `POST /api/quote/generate` (with X-API-Key), `GET /api/widgets/{id}/contacts` and `GET /api/widgets/{id}/product-pricing` for contact and DIY pricing, and (optionally) send-email and checkout endpoints. Pass `widgetId` and `conversationId` from the chat trigger; use header `X-API-Key` (same as `SIGNED_URL_API_KEY`).
-- **Response**: The widget waits for the webhook’s HTTP response (no separate callback). Add a **Respond to Webhook** node connected to the AI Agent output, and return JSON with `{ "output": "..." }` (or `message` / `reply` / `text`) so the chat can display the reply.
+- **Tools in n8n**: Add Tool nodes that call `POST /api/quote/generate`, `GET /api/widgets/{id}/contacts`, `GET /api/widgets/{id}/product-pricing`, `POST /api/conversations/{id}/send-email`, `POST /api/widgets/{id}/create-discount` (10% or 15%), and `POST /api/widgets/{id}/diy-checkout` for quote, contact, pricing, email, discount, and one-click checkout. Pass `widgetId` and `conversationId` from the chat trigger; use header `X-API-Key` (same as `SIGNED_URL_API_KEY`). Base URL: **https://app.profitbot.ai**.
+- **Response**: The widget waits for the webhook’s HTTP response (no separate callback). Add a **Respond to Webhook** node and return JSON with `{ "output": "..." }` (or `message` / `reply` / `text`). To show the **DIY checkout table with product images and “GO TO CHECKOUT” button**, also include `checkoutPreview: { lineItemsUI, summary, checkoutUrl }` in the same response (from the diy-checkout tool result).
 
 ---
 
