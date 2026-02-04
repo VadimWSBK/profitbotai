@@ -187,12 +187,27 @@
 				if (bot.tone?.trim()) parts.push(`Tone: ${bot.tone.trim()}`);
 				if (bot.instructions?.trim()) parts.push(bot.instructions.trim());
 				const systemPrompt = parts.length > 0 ? parts.join('\n\n') : undefined;
+				const effectiveSessionId = sessionId && sessionId !== 'preview' ? sessionId : 'preview';
+				let conversationId: string | undefined;
+				if (widgetId && effectiveSessionId !== 'preview') {
+					try {
+						const convRes = await fetch(
+							`/api/widgets/${widgetId}/conversation?session_id=${encodeURIComponent(effectiveSessionId)}`
+						);
+						const convData = await convRes.json().catch(() => ({}));
+						if (convData.conversationId) conversationId = convData.conversationId;
+					} catch {
+						// continue without conversationId
+					}
+				}
 				const res = await fetch(config.n8nWebhookUrl, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({
 						message: trimmed,
-						sessionId: sessionId && sessionId !== 'preview' ? sessionId : 'preview',
+						sessionId: effectiveSessionId,
+						...(widgetId && { widgetId }),
+						...(conversationId && { conversationId }),
 						...(systemPrompt && { systemPrompt }),
 						...(systemPrompt && { role: bot.role?.trim() || undefined, tone: bot.tone?.trim() || undefined, instructions: bot.instructions?.trim() || undefined })
 					})

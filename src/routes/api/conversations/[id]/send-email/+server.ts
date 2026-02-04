@@ -6,7 +6,7 @@
 
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getSupabaseClient } from '$lib/supabase.server';
+import { getSupabaseClient, getSupabaseAdmin } from '$lib/supabase.server';
 import { sendContactEmail } from '$lib/send-quote-email.server';
 
 export const POST: RequestHandler = async (event) => {
@@ -27,7 +27,7 @@ export const POST: RequestHandler = async (event) => {
 	if (!subject) return json({ error: 'subject required' }, { status: 400 });
 	if (!emailBody) return json({ error: 'body required' }, { status: 400 });
 
-	const supabase = getSupabaseClient(event);
+	const supabase = user.id === 'api-key' ? getSupabaseAdmin() : getSupabaseClient(event);
 	const { data: conv, error: convError } = await supabase
 		.from('widget_conversations')
 		.select('id, widget_id, widgets(created_by)')

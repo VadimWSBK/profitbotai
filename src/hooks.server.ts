@@ -8,8 +8,12 @@ const API_EVENTS_PATH = '/api/widgets/events';
 
 /** Paths that require X-API-Key for server-to-server auth (e.g. n8n) */
 const API_KEY_PATHS = ['/api/contacts/signed-url'];
-/** Paths that accept either session or X-API-Key (e.g. quote generate from dashboard or n8n) */
-const OPTIONAL_API_KEY_PATHS = ['/api/quote/generate'];
+/** Paths that accept either session or X-API-Key (e.g. quote generate, contacts, send-email from n8n) */
+const OPTIONAL_API_KEY_PATHS = [
+	'/api/quote/generate',
+	'/api/conversations', // send-email: /api/conversations/[id]/send-email
+	'/api/widgets' // contacts: /api/widgets/[id]/contacts
+];
 
 function isPublicPath(pathname: string, method: string): boolean {
 	if (pathname.startsWith(EMBED_PREFIX)) return true;
@@ -20,6 +24,8 @@ function isPublicPath(pathname: string, method: string): boolean {
 	if (/^\/api\/widgets\/[^/]+\/chat$/.test(pathname)) return true;
 	// Allow anonymous GET for widget messages (embed polls for human agent replies)
 	if (/^\/api\/widgets\/[^/]+\/messages$/.test(pathname)) return true;
+	// Allow anonymous GET for conversation id (widget sends widgetId + conversationId to n8n)
+	if (/^\/api\/widgets\/[^/]+\/conversation$/.test(pathname)) return method === 'GET';
 	// Allow anonymous GET only for quote form config (embed form page); PUT/DELETE require auth (form builder save)
 	if (/^\/api\/forms\/[^/]+$/.test(pathname)) return method === 'GET';
 	// Allow anonymous POST for quote form submit (embed form submission)

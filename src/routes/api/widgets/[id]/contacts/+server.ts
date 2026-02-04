@@ -1,15 +1,17 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getSupabase } from '$lib/supabase.server';
+import { getSupabaseClient, getSupabaseAdmin } from '$lib/supabase.server';
 
 /**
  * PATCH /api/widgets/[id]/contacts
  * Body: { conversationId: string, name?: string, email?: string, phone?: string, address?: string, roof_size_sqm?: number }
- * Updates contact fields. Call from n8n or when extracting user info from the conversation.
+ * Updates contact fields. Call from n8n (X-API-Key) or dashboard (session).
  */
 export const PATCH: RequestHandler = async (event) => {
 	const widgetId = event.params.id;
 	if (!widgetId) return json({ error: 'Missing widget id' }, { status: 400 });
+	const user = event.locals.user;
+	if (!user) return json({ error: 'Unauthorized' }, { status: 401 });
 
 	let body: {
 		conversationId?: string;
@@ -38,7 +40,7 @@ export const PATCH: RequestHandler = async (event) => {
 	}
 
 	try {
-		const supabase = getSupabase();
+		const supabase = user.id === 'api-key' ? getSupabaseAdmin() : getSupabaseClient(event);
 		const { error } = await supabase
 			.from('contacts')
 			.update(updates)
