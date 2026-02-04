@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { env } from '$env/dynamic/private';
-import { getSupabase, getSupabaseClient } from '$lib/supabase.server';
+import { getSupabase, getSupabaseClient, getSupabaseAdmin } from '$lib/supabase.server';
 
 /**
  * GET /api/widgets/[id] – fetch one widget (full config for editor).
@@ -36,10 +36,12 @@ export const GET: RequestHandler = async (event) => {
 			(chatBackend === 'n8n' ? (env.N8N_CHAT_WEBHOOK_URL ?? '').trim() : '') ||
 			'';
 
-		// When widget has an agent, use agent's chat backend so embed doesn't poll our API when agent is n8n
+		// When widget has an agent, use agent's chat backend so embed doesn't poll our API when agent is n8n.
+		// Use admin client so anonymous embed load can read agent (RLS may block anon on agents).
 		const agentId = (config.agentId as string)?.trim();
 		if (agentId) {
-			const { data: agentRow } = await supabase
+			const admin = getSupabaseAdmin();
+			const { data: agentRow } = await admin
 				.from('agents')
 				.select('chat_backend, n8n_webhook_url')
 				.eq('id', agentId)

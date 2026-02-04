@@ -4,7 +4,6 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { browser } from '$app/environment';
 	import { getSessionId } from '$lib/widget-session';
-	import { readUIMessageStream } from 'ai';
 
 	let { config, widgetId, onClose } = $props<{ config: WidgetConfig; widgetId?: string; onClose: () => void }>();
 
@@ -65,8 +64,7 @@
 	const win = $derived(config.window);
 	const bubble = $derived(config.bubble);
 	const botStyle = $derived(win.botMessageSettings);
-	const useDirect = $derived(config.chatBackend === 'direct' && !!config.llmProvider && !!widgetId);
-
+	// Chat uses n8n only; no Vercel streaming or polling.
 	// Update scroll-to-bottom FAB visibility when messages or content change
 	$effect(() => {
 		void messages.length;
@@ -109,6 +107,11 @@
 			messagesLoading = false;
 			return;
 		}
+		// Skip when using n8n: we don't store messages on our side for that path.
+		if (config.n8nWebhookUrl) {
+			messagesLoading = false;
+			return;
+		}
 		try {
 			const res = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
 			const data = await res.json().catch(() => ({}));
@@ -131,27 +134,8 @@
 	}
 
 	function startPolling() {
-		if (!useDirect || !widgetId || !sessionId || sessionId === 'preview') return;
-		pollTimer = setInterval(async () => {
-			// Don't overwrite messages while we're waiting for our own send — keeps the user's message visible
-			if (loading) return;
-			try {
-				const res = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
-				const data = await res.json().catch(() => ({}));
-				const newList = Array.isArray(data.messages) ? data.messages : [];
-				const serverMessages = newList.map(mapMessage);
-				// Only replace messages when server has at least as many as we have (avoids wiping optimistic or just-added messages)
-				if (serverMessages.length >= messages.length) {
-					messages = serverMessages;
-					showStarterPrompts = false;
-					// Do not auto-scroll on poll sync — respect user scroll position (e.g. reading history)
-				}
-				agentTyping = !!data.agentTyping;
-				agentAvatarUrl = data.agentAvatarUrl ?? null;
-			} catch {
-				// ignore
-			}
-		}, 3000);
+		// No polling: chat uses n8n only; no Vercel backend to sync with.
+		return;
 	}
 
 	function stopPolling() {
@@ -193,206 +177,8 @@
 
 		loading = true;
 		let botReply = config.window.customErrorMessage;
-		const useN8n = config.chatBackend !== 'direct' && config.n8nWebhookUrl;
-		if (useDirect) {
-			try {
-				const res = await fetch(`/api/widgets/${widgetId}/chat`, {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ message: trimmed, sessionId })
-				});
-				const contentType = res.headers.get('content-type') ?? '';
-				if (contentType.includes('application/json')) {
-					const data = await res.json().catch(() => ({}));
-					if (!res.ok) {
-						// Server returned error (e.g. 504 Gateway Timeout). Poll first—quote generation can take
-						// 10–15s; a proxy may time out while the server completes successfully in the background.
-						const refetchMessages = async (): Promise<Message[]> => {
-							const refetch = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
-							const refetchData = await refetch.json().catch(() => ({}));
-							const list = Array.isArray(refetchData.messages) ? refetchData.messages : [];
-							return list.map(mapMessage);
-						};
-						const pollIntervalMs = 1500;
-						const totalWaitMs = 20000;
-						const maxAttempts = Math.ceil(totalWaitMs / pollIntervalMs);
-						for (let attempt = 0; attempt < maxAttempts; attempt++) {
-							await new Promise((r) => setTimeout(r, pollIntervalMs));
-							try {
-								const serverMessages = await refetchMessages();
-								if (serverMessages.length > messages.length || (serverMessages.length > 0 && serverMessages[serverMessages.length - 1].role === 'bot')) {
-									messages = serverMessages;
-									requestAnimationFrame(() => scrollToBottom());
-									loading = false;
-									return;
-								}
-							} catch {
-								// ignore refetch errors
-							}
-						}
-						botReply = (data.error as string) ?? config.window.customErrorMessage;
-					} else if (data.liveAgentActive) {
-						loading = false;
-						return;
-					} else {
-						const outputOrMessage = data.output ?? data.message;
-						if (typeof outputOrMessage === 'string' && outputOrMessage.trim()) {
-							botReply = outputOrMessage;
-						}
-						// If res.ok but no output/message, server may have returned stream as JSON or response not ready.
-						// Poll for the persisted message instead of showing error—avoids flashing error then real reply.
-						if (typeof botReply !== 'string' || botReply === config.window.customErrorMessage) {
-							const refetchMessages = async (): Promise<Message[]> => {
-								const refetch = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
-								const refetchData = await refetch.json().catch(() => ({}));
-								const list = Array.isArray(refetchData.messages) ? refetchData.messages : [];
-								return list.map(mapMessage);
-							};
-							const pollIntervalMs = 1500;
-							const totalWaitMs = 20000;
-							const maxAttempts = Math.ceil(totalWaitMs / pollIntervalMs);
-							for (let attempt = 0; attempt < maxAttempts; attempt++) {
-								await new Promise((r) => setTimeout(r, pollIntervalMs));
-								try {
-									const serverMessages = await refetchMessages();
-									if (serverMessages.length > messages.length || (serverMessages.length > 0 && serverMessages[serverMessages.length - 1].role === 'bot')) {
-										messages = serverMessages;
-										requestAnimationFrame(() => scrollToBottom());
-										loading = false;
-										return;
-									}
-								} catch {
-									// ignore refetch errors
-								}
-							}
-							botReply = config.window.customErrorMessage;
-						}
-					}
-					if (typeof botReply !== 'string') botReply = JSON.stringify(botReply);
-				} else if (res.ok && res.body) {
-					// AI SDK stream: consume and update UI as tokens arrive. If stream parsing fails (e.g. format change),
-					// poll for the persisted message instead of showing error—server may have completed successfully.
-					let streamMessageIndex = -1;
-					let streamParseFailed = false;
-					try {
-						for await (const uiMessage of readUIMessageStream({
-							stream: res.body as unknown as ReadableStream<import('ai').UIMessageChunk>
-						})) {
-							const fromParts = (uiMessage.parts ?? [])
-								.filter((p): p is { type: 'text'; text: string } => p.type === 'text')
-								.map((p) => p.text)
-								.join('');
-							const msgContent = (uiMessage as unknown as { content?: string }).content;
-							const content = typeof msgContent === 'string' ? msgContent : fromParts ?? '';
-							if (streamMessageIndex === -1) {
-								addBotMessage(content);
-								streamMessageIndex = messages.length - 1;
-							} else {
-								messages = messages.map((m, i) =>
-									i === streamMessageIndex ? { ...m, content } : m
-								);
-							}
-							requestAnimationFrame(() => scrollToBottom());
-						}
-						// Refetch so the new message has id and checkoutPreview (from shopify_create_diy_checkout_link).
-						try {
-							const refetchRes = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
-							const refetchData = await refetchRes.json().catch(() => ({}));
-							const list = Array.isArray(refetchData.messages) ? refetchData.messages : [];
-							if (list.length >= messages.length) {
-								messages = list.map(mapMessage);
-								requestAnimationFrame(() => scrollToBottom());
-							}
-						} catch {
-							// ignore
-						}
-					} catch {
-						streamParseFailed = true;
-					} finally {
-						loading = false;
-					}
-					// If stream yielded nothing or parsing failed, poll for the persisted reply.
-					// Server sets agentTyping while AI is generating; poll until we have the message or server says not typing.
-					if (streamMessageIndex === -1 || streamParseFailed) {
-						const refetch = async (): Promise<{ messages: Message[]; agentTyping: boolean }> => {
-							const res = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
-							const data = await res.json().catch(() => ({}));
-							const list = Array.isArray(data.messages) ? data.messages : [];
-							return { messages: list.map(mapMessage), agentTyping: !!data.agentTyping };
-						};
-						const pollIntervalMs = 800;
-						const maxTotalMs = 5 * 60 * 1000;
-						const pollsAfterTypingStopped = 3;
-						let typingStoppedCount = 0;
-						const deadline = Date.now() + maxTotalMs;
-						while (Date.now() < deadline) {
-							await new Promise((r) => setTimeout(r, pollIntervalMs));
-							try {
-								const { messages: serverMessages, agentTyping: serverTyping } = await refetch();
-								agentTyping = serverTyping;
-								if (serverMessages.length > messages.length || (serverMessages.length > 0 && serverMessages[serverMessages.length - 1].role === 'bot')) {
-									messages = serverMessages;
-									requestAnimationFrame(() => scrollToBottom());
-									return;
-								}
-								if (!serverTyping) {
-									typingStoppedCount++;
-									if (typingStoppedCount >= pollsAfterTypingStopped) break;
-						} else {
-							typingStoppedCount = 0;
-						}
-					} catch {
-						// ignore
-					}
-				}
-				agentTyping = false;
-				loading = false;
-				addBotMessage(config.window.customErrorMessage);
-			}
-			return;
-				} else {
-					botReply = config.window.customErrorMessage;
-				}
-				} catch {
-				// Fetch failed: poll for message in case server succeeded (e.g. timeout after response sent)
-				loading = false;
-				const refetch = async (): Promise<{ messages: Message[]; agentTyping: boolean }> => {
-					const res = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
-					const data = await res.json().catch(() => ({}));
-					const list = Array.isArray(data.messages) ? data.messages : [];
-					return { messages: list.map(mapMessage), agentTyping: !!data.agentTyping };
-				};
-				const pollIntervalMs = 800;
-				const maxTotalMs = 5 * 60 * 1000;
-				const pollsAfterTypingStopped = 3;
-				let typingStoppedCount = 0;
-				const deadline = Date.now() + maxTotalMs;
-				while (Date.now() < deadline) {
-					await new Promise((r) => setTimeout(r, pollIntervalMs));
-					try {
-						const { messages: serverMessages, agentTyping: serverTyping } = await refetch();
-						agentTyping = serverTyping;
-						if (serverMessages.length > messages.length || (serverMessages.length > 0 && serverMessages[serverMessages.length - 1].role === 'bot')) {
-							messages = serverMessages;
-							requestAnimationFrame(() => scrollToBottom());
-							return;
-						}
-						if (!serverTyping) {
-							typingStoppedCount++;
-							if (typingStoppedCount >= pollsAfterTypingStopped) break;
-						} else {
-							typingStoppedCount = 0;
-						}
-					} catch {
-						// ignore
-					}
-				}
-				agentTyping = false;
-				loading = false;
-				addBotMessage(config.window.customErrorMessage);
-				return;
-			}
-		} else if (useN8n) {
+		const useN8n = !!config.n8nWebhookUrl;
+		if (useN8n) {
 			let n8nStreamHandled = false;
 			try {
 				const bot = config.bot ?? { role: '', tone: '', instructions: '' };
@@ -475,9 +261,7 @@
 			}
 			if (!n8nStreamHandled) addBotMessage(botReply);
 		} else {
-			botReply = config.chatBackend === 'direct'
-				? 'Configure Direct LLM in the Connect tab (add API keys in Settings).'
-				: "Preview mode — add your n8n webhook URL or select Direct LLM in the Connect tab.";
+			botReply = "Add your n8n webhook URL in the Connect tab to enable chat.";
 			addBotMessage(botReply);
 		}
 		loading = false;
