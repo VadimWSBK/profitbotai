@@ -37,7 +37,9 @@ export function buildQuoteDocDefinition(settings: QuoteSettings, payload: QuoteP
 	// A4 width 595pt minus left/right margins 36*2 (same for body and footer)
 	const contentWidth = 595 - 36 * 2;
 	const pageMarginH = 36;
-	const logoWidth = Math.max(20, Math.min(120, Number(settings.logo_size) ?? 80));
+	// Logo: cap size so it doesn't dominate the quote; fit inside width x height box
+	const logoWidth = Math.max(20, Math.min(80, Number(settings.logo_size) ?? 60));
+	const logoMaxHeight = 52;
 	const qrWidth = Math.max(20, Math.min(300, Number(settings.qr_size) ?? 80));
 
 	const content: unknown[] = [
@@ -46,7 +48,7 @@ export function buildQuoteDocDefinition(settings: QuoteSettings, payload: QuoteP
 				{
 					width: '*',
 					stack: [
-						...(settings.logo_base64 ? [{ image: settings.logo_base64, width: logoWidth, margin: [0, 0, 0, 8] }] : []),
+						...(settings.logo_base64 ? [{ image: settings.logo_base64, fit: [logoWidth, logoMaxHeight], margin: [0, 0, 0, 8] }] : []),
 						{ text: company.name ?? '', style: 'companyName' },
 						...(company.address
 							? [{ text: String(company.address).replace(/\n/g, '\n'), fontSize: 9, margin: [0, 2, 0, 0] }]

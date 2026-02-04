@@ -209,7 +209,7 @@
 						</label>
 						<div class="flex items-center gap-2">
 							<label class="text-sm text-gray-600">Size in PDF:</label>
-							<input type="number" min="20" max="120" bind:value={settings.logo_size} class="w-20 rounded border border-gray-300 px-2 py-1.5 text-sm text-gray-900" title="Width in points (20–120)" />
+							<input type="number" min="20" max="80" bind:value={settings.logo_size} class="w-20 rounded border border-gray-300 px-2 py-1.5 text-sm text-gray-900" title="Width in points (20–80)" />
 							<span class="text-xs text-gray-500">pt</span>
 						</div>
 					</div>

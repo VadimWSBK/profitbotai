@@ -38,7 +38,7 @@ export const load: PageServerLoad = async (event) => {
 			logo_url: data.logo_url,
 			barcode_url: data.barcode_url,
 			barcode_title: data.barcode_title ?? 'Call Us or Visit Website',
-			logo_size: data.logo_size != null ? Math.min(120, Number(data.logo_size)) : 80,
+			logo_size: data.logo_size != null ? Math.min(80, Number(data.logo_size)) : 60,
 			qr_size: data.qr_size != null ? Number(data.qr_size) : 80,
 			currency: data.currency ?? 'USD'
 		}
