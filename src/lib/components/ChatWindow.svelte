@@ -194,7 +194,13 @@
 						// continue without conversationId
 					}
 				}
-				// Role, tone, instructions: n8n can load from Supabase (widgets.config.bot or agents) by widgetId
+				// Send bot context with each message (most efficient: no extra Supabase read in n8n)
+				const bot = config.bot ?? { role: '', tone: '', instructions: '' };
+				const systemParts: string[] = [];
+				if (bot.role?.trim()) systemParts.push(bot.role.trim());
+				if (bot.tone?.trim()) systemParts.push(`Tone: ${bot.tone.trim()}`);
+				if (bot.instructions?.trim()) systemParts.push(bot.instructions.trim());
+				const systemPrompt = systemParts.length > 0 ? systemParts.join('\n\n') : undefined;
 				const res = await fetch(config.n8nWebhookUrl, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
@@ -202,7 +208,11 @@
 						message: trimmed,
 						sessionId: effectiveSessionId,
 						...(widgetId && { widgetId }),
-						...(conversationId && { conversationId })
+						...(conversationId && { conversationId }),
+						...(systemPrompt && { systemPrompt }),
+						...(bot.role?.trim() && { role: bot.role.trim() }),
+						...(bot.tone?.trim() && { tone: bot.tone.trim() }),
+						...(bot.instructions?.trim() && { instructions: bot.instructions.trim() })
 					})
 				});
 				const contentType = res.headers.get('content-type') ?? '';

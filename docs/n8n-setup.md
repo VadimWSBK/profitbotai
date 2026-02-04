@@ -62,16 +62,66 @@ Set header **X-API-Key** to the same value as `SIGNED_URL_API_KEY` in your `.env
 
 ### Passing context from the chat trigger
 
-The chat widget sends only these fields in the webhook body to n8n:
+The chat widget sends these fields in the webhook body to n8n:
 
 - `message` – user message
 - `sessionId` – session id
 - `widgetId` – widget UUID (so n8n can call quote/contacts APIs)
 - `conversationId` – conversation UUID (get/create via `/api/widgets/[id]/conversation` before sending to n8n)
+- `systemPrompt` – combined role + tone + instructions (when set in widget config)
+- `role`, `tone`, `instructions` – individual bot fields (when set)
 
-**Role, tone, instructions (system prompt)** are not sent in the body. n8n can load them from Supabase: query `widgets` by `id` = `widgetId`, then use `config->bot->role`, `config->bot->tone`, `config->bot->instructions`; or if the widget uses an agent, query `agents` and use `system_prompt`, `bot_role`, `bot_tone`, `bot_instructions`. Build the AI Agent system prompt from those fields in n8n (e.g. with a Supabase node before the Agent, or in the Agent’s system message).
+So n8n can use **System Message** = `{{ $json.systemPrompt }}` with no Supabase node. Optionally you can still load from Supabase if you prefer (see below).
 
-In n8n, the "When chat message received" trigger exposes the webhook body. Use expressions like:
+In n8n, the "When chat message received" trigger exposes the webhook body.
+
+---
+
+### Prompt and system message in the AI Agent
+
+**Most efficient: send role, tone, instructions with each message**  
+The widget sends `systemPrompt` (and optionally `role`, `tone`, `instructions`) in the webhook body. n8n needs no extra nodes and no Supabase read per message. In the AI Agent, set **System Message** to `{{ $json.systemPrompt }}` (or build from `{{ $json.role }}`, `{{ $json.tone }}`, `{{ $json.instructions }}`). This is the default and the simplest.
+
+**Alternative: Supabase “Get a row”**  
+Use a Supabase node + Merge when you prefer not to send prompt text from the widget (e.g. very long system prompt, or you want a single source of truth only in the DB). Cost: one extra Supabase read and more workflow nodes per message.
+
+**Not recommended: vector store for system prompt**  
+The vector store is for RAG: “retrieve documents relevant to this query.” Role/tone/instructions are the same for every message in that widget — they’re static context, not something you search by similarity. Using the vector store for that would mean an extra embed + vector search every message just to fetch one fixed block of text, plus keeping that doc in sync when you edit the bot in the dashboard. Use the vector store for knowledge-base docs (e.g. `widget_documents`); keep system prompt in the message body or in a single Supabase row.
+
+---
+
+**1. User message (prompt)**  
+The widget sends the user’s text in **`message`**, not `chatInput`. In the AI Agent node, set **Prompt (User Message)** to:
+
+- `{{ $json.message }}`
+
+If your trigger puts the body under another key (e.g. `body`), use e.g. `{{ $json.body.message }}`. Do **not** use `chatInput` unless your trigger actually outputs that field.
+
+**2. System prompt (role, tone, instructions)**  
+Use a **Supabase node between the chat trigger and the AI Agent** to load the prompt, then pass it into the Agent. Do **not** add this as a tool — tools are for actions the AI chooses (e.g. quote, search); the system prompt is fixed context.
+
+**Flow:** When chat message received → **Supabase “Get a row”** (or get widget + optional agent) → **Merge** (so the Agent gets both the trigger payload and the Supabase row) → AI Agent.
+
+**Supabase “Get a row”:**
+
+- **Table:** `widgets`
+- **Filter:** Column `id` equals `{{ $json.widgetId }}` (from the trigger).
+- The row’s `config` is JSONB: use `config->bot->role`, `config->bot->tone`, `config->bot->instructions` to build the system message.
+
+If the widget uses an **agent** (e.g. `config.agentId`), get the widget row first, then get the **agents** row where `id` = that `config.agentId`, and use `system_prompt`, `bot_role`, `bot_tone`, `bot_instructions` from the agent row.
+
+**Merge:** Use a **Merge** node (e.g. “Combine by position”) so one item contains both the trigger fields (`message`, `widgetId`, `conversationId`) and the Supabase fields (`config` or agent columns). Connect the trigger branch and the Supabase branch into the Merge, then connect the Merge output to the AI Agent.
+
+**In the AI Agent:**
+
+- **Prompt (User Message):** `{{ $json.message }}` (from the merged item).
+- **System Message** (or **Options** → **System Message**): build from the merged item, e.g.  
+  `{{ $json.config.bot.role ?? '' }}\n\nTone: {{ $json.config.bot.tone ?? '' }}\n\n{{ $json.config.bot.instructions ?? '' }}`  
+  (if you fetched the widget row and merged it; adjust keys if you merged the agent row instead).
+
+Result: the Agent receives the user message and the Supabase-backed system prompt every time, without using a tool.
+
+Use expressions like:
 
 - `{{ $json.widgetId }}`
 - `{{ $json.conversationId }}`
