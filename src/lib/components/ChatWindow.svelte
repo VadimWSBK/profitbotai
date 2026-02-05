@@ -102,6 +102,9 @@
 		showScrollToBottom = canScroll && !nearBottom;
 	}
 
+	let lastMessageCount = $state(0);
+	let pollingActive = $state(false);
+
 	async function fetchStoredMessages() {
 		if (!widgetId || !sessionId || sessionId === 'preview') {
 			messagesLoading = false;
@@ -116,11 +119,22 @@
 				messages = list.map(mapMessage);
 				showStarterPrompts = false;
 				requestAnimationFrame(() => scrollToBottom(true));
+			} else if (list.length > messages.length) {
+				// New messages found - update and sync
+				messages = list.map(mapMessage);
+				requestAnimationFrame(() => scrollToBottom(true));
 			}
 			if (list.length > 0 || data.agentTyping || data.agentAvatarUrl) {
 				agentTyping = !!data.agentTyping;
 				agentAvatarUrl = data.agentAvatarUrl ?? null;
 			}
+			
+			// Stop polling if no new messages and we've synced (messages count matches)
+			if (pollingActive && list.length === lastMessageCount && list.length > 0) {
+				// Messages are synced - stop polling until user sends a new message
+				stopPolling();
+			}
+			lastMessageCount = list.length;
 		} catch {
 			// ignore
 		} finally {
@@ -129,8 +143,14 @@
 	}
 
 	function startPolling() {
-		// No polling: chat uses n8n only; no Vercel backend to sync with.
-		return;
+		// Poll for new messages from widget_conversation_messages (e.g. when n8n saves assistant messages)
+		// This ensures messages saved by n8n workflows are displayed in real-time
+		stopPolling();
+		if (!widgetId || !sessionId || sessionId === 'preview') return;
+		pollingActive = true;
+		pollTimer = setInterval(() => {
+			fetchStoredMessages();
+		}, 3000); // Poll every 3 seconds
 	}
 
 	function stopPolling() {
@@ -138,6 +158,7 @@
 			clearInterval(pollTimer);
 			pollTimer = null;
 		}
+		pollingActive = false;
 	}
 
 	onMount(() => {
@@ -169,6 +190,10 @@
 		inputText = '';
 		showStarterPrompts = false;
 		requestAnimationFrame(() => scrollToBottom(true));
+
+		// Restart polling when user sends a message (expecting n8n response)
+		startPolling();
+		lastMessageCount = messages.length;
 
 		loading = true;
 		let botReply = config.window.customErrorMessage;
@@ -314,6 +339,14 @@
 				botReply = config.window.customErrorMessage;
 			}
 			if (!n8nStreamHandled) addBotMessage(botReply, n8nCheckoutPreview);
+			
+			// After n8n responds, refresh messages from database to sync with widget_conversation_messages
+			// This ensures messages saved by n8n are displayed and checkout previews are synced
+			if (widgetId && sessionId && sessionId !== 'preview') {
+				setTimeout(() => {
+					fetchStoredMessages();
+				}, 500); // Small delay to allow n8n to save the message
+			}
 		} else {
 			botReply = "Add your n8n webhook URL in the Connect tab to enable chat.";
 			addBotMessage(botReply);
