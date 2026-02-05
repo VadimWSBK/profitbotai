@@ -54,6 +54,6 @@
 	<title>{config.name}</title>
 </svelte:head>
 
-<div class="embed-widget-root min-h-[900px] w-full bg-transparent overflow-visible">
+<div class="embed-widget-root w-full bg-transparent overflow-visible" style="min-height: 0;">
 	<WidgetPreview config={config} widgetId={data.widgetId} />
 </div>
