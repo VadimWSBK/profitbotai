@@ -186,6 +186,21 @@
 						);
 						const convData = await convRes.json().catch(() => ({}));
 						if (convData.conversationId) conversationId = convData.conversationId;
+						
+						// Automatically save user message to widget_conversation_messages
+						if (widgetId && conversationId) {
+							fetch(`/api/widgets/${widgetId}/messages/save`, {
+								method: 'POST',
+								headers: { 'Content-Type': 'application/json' },
+								body: JSON.stringify({
+									conversationId,
+									role: 'user',
+									content: trimmed
+								})
+							}).catch(() => {
+								// Silently fail - don't block the chat flow
+							});
+						}
 					} catch {
 						// continue without conversationId
 					}
