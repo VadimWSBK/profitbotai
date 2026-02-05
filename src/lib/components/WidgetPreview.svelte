@@ -135,6 +135,14 @@
 	/* Desktop: position above icon (default) */
 	.chat-window-container--desktop {
 		position: absolute;
+		/* Ensure chat window doesn't overflow viewport - account for bubble position and safe areas */
+		max-height: calc(100vh - 120px);
+		overflow: visible;
+	}
+
+	.chat-window-container--desktop :global(.chat-window) {
+		max-height: 600px;
+		overflow: hidden;
 	}
 
 	/* Mobile: full-screen chat (industry standard for chat widgets) */
