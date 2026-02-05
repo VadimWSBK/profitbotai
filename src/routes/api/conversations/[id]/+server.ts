@@ -32,8 +32,6 @@ export const GET: RequestHandler = async (event) => {
 
 	const widget = Array.isArray(conv.widgets) ? conv.widgets[0] : conv.widgets;
 	const widgetObj = widget as { id?: string; name?: string; n8n_webhook_url?: string } | null;
-	const useN8nHistory =
-		widgetObj?.n8n_webhook_url != null && String(widgetObj.n8n_webhook_url).trim() !== '';
 
 	// Get contact for this conversation (for contact-centric display)
 	const { data: contactRow } = await supabase
@@ -49,7 +47,7 @@ export const GET: RequestHandler = async (event) => {
 			}
 		: null;
 
-	// Mark user messages as read (no-op when using n8n; messages live in n8n_chat_histories)
+	// Mark user messages as read
 	await supabase
 		.from('widget_conversation_messages')
 		.update({ read_at: new Date().toISOString() })
@@ -57,66 +55,11 @@ export const GET: RequestHandler = async (event) => {
 		.eq('role', 'user')
 		.is('read_at', null);
 
+	// Always load from widget_conversation_messages (preferred over n8n_chat_histories)
 	let chatMessages: { id: string; role: string; content: string; read_at: string | null; created_at: string }[] = [];
 	let hasMore = false;
 
-	if (useN8nHistory) {
-		// Load chat from n8n Postgres Chat Memory (session_id = conversation.session_id)
-		const sessionId = (conv as { session_id: string }).session_id;
-		const admin = getSupabaseAdmin();
-		const { data: n8nRows, error: n8nErr } = await admin
-			.from('n8n_chat_histories')
-			.select('id, message')
-			.eq('session_id', sessionId)
-			.order('id', { ascending: true });
-		if (!n8nErr && n8nRows?.length) {
-			type N8nMsg = { type?: string; content?: string };
-			// Filter out system/tool messages - only show user and assistant messages
-			const allowedTypes = new Set(['human', 'user', 'assistant', 'ai']);
-			const baseTime = new Date('2024-01-01T00:00:00.000Z').getTime();
-			const mapped = (n8nRows as { id: number; message: N8nMsg }[])
-				.filter((r) => {
-					const msg = r.message ?? {};
-					const msgType = (msg.type ?? '').toLowerCase();
-					const content = typeof msg.content === 'string' ? msg.content : '';
-					// Exclude system/tool types
-					if (!allowedTypes.has(msgType)) return false;
-					// Also exclude messages that look like tool calls/results (even if marked as assistant)
-					if (
-						msgType === 'assistant' ||
-						msgType === 'ai' ||
-						msgType === 'tool' ||
-						msgType === 'system'
-					) {
-						// Filter out tool call patterns
-						if (
-							/^Calling\s+\w+\s+with\s+input:/i.test(content) ||
-							/^Tool\s+call:/i.test(content) ||
-							/^Function\s+call:/i.test(content) ||
-							(content.startsWith('{') && content.includes('"id"') && content.includes('"name"'))
-						) {
-							return false;
-						}
-					}
-					return true;
-				})
-				.map((r) => {
-					const msg = r.message ?? {};
-					const role = msg.type === 'human' || msg.type === 'user' ? 'user' : 'assistant';
-					const content = typeof msg.content === 'string' ? msg.content : '';
-					const created_at = new Date(baseTime + Number(r.id) * 1000).toISOString();
-					return { id: String(r.id), role, content, read_at: null as string | null, created_at };
-				});
-			if (since) {
-				chatMessages = mapped.filter((m) => m.created_at > since);
-			} else {
-				let filtered = mapped;
-				if (before) filtered = filtered.filter((m) => m.created_at < before);
-				hasMore = filtered.length > limit;
-				chatMessages = filtered.slice(-limit); // most recent `limit` in asc order
-			}
-		}
-	} else if (since) {
+	if (since) {
 		const { data: rows, error: msgError } = await supabase
 			.from('widget_conversation_messages')
 			.select('id, role, content, read_at, created_at')
