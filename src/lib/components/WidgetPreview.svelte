@@ -63,7 +63,7 @@
 >
 	{#if open}
 		<div
-			class="chat-window-container absolute flex flex-col items-end gap-2"
+			class="chat-window-container absolute flex flex-col items-end gap-2 chat-window-container--desktop"
 			class:is-open={open}
 			style="right: 0; bottom: {bubble.bubbleSizePx + 12}px; z-index: 1;"
 			in:fly={{ y: 12, duration: 200, easing: cubicOut }}
@@ -132,22 +132,27 @@
 </div>
 
 <style>
+	/* Desktop: position above icon (default) */
+	.chat-window-container--desktop {
+		position: absolute;
+	}
+
 	/* Mobile: full-screen chat (industry standard for chat widgets) */
 	@media (max-width: 768px) {
-		.chat-window-container.is-open {
-			position: fixed;
-			inset: 0;
-			right: 0;
-			bottom: 0;
-			left: 0;
-			top: 0;
-			width: 100%;
-			height: 100%;
-			max-height: 100dvh;
-			align-items: stretch;
-			justify-content: stretch;
+		.chat-window-container--desktop.is-open {
+			position: fixed !important;
+			inset: 0 !important;
+			right: 0 !important;
+			bottom: 0 !important;
+			left: 0 !important;
+			top: 0 !important;
+			width: 100% !important;
+			height: 100% !important;
+			max-height: 100dvh !important;
+			align-items: stretch !important;
+			justify-content: stretch !important;
 		}
-		.chat-window-container.is-open :global(.chat-window) {
+		.chat-window-container--desktop.is-open :global(.chat-window) {
 			flex: 1;
 			min-width: 0;
 			min-height: 0;
