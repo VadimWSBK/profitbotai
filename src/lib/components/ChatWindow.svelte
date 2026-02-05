@@ -26,8 +26,8 @@
 		};
 		checkoutUrl: string;
 	};
-	type Message = { role: 'user' | 'bot'; content: string; avatarUrl?: string; checkoutPreview?: CheckoutPreview };
-	function mapMessage(m: { role: string; content: string; avatarUrl?: string; checkoutPreview?: CheckoutPreview }): Message {
+	type Message = { id?: string; role: 'user' | 'bot'; content: string; avatarUrl?: string; checkoutPreview?: CheckoutPreview; createdAt?: string };
+	function mapMessage(m: { id?: string; role: string; content: string; avatarUrl?: string; checkoutPreview?: CheckoutPreview; createdAt?: string }): Message {
 		return {
 			role: (m.role === 'user' ? 'user' : 'bot') as 'user' | 'bot',
 			content: m.content,
@@ -104,25 +104,45 @@
 
 	let lastMessageCount = $state(0);
 	let pollingActive = $state(false);
+	let isRefreshing = $state(false);
 
-	async function fetchStoredMessages() {
+	async function fetchStoredMessages(forceRefresh = false) {
 		if (!widgetId || !sessionId || sessionId === 'preview') {
 			messagesLoading = false;
+			isRefreshing = false;
 			return;
 		}
 		try {
 			const res = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
 			const data = await res.json().catch(() => ({}));
 			const list = Array.isArray(data.messages) ? data.messages : [];
-			// Only overwrite messages on initial load so we never wipe the user's last message (e.g. if this request returns late)
-			if (messages.length === 0 && list.length > 0) {
-				messages = list.map(mapMessage);
-				showStarterPrompts = false;
-				requestAnimationFrame(() => scrollToBottom(true));
+			
+			// On refresh or initial load, always load all messages from database
+			if (forceRefresh || messages.length === 0) {
+				if (list.length > 0) {
+					messages = list.map(mapMessage);
+					showStarterPrompts = false;
+					requestAnimationFrame(() => scrollToBottom(true));
+				} else {
+					showStarterPrompts = true;
+				}
 			} else if (list.length > messages.length) {
-				// New messages found - update and sync
+				// New messages found - update and sync (merge to preserve any unsaved local messages)
+				const mappedList = list.map(mapMessage);
+				const existingIds = new Set(messages.filter(m => m.id).map(m => m.id!));
+				const newMessages = mappedList.filter(m => m.id && !existingIds.has(m.id));
+				if (newMessages.length > 0) {
+					// Append only new messages
+					messages = [...messages, ...newMessages];
+					requestAnimationFrame(() => scrollToBottom(true));
+				} else {
+					// Full sync if structure changed (e.g. checkout previews updated)
+					messages = mappedList;
+					requestAnimationFrame(() => scrollToBottom(true));
+				}
+			} else if (list.length === messages.length && list.length > 0) {
+				// Same count but content might have changed (e.g. checkout previews) - sync
 				messages = list.map(mapMessage);
-				requestAnimationFrame(() => scrollToBottom(true));
 			}
 			if (list.length > 0 || data.agentTyping || data.agentAvatarUrl) {
 				agentTyping = !!data.agentTyping;
@@ -309,20 +329,32 @@
 						);
 					}
 				} else {
+					// Handle JSON response from n8n
 					const data = await res.json().catch(() => ({}));
-					const rawReply = data.output ?? data.message ?? data.reply ?? data.text ?? botReply;
-					// Check if n8n returned an error response or error message
-					const replyStr = typeof rawReply === 'string' ? rawReply : JSON.stringify(rawReply);
-					if (
-						data.error ||
-						replyStr.toLowerCase().includes('error in workflow') ||
-						replyStr.toLowerCase().includes('workflow failed') ||
-						replyStr.toLowerCase().startsWith('error')
-					) {
+					
+					// Check for explicit error field first
+					if (data.error && !res.ok) {
 						botReply = config.window.customErrorMessage;
 					} else {
-						botReply = replyStr;
+						// Try to extract the actual response content
+						const rawReply = data.output ?? data.message ?? data.reply ?? data.text ?? data.content ?? '';
+						const replyStr = typeof rawReply === 'string' ? rawReply : (rawReply ? JSON.stringify(rawReply) : '');
+						
+						// Only show error if response is empty or explicitly an error
+						if (!replyStr || replyStr.trim() === '') {
+							botReply = config.window.customErrorMessage;
+						} else if (
+							replyStr.toLowerCase().includes('error in workflow') ||
+							replyStr.toLowerCase().includes('workflow failed') ||
+							(replyStr.toLowerCase().startsWith('error') && replyStr.length < 100) // Short error messages
+						) {
+							botReply = config.window.customErrorMessage;
+						} else {
+							// Valid response - show it
+							botReply = replyStr;
+						}
 					}
+					
 					// If n8n returns checkoutPreview (from DIY checkout tool), show table + images + button
 					const preview = data.checkoutPreview;
 					if (
@@ -335,17 +367,30 @@
 						n8nCheckoutPreview = preview as CheckoutPreview;
 					}
 				}
-			} catch {
+			} catch (err) {
+				// Network error or parsing error - show error message
+				console.error('n8n webhook error:', err);
 				botReply = config.window.customErrorMessage;
 			}
-			if (!n8nStreamHandled) addBotMessage(botReply, n8nCheckoutPreview);
+			
+			// Only add message if we have content (don't show empty error messages if we have real content)
+			if (!n8nStreamHandled) {
+				if (botReply && botReply !== config.window.customErrorMessage) {
+					// Valid response - show it
+					addBotMessage(botReply, n8nCheckoutPreview);
+				} else if (botReply === config.window.customErrorMessage) {
+					// Only show error if we don't have any content
+					addBotMessage(botReply, n8nCheckoutPreview);
+				}
+			}
 			
 			// After n8n responds, refresh messages from database to sync with widget_conversation_messages
 			// This ensures messages saved by n8n are displayed and checkout previews are synced
+			// Wait a bit longer to allow n8n workflow to complete and save the message
 			if (widgetId && sessionId && sessionId !== 'preview') {
 				setTimeout(() => {
 					fetchStoredMessages();
-				}, 500); // Small delay to allow n8n to save the message
+				}, 2000); // 2 second delay to allow n8n workflow to complete and save
 			}
 		} else {
 			botReply = "Add your n8n webhook URL in the Connect tab to enable chat.";
@@ -361,6 +406,21 @@
 
 	function handleStarterPrompt(prompt: string) {
 		sendMessage(prompt);
+	}
+
+	async function handleRefresh() {
+		if (!widgetId || !sessionId || sessionId === 'preview' || messagesLoading) return;
+		messagesLoading = true;
+		isRefreshing = true;
+		// Clear current messages and reload from database
+		messages = [];
+		showStarterPrompts = false;
+		// Fetch fresh messages from widget_conversation_messages (force refresh)
+		await fetchStoredMessages(true);
+		// Restart polling to catch any new messages
+		startPolling();
+		isRefreshing = false;
+		requestAnimationFrame(() => scrollToBottom(true));
 	}
 
 	const winRadius = $derived(win.borderRadiusStyle === 'rounded' ? '12px' : '0');
@@ -401,8 +461,14 @@
 				</div>
 			{/if}
 			<span class="flex-1 font-semibold text-sm truncate">{win.title}</span>
-			<button type="button" class="p-1.5 rounded hover:opacity-80 transition-opacity" style="color: {win.headerIconColor};" onclick={() => { messages = []; showStarterPrompts = true; }} title="Refresh">
-				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+			<button type="button" class="p-1.5 rounded hover:opacity-80 transition-opacity disabled:opacity-50" style="color: {win.headerIconColor};" onclick={handleRefresh} disabled={messagesLoading} title="Refresh">
+				{#if messagesLoading}
+					<svg class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+					</svg>
+				{:else}
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+				{/if}
 			</button>
 			<button type="button" class="p-1.5 rounded hover:opacity-80 transition-opacity" style="color: {win.headerIconColor};" onclick={onClose} title="Close">
 				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
