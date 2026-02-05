@@ -59,7 +59,7 @@
 
 <div
 	class="widget-preview-wrapper fixed z-[9999] flex flex-col items-end"
-	style="right: {bubble.rightPositionPx}px; bottom: {bubble.bottomPositionPx}px;"
+	style="right: {bubble.rightPositionPx}px; bottom: {bubble.bottomPositionPx}px; position: fixed;"
 >
 	{#if open}
 		<div
@@ -132,9 +132,14 @@
 </div>
 
 <style>
+	/* Ensure wrapper provides positioning context */
+	.widget-preview-wrapper {
+		position: fixed !important;
+	}
+
 	/* Desktop: position above icon (default) */
 	.chat-window-container--desktop {
-		position: absolute;
+		position: absolute !important;
 		/* Ensure chat window doesn't overflow viewport - account for bubble position and safe areas */
 		max-height: calc(100vh - 120px);
 		overflow: visible;
