@@ -234,7 +234,8 @@ export function formatMessageWithLinks(text: string): string {
 }
 
 /** Format full message: tables as HTML tables (wrapped in scrollable div), rest as links/images/line breaks. */
-export function formatMessage(content: string): string {
+export function formatMessage(content: string | null | undefined): string {
+	if (!content || typeof content !== 'string') return '';
 	const parts = splitTablesAndText(content);
 	return parts
 		.map((p) =>

@@ -86,7 +86,7 @@ export const load: PageServerLoad = async (event) => {
 		quotesSent += pdfQuotes.length;
 
 		// Aggregate by email when present (same customer may have multiple contacts)
-		const key = email?.trim().toLowerCase() || id;
+		const key = (email && typeof email === 'string' ? email.trim().toLowerCase() : null) || id;
 		const existing = byContact.get(key);
 		if (existing) {
 			existing.spend += spend;

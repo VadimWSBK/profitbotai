@@ -186,7 +186,7 @@ export const GET: RequestHandler = async (event) => {
 		return {
 			id: m.id,
 			role: m.role,
-			content: m.content,
+			content: typeof m.content === 'string' ? m.content : String(m.content ?? ''),
 			readAt: m.read_at,
 			createdAt: m.created_at,
 			channel: 'chat' as const,
@@ -199,16 +199,20 @@ export const GET: RequestHandler = async (event) => {
 			})
 		};
 	});
-	const emailUnified: UnifiedMessage[] = emailRows.map((e) => ({
-		id: e.id,
-		role: e.direction === 'inbound' ? 'user' : 'assistant',
-		content: `**${e.subject}**\n\n${e.body_preview ?? ''}`.trim(),
-		readAt: null,
-		createdAt: e.created_at,
-		channel: 'email' as const,
-		status: e.status,
-		direction: (e.direction === 'inbound' ? 'inbound' : 'outbound') as 'inbound' | 'outbound'
-	}));
+	const emailUnified: UnifiedMessage[] = emailRows.map((e) => {
+		const subject = typeof e.subject === 'string' ? e.subject : String(e.subject ?? '');
+		const body = typeof e.body_preview === 'string' ? e.body_preview : '';
+		return {
+			id: e.id,
+			role: e.direction === 'inbound' ? 'user' : 'assistant',
+			content: `**${subject}**\n\n${body}`.trim(),
+			readAt: null,
+			createdAt: e.created_at,
+			channel: 'email' as const,
+			status: e.status,
+			direction: (e.direction === 'inbound' ? 'inbound' : 'outbound') as 'inbound' | 'outbound'
+		};
+	});
 	const merged = [...chatUnified, ...emailUnified].sort(
 		(a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
 	);

@@ -36,7 +36,8 @@
 		direction?: 'outbound' | 'inbound';
 		checkoutPreview?: CheckoutPreview;
 	};
-	function stripCheckoutBlock(content: string): string {
+	function stripCheckoutBlock(content: string | null | undefined): string {
+		if (!content || typeof content !== 'string') return '';
 		const start = content.search(/\*\*[🧾\s]*Your [Cc]heckout [Pp]review\*\*/i);
 		if (start < 0) return content;
 		const before = content.slice(0, start).replace(/\n+$/, '');
@@ -100,7 +101,7 @@
 	function displayContactLabel(conv: Conversation | ConversationDetail | null): string {
 		if (!conv) return 'Unknown';
 		const name = conv.contactName ?? conv.contactEmail;
-		if (name?.trim()) return name.trim();
+		if (name && typeof name === 'string' && name.trim()) return name.trim();
 		return conv.widgetName ?? 'Unknown contact';
 	}
 
@@ -411,7 +412,8 @@
 	}
 
 	/** Format message/email content: bold subject, clickable URLs, styled quoted blocks. */
-	function formatMessageContent(content: string): string {
+	function formatMessageContent(content: string | null | undefined): string {
+		if (!content || typeof content !== 'string') return '';
 		const escape = (s: string) =>
 			String(s)
 				.replace(/&/g, '&amp;')
@@ -669,7 +671,7 @@
 									</div>
 									<div class="break-words [&_.email-quote]:whitespace-normal [&_a]:break-all {msg.role === 'assistant' ? 'rich-message-content' : 'whitespace-pre-wrap'}">
 										{#if msg.role === 'assistant' && msg.checkoutPreview}
-											{#if stripCheckoutBlock(msg.content).trim()}
+											{#if msg.content && typeof msg.content === 'string' && stripCheckoutBlock(msg.content).trim()}
 												<div class="chat-message-intro">{@html formatMessage(stripCheckoutBlock(msg.content))}</div>
 											{/if}
 											<div class="checkout-preview-block checkout-preview-block--messages">
@@ -709,7 +711,7 @@
 												<a href={msg.checkoutPreview.checkoutUrl} target="_blank" rel="noopener noreferrer" class="chat-cta-button">GO TO CHECKOUT</a>
 											</div>
 										{:else}
-											{@html msg.role === 'assistant' ? formatMessage(msg.content) : formatMessageContent(msg.content)}
+											{@html msg.role === 'assistant' ? formatMessage(typeof msg.content === 'string' ? msg.content : '') : formatMessageContent(typeof msg.content === 'string' ? msg.content : '')}
 										{/if}
 									</div>
 									<div class="flex items-center gap-2 mt-1">
