@@ -337,7 +337,51 @@
 						botReply = config.window.customErrorMessage;
 					} else {
 						// Try to extract the actual response content
-						const rawReply = data.output ?? data.message ?? data.reply ?? data.text ?? data.content ?? '';
+						// Handle nested message objects (e.g., from save endpoint responses)
+						let rawReply: unknown = data.output ?? data.message ?? data.reply ?? data.text ?? data.content ?? '';
+						
+						// Check if the entire response is a save response object (has success and message fields)
+						if (data && typeof data === 'object' && 'success' in data && 'message' in data && typeof (data as { message?: unknown }).message === 'object') {
+							// This is a save response - extract content from message.content
+							const msg = (data as { message?: { content?: string } }).message;
+							if (msg && 'content' in msg && typeof msg.content === 'string') {
+								rawReply = msg.content;
+							}
+						}
+						
+						// If rawReply is a JSON string, try to parse it
+						if (typeof rawReply === 'string' && rawReply.trim().startsWith('{')) {
+							try {
+								const parsed = JSON.parse(rawReply);
+								// If parsed is an object with content field, extract it
+								if (parsed && typeof parsed === 'object' && 'content' in parsed && typeof parsed.content === 'string') {
+									rawReply = parsed.content;
+								} else if (parsed && typeof parsed === 'object' && 'message' in parsed && typeof parsed.message === 'object' && 'content' in parsed.message) {
+									// Handle nested message structure: { message: { content: "..." } }
+									rawReply = parsed.message.content ?? '';
+								} else {
+									rawReply = parsed;
+								}
+							} catch {
+								// Not valid JSON, keep as string
+							}
+						}
+						
+						// If message is an object with a content field, extract it
+						if (rawReply && typeof rawReply === 'object') {
+							if ('content' in rawReply && typeof (rawReply as { content?: unknown }).content === 'string') {
+								// Direct content field
+								rawReply = (rawReply as { content: string }).content;
+							} else if ('message' in rawReply && typeof (rawReply as { message?: unknown }).message === 'object') {
+								// Nested message object: { message: { content: "..." } }
+								const msg = (rawReply as { message?: { content?: string } }).message;
+								if (msg && 'content' in msg && typeof msg.content === 'string') {
+									rawReply = msg.content;
+								}
+							}
+						}
+						
+						// Final string conversion - if still an object, stringify it (but this shouldn't happen for valid responses)
 						const replyStr = typeof rawReply === 'string' ? rawReply : (rawReply ? JSON.stringify(rawReply) : '');
 						
 						// Only show error if response is empty or explicitly an error
