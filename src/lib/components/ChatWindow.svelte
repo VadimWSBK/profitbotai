@@ -270,8 +270,19 @@
 					}
 				} else {
 					const data = await res.json().catch(() => ({}));
-					botReply = data.output ?? data.message ?? data.reply ?? data.text ?? botReply;
-					if (typeof botReply !== 'string') botReply = JSON.stringify(botReply);
+					const rawReply = data.output ?? data.message ?? data.reply ?? data.text ?? botReply;
+					// Check if n8n returned an error response or error message
+					const replyStr = typeof rawReply === 'string' ? rawReply : JSON.stringify(rawReply);
+					if (
+						data.error ||
+						replyStr.toLowerCase().includes('error in workflow') ||
+						replyStr.toLowerCase().includes('workflow failed') ||
+						replyStr.toLowerCase().startsWith('error')
+					) {
+						botReply = config.window.customErrorMessage;
+					} else {
+						botReply = replyStr;
+					}
 					// If n8n returns checkoutPreview (from DIY checkout tool), show table + images + button
 					const preview = data.checkoutPreview;
 					if (

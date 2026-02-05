@@ -18,10 +18,13 @@ const EMBED_SCRIPT = String.raw`
   iframe.src = base + '/embed/widget?id=' + encodeURIComponent(widgetId);
   iframe.title = 'Chat';
   iframe.setAttribute('data-profitbot-embed', '1');
-  iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:420px;height:700px;max-width:100vw;max-height:100vh;border:none;z-index:2147483647;';
+  // Increased height to accommodate chat window opening above the icon (700px window + ~80px icon + gap + padding)
+  // Using 900px to ensure enough room for chat window above icon at various positions
+  // Width increased slightly to prevent icon clipping at edges
+  iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:440px;height:900px;max-width:100vw;max-height:100vh;border:none;z-index:2147483647;overflow:hidden;';
   var wrap = document.createElement('div');
   wrap.setAttribute('data-profitbot-container', '1');
-  wrap.style.cssText = 'position:fixed;bottom:0;right:0;z-index:2147483647;pointer-events:none;';
+  wrap.style.cssText = 'position:fixed;bottom:0;right:0;z-index:2147483647;pointer-events:none;overflow:visible;';
   wrap.appendChild(iframe);
   iframe.style.pointerEvents = 'auto';
   document.body.appendChild(wrap);
