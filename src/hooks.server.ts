@@ -24,6 +24,8 @@ function isPublicPath(pathname: string, method: string): boolean {
 	if (/^\/api\/widgets\/[^/]+\/chat$/.test(pathname)) return true;
 	// Allow anonymous GET for widget messages (embed polls for human agent replies)
 	if (/^\/api\/widgets\/[^/]+\/messages$/.test(pathname)) return true;
+	// Allow anonymous POST for saving messages (n8n syncs messages to widget_conversation_messages)
+	if (/^\/api\/widgets\/[^/]+\/messages\/save$/.test(pathname)) return method === 'POST';
 	// Allow anonymous GET for conversation id (widget sends widgetId + conversationId to n8n)
 	if (/^\/api\/widgets\/[^/]+\/conversation$/.test(pathname)) return method === 'GET';
 	// Allow anonymous GET only for quote form config (embed form page); PUT/DELETE require auth (form builder save)
