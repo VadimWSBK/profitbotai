@@ -310,7 +310,17 @@ export function computeQuoteFromSettings(
 	let subtotal = 0;
 	for (const line of lines) {
 		const fixed = !!line.fixed;
-		const total = fixed ? (Number(line.total) ?? 0) : (Number(line.price) ?? 0) * roofSizeNum;
+		let total: number;
+		if (fixed) {
+			// For fixed items, use the total field if provided, otherwise 0
+			const totalValue = line.total != null ? Number(line.total) : 0;
+			total = Number.isNaN(totalValue) ? 0 : totalValue;
+		} else {
+			// For per-m² items, calculate: price * roof size
+			const priceValue = line.price != null ? Number(line.price) : 0;
+			const price = Number.isNaN(priceValue) ? 0 : priceValue;
+			total = price * roofSizeNum;
+		}
 		breakdownTotals.push({
 			desc: line.desc ?? '',
 			price: Number(line.price) ?? 0,

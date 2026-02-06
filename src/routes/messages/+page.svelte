@@ -469,48 +469,38 @@
 
 	/** Check if content contains HTML tags */
 	function containsHtml(content: string): boolean {
-		return /<[a-z][\s\S]*>/i.test(content);
+		// Check for HTML tags (opening or closing)
+		return /<[a-z][a-z0-9]*(\s[^>]*)?>|<\/[a-z][a-z0-9]*>/i.test(content);
 	}
 
 	/** Sanitize HTML: allow safe tags and attributes, escape the rest */
 	function sanitizeHtml(html: string): string {
-		// Allowed tags and their allowed attributes
-		const allowedTags: Record<string, string[]> = {
-			a: ['href', 'target', 'rel'],
-			p: ['class'],
-			div: ['class'],
-			span: ['class'],
-			strong: [],
-			b: [],
-			em: [],
-			i: [],
-			u: [],
-			br: [],
-			ul: ['class'],
-			ol: ['class'],
-			li: [],
-			h1: [],
-			h2: [],
-			h3: [],
-			h4: [],
-			h5: [],
-			h6: [],
-			img: ['src', 'alt', 'class'],
-			blockquote: ['class'],
-			hr: []
-		};
+		// First, convert markdown to HTML, but avoid converting inside HTML tags
+		// We'll do this by temporarily replacing HTML tags, converting markdown, then restoring tags
+		const tagPlaceholders: string[] = [];
+		let tagIndex = 0;
+		
+		// Temporarily replace HTML tags with placeholders
+		let processed = html.replace(/<[^>]+>/g, (match) => {
+			tagPlaceholders[tagIndex] = match;
+			return `__HTML_TAG_${tagIndex++}__`;
+		});
+		
+		// Convert markdown to HTML (now safe since tags are replaced)
+		processed = processed
+			// Convert **text** to <strong>text</strong>
+			.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+			// Convert *text* to <em>text</em> (but not if it's part of **)
+			.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
+		
+		// Restore HTML tags
+		processed = processed.replace(/__HTML_TAG_(\d+)__/g, (_, index) => tagPlaceholders[parseInt(index)] || '');
 
-		// Escape HTML entities
-		const escape = (s: string) =>
-			String(s)
-				.replace(/&/g, '&amp;')
-				.replace(/</g, '&lt;')
-				.replace(/>/g, '&gt;')
-				.replace(/"/g, '&quot;')
-				.replace(/'/g, '&#39;');
-
-		// Remove script tags and dangerous event handlers
-		let sanitized = html
+		// Allowed tags (whitelist approach)
+		const allowedTags = ['a', 'p', 'div', 'span', 'strong', 'b', 'em', 'i', 'u', 'br', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'img', 'blockquote', 'hr', 'html', 'body'];
+		
+		// Remove dangerous content
+		processed = processed
 			.replace(/<script[\s\S]*?<\/script>/gi, '')
 			.replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
 			.replace(/on\w+\s*=\s*["'][^"']*["']/gi, '')
@@ -518,79 +508,90 @@
 			.replace(/javascript:/gi, '')
 			.replace(/data:text\/html/gi, '');
 
-		// Process HTML tags
+		// Process tags - allow safe tags, escape others
 		const tagRegex = /<\/?([a-z][a-z0-9]*)\b([^>]*)>/gi;
-		const parts: string[] = [];
-		let lastIndex = 0;
-		let match: RegExpExecArray | null;
-
-		while ((match = tagRegex.exec(sanitized)) !== null) {
-			// Add text before tag (escape it)
-			if (match.index > lastIndex) {
-				const textBefore = sanitized.slice(lastIndex, match.index);
-				// Don't double-escape already escaped entities
-				parts.push(textBefore.replace(/&(?![a-z0-9#]+;)/gi, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'));
+		
+		return processed.replace(tagRegex, (match, tagName, attrs) => {
+			const lowerTag = tagName.toLowerCase();
+			const isClosing = match.startsWith('</');
+			
+			// Only allow whitelisted tags
+			if (!allowedTags.includes(lowerTag)) {
+				// Escape disallowed tags
+				return match
+					.replace(/&/g, '&amp;')
+					.replace(/</g, '&lt;')
+					.replace(/>/g, '&gt;')
+					.replace(/"/g, '&quot;');
 			}
-
-			const tagName = match[1].toLowerCase();
-			const isClosing = match[0].startsWith('</');
-			const attrsStr = match[2] || '';
-
-			if (allowedTags[tagName]) {
-				if (isClosing) {
-					parts.push(`</${tagName}>`);
-				} else {
-					// Extract and validate attributes
-					const attrRegex = /(\w+)\s*=\s*["']([^"']*)["']/g;
-					const attrs: string[] = [];
-					let attrMatch: RegExpExecArray | null;
-					const allowedAttrs = allowedTags[tagName];
-
-					while ((attrMatch = attrRegex.exec(attrsStr)) !== null) {
-						const attrName = attrMatch[1].toLowerCase();
-						if (allowedAttrs.includes(attrName)) {
-							const attrValue = escape(attrMatch[2]);
-							attrs.push(`${attrName}="${attrValue}"`);
-						}
-					}
-
-					// Add target and rel for links if not present
-					if (tagName === 'a') {
-						if (!attrs.some(a => a.startsWith('target'))) {
-							attrs.push('target="_blank"');
-						}
-						if (!attrs.some(a => a.startsWith('rel'))) {
-							attrs.push('rel="noopener noreferrer"');
-						}
-					}
-
-					const finalAttrsStr = attrs.length > 0 ? ' ' + attrs.join(' ') : '';
-					parts.push(`<${tagName}${finalAttrsStr}>`);
+			
+			if (isClosing) {
+				return `</${lowerTag}>`;
+			}
+			
+			// Process attributes for opening tags
+			const allowedAttrs: Record<string, string[]> = {
+				a: ['href', 'target', 'rel'],
+				img: ['src', 'alt', 'class'],
+				p: ['class'],
+				div: ['class'],
+				span: ['class'],
+				ul: ['class'],
+				ol: ['class'],
+				blockquote: ['class']
+			};
+			
+			const attrList = allowedAttrs[lowerTag] || [];
+			const attrRegex = /(\w+)\s*=\s*["']([^"']*)["']/g;
+			const validAttrs: string[] = [];
+			let attrMatch: RegExpExecArray | null;
+			
+			while ((attrMatch = attrRegex.exec(attrs)) !== null) {
+				const attrName = attrMatch[1].toLowerCase();
+				if (attrList.includes(attrName)) {
+					const attrValue = attrMatch[2]
+						.replace(/&/g, '&amp;')
+						.replace(/</g, '&lt;')
+						.replace(/>/g, '&gt;')
+						.replace(/"/g, '&quot;')
+						.replace(/'/g, '&#39;');
+					validAttrs.push(`${attrName}="${attrValue}"`);
 				}
-			} else {
-				// Unknown tag - escape it
-				parts.push(escape(match[0]));
 			}
-
-			lastIndex = tagRegex.lastIndex;
-		}
-
-		// Add remaining text
-		if (lastIndex < sanitized.length) {
-			const remaining = sanitized.slice(lastIndex);
-			parts.push(remaining.replace(/&(?![a-z0-9#]+;)/gi, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'));
-		}
-
-		return parts.join('');
+			
+			// Add target and rel for links
+			if (lowerTag === 'a') {
+				if (!validAttrs.some(a => a.startsWith('target'))) {
+					validAttrs.push('target="_blank"');
+				}
+				if (!validAttrs.some(a => a.startsWith('rel'))) {
+					validAttrs.push('rel="noopener noreferrer"');
+				}
+			}
+			
+			const attrsStr = validAttrs.length > 0 ? ' ' + validAttrs.join(' ') : '';
+			return `<${lowerTag}${attrsStr}>`;
+		});
 	}
 
 	/** Format assistant message: handle HTML for email messages, otherwise use formatMessage */
 	function formatAssistantMessage(content: string | null | undefined, isEmail: boolean = false): string {
 		if (!content || typeof content !== 'string') return '';
 		
-		// For email messages with HTML, use HTML rendering
-		if (isEmail && containsHtml(content)) {
-			return sanitizeHtml(content);
+		// For email messages, always process HTML and markdown
+		if (isEmail) {
+			// If HTML is detected, use HTML sanitization (which also handles markdown)
+			if (containsHtml(content)) {
+				return sanitizeHtml(content);
+			}
+			// Otherwise, still process markdown and URLs for email messages
+			// This handles cases where content has markdown but no HTML tags
+			let processed = content
+				.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+				.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
+				.replace(/(https?:\/\/[^\s<\[\]()"']+)/g, (url) => `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-amber-600 hover:text-amber-700 underline break-all">${url}</a>`)
+				.replace(/\n/g, '<br>');
+			return processed;
 		}
 		
 		// Otherwise use the standard formatMessage (handles markdown, tables, etc.)
