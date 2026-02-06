@@ -566,6 +566,9 @@ class ProfitBotMCPClient {
 			const { name, arguments: args } = request.params;
 
 			try {
+				// Strip 'profitbot_' prefix if present (OpenClaw adds server name prefix)
+				const toolName = name.startsWith('profitbot_') ? name.slice('profitbot_'.length) : name;
+
 				// Map MCP tool names to API actions
 				const actionMap: Record<string, string> = {
 					list_widgets: 'list_widgets',
@@ -596,9 +599,9 @@ class ProfitBotMCPClient {
 					update_quote_settings: 'update_quote_settings',
 				};
 
-				const action = actionMap[name];
+				const action = actionMap[toolName];
 				if (!action) {
-					throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
+					throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name} (mapped to: ${toolName})`);
 				}
 
 				// Pass arguments directly to API (both use camelCase)
