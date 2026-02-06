@@ -467,9 +467,147 @@
 		return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: d.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined });
 	}
 
-	/** Format message/email content: bold subject, clickable URLs, styled quoted blocks. */
-	function formatMessageContent(content: string | null | undefined): string {
+	/** Check if content contains HTML tags */
+	function containsHtml(content: string): boolean {
+		return /<[a-z][\s\S]*>/i.test(content);
+	}
+
+	/** Sanitize HTML: allow safe tags and attributes, escape the rest */
+	function sanitizeHtml(html: string): string {
+		// Allowed tags and their allowed attributes
+		const allowedTags: Record<string, string[]> = {
+			a: ['href', 'target', 'rel'],
+			p: ['class'],
+			div: ['class'],
+			span: ['class'],
+			strong: [],
+			b: [],
+			em: [],
+			i: [],
+			u: [],
+			br: [],
+			ul: ['class'],
+			ol: ['class'],
+			li: [],
+			h1: [],
+			h2: [],
+			h3: [],
+			h4: [],
+			h5: [],
+			h6: [],
+			img: ['src', 'alt', 'class'],
+			blockquote: ['class'],
+			hr: []
+		};
+
+		// Escape HTML entities
+		const escape = (s: string) =>
+			String(s)
+				.replace(/&/g, '&amp;')
+				.replace(/</g, '&lt;')
+				.replace(/>/g, '&gt;')
+				.replace(/"/g, '&quot;')
+				.replace(/'/g, '&#39;');
+
+		// Remove script tags and dangerous event handlers
+		let sanitized = html
+			.replace(/<script[\s\S]*?<\/script>/gi, '')
+			.replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+			.replace(/on\w+\s*=\s*["'][^"']*["']/gi, '')
+			.replace(/on\w+\s*=\s*[^\s>]*/gi, '')
+			.replace(/javascript:/gi, '')
+			.replace(/data:text\/html/gi, '');
+
+		// Process HTML tags
+		const tagRegex = /<\/?([a-z][a-z0-9]*)\b([^>]*)>/gi;
+		const parts: string[] = [];
+		let lastIndex = 0;
+		let match: RegExpExecArray | null;
+
+		while ((match = tagRegex.exec(sanitized)) !== null) {
+			// Add text before tag (escape it)
+			if (match.index > lastIndex) {
+				const textBefore = sanitized.slice(lastIndex, match.index);
+				// Don't double-escape already escaped entities
+				parts.push(textBefore.replace(/&(?![a-z0-9#]+;)/gi, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'));
+			}
+
+			const tagName = match[1].toLowerCase();
+			const isClosing = match[0].startsWith('</');
+			const attrsStr = match[2] || '';
+
+			if (allowedTags[tagName]) {
+				if (isClosing) {
+					parts.push(`</${tagName}>`);
+				} else {
+					// Extract and validate attributes
+					const attrRegex = /(\w+)\s*=\s*["']([^"']*)["']/g;
+					const attrs: string[] = [];
+					let attrMatch: RegExpExecArray | null;
+					const allowedAttrs = allowedTags[tagName];
+
+					while ((attrMatch = attrRegex.exec(attrsStr)) !== null) {
+						const attrName = attrMatch[1].toLowerCase();
+						if (allowedAttrs.includes(attrName)) {
+							const attrValue = escape(attrMatch[2]);
+							attrs.push(`${attrName}="${attrValue}"`);
+						}
+					}
+
+					// Add target and rel for links if not present
+					if (tagName === 'a') {
+						if (!attrs.some(a => a.startsWith('target'))) {
+							attrs.push('target="_blank"');
+						}
+						if (!attrs.some(a => a.startsWith('rel'))) {
+							attrs.push('rel="noopener noreferrer"');
+						}
+					}
+
+					const finalAttrsStr = attrs.length > 0 ? ' ' + attrs.join(' ') : '';
+					parts.push(`<${tagName}${finalAttrsStr}>`);
+				}
+			} else {
+				// Unknown tag - escape it
+				parts.push(escape(match[0]));
+			}
+
+			lastIndex = tagRegex.lastIndex;
+		}
+
+		// Add remaining text
+		if (lastIndex < sanitized.length) {
+			const remaining = sanitized.slice(lastIndex);
+			parts.push(remaining.replace(/&(?![a-z0-9#]+;)/gi, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'));
+		}
+
+		return parts.join('');
+	}
+
+	/** Format assistant message: handle HTML for email messages, otherwise use formatMessage */
+	function formatAssistantMessage(content: string | null | undefined, isEmail: boolean = false): string {
 		if (!content || typeof content !== 'string') return '';
+		
+		// For email messages with HTML, use HTML rendering
+		if (isEmail && containsHtml(content)) {
+			return sanitizeHtml(content);
+		}
+		
+		// Otherwise use the standard formatMessage (handles markdown, tables, etc.)
+		return formatMessage(content);
+	}
+
+	/** Format message/email content: handle HTML for emails, markdown for chat. */
+	function formatMessageContent(content: string | null | undefined, isEmail: boolean = false): string {
+		if (!content || typeof content !== 'string') return '';
+		
+		// For email messages, check if content contains HTML
+		if (isEmail && containsHtml(content)) {
+			// Render HTML (sanitized)
+			return sanitizeHtml(content);
+		}
+
+		// For plain text or chat messages, use existing formatting
 		const escape = (s: string) =>
 			String(s)
 				.replace(/&/g, '&amp;')
@@ -728,7 +866,7 @@
 									<div class="break-words [&_.email-quote]:whitespace-normal [&_a]:break-all {msg.role === 'assistant' ? 'rich-message-content' : 'whitespace-pre-wrap'}">
 										{#if msg.role === 'assistant' && msg.checkoutPreview}
 											{#if msg.content && typeof msg.content === 'string' && stripCheckoutBlock(msg.content).trim()}
-												<div class="chat-message-intro">{@html formatMessage(stripCheckoutBlock(msg.content))}</div>
+												<div class="chat-message-intro">{@html formatAssistantMessage(stripCheckoutBlock(msg.content), msg.channel === 'email')}</div>
 											{/if}
 											<div class="checkout-preview-block checkout-preview-block--messages">
 												{#each msg.checkoutPreview.lineItemsUI as item}
@@ -767,7 +905,7 @@
 												<a href={msg.checkoutPreview.checkoutUrl} target="_blank" rel="noopener noreferrer" class="chat-cta-button">GO TO CHECKOUT</a>
 											</div>
 										{:else}
-											{@html msg.role === 'assistant' ? formatMessage(typeof msg.content === 'string' ? msg.content : '') : formatMessageContent(typeof msg.content === 'string' ? msg.content : '')}
+											{@html msg.role === 'assistant' ? formatAssistantMessage(typeof msg.content === 'string' ? msg.content : '', msg.channel === 'email') : formatMessageContent(typeof msg.content === 'string' ? msg.content : '', msg.channel === 'email')}
 										{/if}
 									</div>
 									<div class="flex items-center gap-2 mt-1">

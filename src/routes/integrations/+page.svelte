@@ -53,7 +53,13 @@
 			emailFooterWebsiteText = footer.websiteText ?? '';
 			emailFooterPhone = footer.phone ?? '';
 			emailFooterEmail = footer.email ?? '';
-			logoPreviewUrl = emailFooterLogoUrl || null;
+			// Set logoPreviewUrl from saved logo URL, or preserve existing preview if URL matches
+			if (emailFooterLogoUrl) {
+				logoPreviewUrl = emailFooterLogoUrl;
+			} else if (!logoPreviewUrl) {
+				// Only clear preview if we don't have a logo URL and no existing preview
+				logoPreviewUrl = null;
+			}
 		} catch {
 			connected = [];
 			configs = {};
@@ -196,11 +202,17 @@
 				throw new Error(data.error || 'Upload failed');
 			}
 			
-			emailFooterLogoUrl = data.url || '';
-			logoPreviewUrl = data.url || null;
+			const uploadedUrl = data.url || '';
+			emailFooterLogoUrl = uploadedUrl;
+			logoPreviewUrl = uploadedUrl || null;
 			
 			// Auto-save the footer with the new logo URL
 			await updateEmailFooter();
+			
+			// Ensure logoPreviewUrl is preserved after load() runs in updateEmailFooter()
+			if (uploadedUrl) {
+				logoPreviewUrl = uploadedUrl;
+			}
 		} catch (e) {
 			logoUploadError = e instanceof Error ? e.message : 'Failed to upload logo';
 		} finally {
@@ -223,6 +235,9 @@
 	async function updateEmailFooter() {
 		emailFooterSaving = true;
 		error = null;
+		// Preserve logoPreviewUrl before load() resets it
+		const currentLogoPreview = logoPreviewUrl;
+		const currentLogoUrl = emailFooterLogoUrl;
 		try {
 			const footer = {
 				logoUrl: emailFooterLogoUrl.trim() || undefined,
@@ -239,6 +254,13 @@
 			const result = await res.json().catch(() => ({}));
 			if (!res.ok) throw new Error(result.error || 'Failed to update footer');
 			await load();
+			// Restore logoPreviewUrl if it was set and still matches the logo URL
+			if (currentLogoPreview && currentLogoUrl && emailFooterLogoUrl === currentLogoUrl) {
+				logoPreviewUrl = currentLogoPreview;
+			} else if (emailFooterLogoUrl && !logoPreviewUrl) {
+				// If we have a logo URL but no preview, set it
+				logoPreviewUrl = emailFooterLogoUrl;
+			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to update footer';
 		} finally {
