@@ -11,7 +11,8 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"mcp:n8n": "tsx mcp-servers/n8n/index.ts",
-		"mcp:profitbot": "tsx mcp-servers/profitbot/index.ts"
+		"mcp:profitbot": "tsx mcp-servers/profitbot/index.ts",
+		"mcp:profitbot:http": "tsx mcp-servers/profitbot/http-client.ts"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-auto": "^7.0.0",
