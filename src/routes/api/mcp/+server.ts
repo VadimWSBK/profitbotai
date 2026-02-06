@@ -763,7 +763,8 @@ export const POST: RequestHandler = async (event) => {
 					customerData = { ...customerData, email: String(email) };
 				}
 
-				const roofSize = Math.max(0, Number(projectData?.roofSize) ?? 0);
+				const { extractAreaDigits } = await import('$lib/quote-html');
+				const roofSize = extractAreaDigits(projectData?.roofSize);
 				const computed = computeQuoteFromSettings(settings, roofSize, { lineItems: lineItems as any });
 
 				const payload = {

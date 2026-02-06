@@ -3,6 +3,8 @@
 	import { invalidateAll } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { formatMessage } from '$lib/chat-message-format';
+	import { getSupabaseBrowserClient } from '$lib/supabase.client';
+	import type { RealtimeChannel } from '@supabase/supabase-js';
 
 	let { data } = $props();
 
@@ -89,8 +91,8 @@
 	let hasMoreMessages = $state(false);
 	let loadingMore = $state(false);
 	let messagesContainerEl = $state<HTMLDivElement | undefined>(undefined);
-	let pollInterval: ReturnType<typeof setInterval> | null = null;
 	let typingTimeout: ReturnType<typeof setTimeout> | null = null;
+	let realtimeChannel: RealtimeChannel | null = null;
 
 	const MESSAGES_PAGE_SIZE = 20;
 
@@ -163,20 +165,74 @@
 		} catch {
 			// ignore
 		}
-		startPolling();
+		startRealtimeSubscription(conv.id);
 	}
 
-	function startPolling() {
-		stopPolling();
-		pollInterval = setInterval(() => {
-			if (selectedConversation) refreshMessages();
-		}, 3000);
+	function startRealtimeSubscription(conversationId: string) {
+		stopRealtimeSubscription();
+		
+		const supabaseUrl = (data as any).supabaseUrl;
+		const supabaseAnonKey = (data as any).supabaseAnonKey;
+		
+		if (!supabaseUrl || !supabaseAnonKey) {
+			console.warn('Supabase config not available. Realtime subscriptions disabled.');
+			return;
+		}
+
+		const supabase = getSupabaseBrowserClient(supabaseUrl, supabaseAnonKey);
+		if (!supabase) return;
+
+		// Subscribe to new messages for this conversation
+		const channel = supabase
+			.channel(`messages:${conversationId}`)
+			.on(
+				'postgres_changes',
+				{
+					event: 'INSERT',
+					schema: 'public',
+					table: 'widget_conversation_messages',
+					filter: `conversation_id=eq.${conversationId}`
+				},
+				() => {
+					// New message inserted - refresh messages
+					refreshMessages();
+				}
+			)
+			.on(
+				'postgres_changes',
+				{
+					event: 'INSERT',
+					schema: 'public',
+					table: 'contact_emails',
+					filter: `conversation_id=eq.${conversationId}`
+				},
+				() => {
+					// New email received (via webhook) - refresh messages
+					refreshMessages();
+				}
+			)
+			.on(
+				'postgres_changes',
+				{
+					event: 'UPDATE',
+					schema: 'public',
+					table: 'contact_emails',
+					filter: `conversation_id=eq.${conversationId}`
+				},
+				() => {
+					// Email status updated (e.g., opened, delivered) - refresh messages
+					refreshMessages();
+				}
+			)
+			.subscribe();
+		
+		realtimeChannel = channel;
 	}
 
-	function stopPolling() {
-		if (pollInterval) {
-			clearInterval(pollInterval);
-			pollInterval = null;
+	function stopRealtimeSubscription() {
+		if (realtimeChannel) {
+			realtimeChannel.unsubscribe();
+			realtimeChannel = null;
 		}
 	}
 
@@ -379,7 +435,7 @@
 			selectedConversation = null;
 			conversationDetail = null;
 			messages = [];
-			stopPolling();
+			stopRealtimeSubscription();
 		}
 		fetchConversations();
 	});
@@ -394,7 +450,7 @@
 	});
 
 	onDestroy(() => {
-		stopPolling();
+		stopRealtimeSubscription();
 		if (typingTimeout) {
 			clearTimeout(typingTimeout);
 			typingTimeout = null;

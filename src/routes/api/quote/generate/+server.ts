@@ -6,6 +6,7 @@ import {
 	generatePdfFromDocDefinition,
 	type QuoteSettings
 } from '$lib/quote-pdf.server';
+import { extractAreaDigits } from '$lib/quote-html';
 
 const BUCKET = 'roof_quotes';
 
@@ -118,7 +119,7 @@ export const POST: RequestHandler = async (event) => {
 		project = { roofSize: 100, fullAddress: '123 Sample St, City' };
 	}
 
-	const roofSize = Math.max(0, Number(project?.roofSize) ?? 0);
+	const roofSize = extractAreaDigits(project?.roofSize);
 	const computed = computeQuoteFromSettings(settings, roofSize, { lineItems: body.lineItems });
 
 	const payload = {

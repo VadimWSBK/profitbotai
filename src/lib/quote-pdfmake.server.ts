@@ -4,6 +4,7 @@
  */
 
 import { getPrimaryEmail } from '$lib/contact-email-jsonb';
+import { extractAreaDigits } from '$lib/quote-html';
 import type { QuoteSettings, QuotePayload, QuoteBankDetails } from '$lib/quote-html';
 
 const formatCurrency = (n: number, currency = 'USD') =>
@@ -29,7 +30,8 @@ export function buildQuoteDocDefinition(settings: QuoteSettings, payload: QuoteP
 	const quote = payload.quote ?? {};
 	const bankDetails = settings.bank_details ?? {};
 	const breakdownTotals = quote.breakdownTotals ?? [];
-	const roofSize = Number(project.roofSize) ?? 0;
+	// Extract numeric value from roofSize (handles strings like "300 m²", "200sqm", etc.)
+	const roofSize = extractAreaDigits(project.roofSize);
 	const currency = settings.currency || 'USD';
 	const total = Number(quote.total) ?? 0;
 	const depositPercent = Math.max(0, Math.min(100, Number(settings.deposit_percent) ?? 40));

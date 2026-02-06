@@ -87,6 +87,29 @@ function fixUrl(url: string | null | undefined): string | null {
 	return u;
 }
 
+/**
+ * Extract numeric value from area measurements (e.g., "300 m²", "200sqm", "200m2" -> 300, 200, 200).
+ * Handles strings with units and returns only the numeric part.
+ */
+export function extractAreaDigits(value: string | number | null | undefined): number {
+	if (value == null) return 0;
+	if (typeof value === 'number') {
+		return Number.isNaN(value) ? 0 : Math.max(0, value);
+	}
+	const str = String(value).trim();
+	if (!str) return 0;
+	// Try to parse as number first (handles "300", "300.5", etc.)
+	const directNum = Number.parseFloat(str);
+	if (!Number.isNaN(directNum)) return Math.max(0, directNum);
+	// Extract digits (including decimals) from strings like "300 m²", "200sqm", "200m2"
+	const match = /(\d+(?:\.\d+)?)/.exec(str);
+	if (match) {
+		const num = Number.parseFloat(match[1]);
+		return Number.isNaN(num) ? 0 : Math.max(0, num);
+	}
+	return 0;
+}
+
 export function buildQuoteHtml(settings: QuoteSettings, payload: QuotePayload): string {
 	const company = settings.company ?? {};
 	const customer = payload.customer ?? {};
@@ -94,7 +117,7 @@ export function buildQuoteHtml(settings: QuoteSettings, payload: QuotePayload): 
 	const quote = payload.quote ?? {};
 	const bankDetails = settings.bank_details ?? {};
 	const breakdownTotals = quote.breakdownTotals ?? [];
-	const roofSize = Number(project.roofSize) ?? 0;
+	const roofSize = extractAreaDigits(project.roofSize);
 	const currency = settings.currency || 'USD';
 	const formatCurrency = (n: number) =>
 		new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(n) || 0);
@@ -264,7 +287,7 @@ export function buildQuoteHtml(settings: QuoteSettings, payload: QuotePayload): 
  */
 export function computeQuoteFromSettings(
 	settings: QuoteSettings,
-	roofSize: number,
+	roofSize: number | string,
 	overrides?: { lineItems?: { desc: string; price: number; fixed: boolean; total?: number }[] }
 ): {
 	quoteDate: string;
@@ -279,12 +302,15 @@ export function computeQuoteFromSettings(
 	const quoteDate = now.toISOString().slice(0, 10);
 	const validUntil = new Date(now.getTime() + validDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
+	// Extract numeric value from roofSize (handles strings like "300 m²", "200sqm", etc.)
+	const roofSizeNum = extractAreaDigits(roofSize);
+
 	const lines = overrides?.lineItems ?? settings.line_items ?? [];
 	const breakdownTotals: { desc: string; price: number; fixed: boolean; total: number }[] = [];
 	let subtotal = 0;
 	for (const line of lines) {
 		const fixed = !!line.fixed;
-		const total = fixed ? (Number(line.total) ?? 0) : (Number(line.price) ?? 0) * roofSize;
+		const total = fixed ? (Number(line.total) ?? 0) : (Number(line.price) ?? 0) * roofSizeNum;
 		breakdownTotals.push({
 			desc: line.desc ?? '',
 			price: Number(line.price) ?? 0,

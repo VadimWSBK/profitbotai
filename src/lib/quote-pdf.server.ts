@@ -5,7 +5,7 @@
 
 import { read } from '$app/server';
 import { getPrimaryEmail } from '$lib/contact-email-jsonb';
-import { computeQuoteFromSettings } from '$lib/quote-html';
+import { computeQuoteFromSettings, extractAreaDigits } from '$lib/quote-html';
 import { buildQuoteDocDefinition } from '$lib/quote-pdfmake.server';
 import type { QuoteSettings } from '$lib/quote-html';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -99,10 +99,10 @@ export async function generateQuoteForConversation(
 	const roofFromExtracted = extracted?.roofSize;
 	const roofFromContact = contact.roof_size_sqm != null ? Number(contact.roof_size_sqm) : null;
 	const project = {
-		roofSize: roofFromExtracted ?? roofFromContact ?? 0,
+		roofSize: extractAreaDigits(roofFromExtracted ?? roofFromContact ?? 0),
 		fullAddress: contact.address ?? ''
 	};
-	const roofSize = Math.max(0, project.roofSize);
+	const roofSize = project.roofSize;
 	const computed = computeQuoteFromSettings(settings, roofSize);
 	const payload = {
 		customer,
@@ -198,7 +198,7 @@ export async function generateQuoteForForm(
 	};
 
 	const customer = { name: contact.name ?? '', email: getPrimaryEmail(contact.email) ?? '', phone: contact.phone ?? '' };
-	const roof = Math.max(0, Number(roofSize) ?? 0);
+	const roof = extractAreaDigits(roofSize);
 	const computed = computeQuoteFromSettings(settings, roof);
 	const payload = {
 		customer,
