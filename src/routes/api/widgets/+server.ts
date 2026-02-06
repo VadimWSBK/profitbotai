@@ -63,6 +63,17 @@ export const POST: RequestHandler = async (event) => {
 		const config = body.config && typeof body.config === 'object' ? body.config : {};
 		const n8n_webhook_url = typeof body.n8n_webhook_url === 'string' ? body.n8n_webhook_url : '';
 
+		// Get user's workspace_id
+		const { data: profile } = await supabase
+			.from('profiles')
+			.select('workspace_id')
+			.eq('user_id', event.locals.user.id)
+			.single();
+
+		if (!profile?.workspace_id) {
+			return json({ error: 'User workspace not found' }, { status: 500 });
+		}
+
 		const { data, error } = await supabase
 			.from('widgets')
 			.insert({
@@ -70,7 +81,8 @@ export const POST: RequestHandler = async (event) => {
 				display_mode,
 				config,
 				n8n_webhook_url,
-				created_by: event.locals.user.id
+				created_by: event.locals.user.id,
+				workspace_id: profile.workspace_id
 			})
 			.select('id, name, display_mode, created_at')
 			.single();
