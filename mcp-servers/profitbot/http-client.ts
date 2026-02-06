@@ -490,8 +490,36 @@ class ProfitBotMCPClient {
 								type: 'array',
 								description: 'Custom line items - optional, uses template defaults if not provided',
 							},
+							images: {
+								type: 'array',
+								description: 'Array of image URLs to include in the quote PDF (screenshots, photos, etc.)',
+								items: {
+									type: 'string'
+								}
+							},
 						},
 						required: ['widgetId'],
+					},
+				},
+				{
+					name: 'upload_quote_image',
+					description: 'Upload an image (screenshot, photo) for use in quotes. Accepts base64 image data or image URL.',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							imageData: {
+								type: 'string',
+								description: 'Base64 image data (format: data:image/type;base64,...) - optional if imageUrl provided',
+							},
+							imageUrl: {
+								type: 'string',
+								description: 'Image URL - optional if imageData provided. If provided, returns the URL as-is.',
+							},
+							imageName: {
+								type: 'string',
+								description: 'Optional filename for the uploaded image',
+							},
+						},
 					},
 				},
 				{
@@ -594,6 +622,7 @@ class ProfitBotMCPClient {
 					generate_quote: 'generate_quote',
 					get_quote_settings: 'get_quote_settings',
 					update_quote_settings: 'update_quote_settings',
+					upload_quote_image: 'upload_quote_image',
 				};
 
 				const action = actionMap[name];

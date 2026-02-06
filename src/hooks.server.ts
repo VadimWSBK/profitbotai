@@ -20,6 +20,8 @@ const OPTIONAL_API_KEY_PATHS = [
 function isPublicPath(pathname: string, method: string): boolean {
 	if (pathname.startsWith(EMBED_PREFIX)) return true;
 	if (pathname === API_EVENTS_PATH) return true;
+	// Allow anonymous POST for Resend webhooks (authenticated via signature verification)
+	if (pathname === '/api/webhooks/resend') return method === 'POST';
 	// Allow anonymous GET for widget config (embed loads this to display the chat)
 	if (/^\/api\/widgets\/[^/]+$/.test(pathname)) return method === 'GET';
 	// Allow anonymous POST for chat (embed widget sends messages)

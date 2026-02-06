@@ -142,11 +142,51 @@ export const POST: RequestHandler = async (event) => {
 							}
 
 							if (contactRow) {
+								const widgetIdForWorkflows = contactRow.widget_id ?? firstWidgetId;
+								let convId = contactRow.conversation_id as string | null;
+
+								// Create a conversation if the contact doesn't have one (needed for emails to show in Messages menu)
+								if (!convId && widgetIdForWorkflows) {
+									// Use email-based session_id for consistency (one conversation per contact per widget)
+									const sessionId = `email-${senderEmail.toLowerCase()}`;
+									const { data: newConv, error: convErr } = await admin
+										.from('widget_conversations')
+										.insert({
+											widget_id: widgetIdForWorkflows,
+											session_id: sessionId
+										})
+										.select('id')
+										.single();
+									if (!convErr && newConv) {
+										convId = (newConv as { id: string }).id;
+										// Update contact with the new conversation_id
+										await admin
+											.from('contacts')
+											.update({ conversation_id: convId })
+											.eq('id', contactRow.id);
+									} else if (convErr?.code === '23505') {
+										// Unique constraint violation - conversation already exists, fetch it
+										const { data: existingConv } = await admin
+											.from('widget_conversations')
+											.select('id')
+											.eq('widget_id', widgetIdForWorkflows)
+											.eq('session_id', sessionId)
+											.single();
+										if (existingConv) {
+											convId = (existingConv as { id: string }).id;
+											await admin
+												.from('contacts')
+												.update({ conversation_id: convId })
+												.eq('id', contactRow.id);
+										}
+									}
+								}
+
 								const bodyPreview = full.text ?? (full.html ? stripHtml(full.html) : null) ?? '';
 								const toEmail = Array.isArray(full.to) && full.to.length > 0 ? full.to[0] : '';
 								await storeContactEmail(admin, {
 									contactId: contactRow.id,
-									conversationId: contactRow.conversation_id ?? null,
+									conversationId: convId,
 									direction: 'inbound',
 									subject: full.subject ?? '(no subject)',
 									bodyPreview: bodyPreview.slice(0, 500),
@@ -157,9 +197,6 @@ export const POST: RequestHandler = async (event) => {
 									status: 'delivered',
 									sentAt: full.created_at ?? new Date().toISOString()
 								});
-
-								const widgetIdForWorkflows = contactRow.widget_id ?? firstWidgetId;
-								const convId = contactRow.conversation_id as string | null;
 								let runWorkflows = true;
 								if (convId) {
 									const { data: conv } = await admin

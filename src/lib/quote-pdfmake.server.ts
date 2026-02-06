@@ -22,7 +22,7 @@ type DocDef = {
 /**
  * Build pdfmake document definition for quote PDF.
  */
-export function buildQuoteDocDefinition(settings: QuoteSettings, payload: QuotePayload): DocDef {
+export function buildQuoteDocDefinition(settings: QuoteSettings, payload: QuotePayload, images?: string[]): DocDef {
 	const company = settings.company ?? {};
 	const customer = payload.customer ?? {};
 	const project = payload.project ?? {};
@@ -143,6 +143,21 @@ export function buildQuoteDocDefinition(settings: QuoteSettings, payload: QuoteP
 		},
 		{ canvas: [{ type: 'line', x1: 0, y1: 0, x2: contentWidth, y2: 0, lineWidth: 0.5 }], margin: [0, 0, 0, 12] }
 	);
+
+	// Add images if provided (screenshots, photos, etc.)
+	if (images && images.length > 0) {
+		content.push({ text: 'Images:', style: 'sectionTitle', margin: [0, 12, 0, 4] });
+		for (const imageUrl of images) {
+			if (imageUrl && typeof imageUrl === 'string') {
+				content.push({
+					image: imageUrl,
+					width: contentWidth,
+					margin: [0, 4, 0, 8],
+					fit: [contentWidth, 400] // Max height 400pt, maintain aspect ratio
+				});
+			}
+		}
+	}
 
 	if ((bankDetails as QuoteBankDetails)?.name || settings.barcode_url) {
 		const bankStack: unknown[] = [];

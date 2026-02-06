@@ -315,7 +315,8 @@ async function urlToBase64DataUrl(url: string | null | undefined): Promise<strin
  */
 export async function generatePdfFromDocDefinition(
 	settings: QuoteSettings,
-	payload: Parameters<typeof buildQuoteDocDefinition>[1]
+	payload: Parameters<typeof buildQuoteDocDefinition>[1],
+	images?: string[]
 ): Promise<Buffer> {
 	const pdfmake = (await import('pdfmake')).default;
 
@@ -347,7 +348,12 @@ export async function generatePdfFromDocDefinition(
 		barcode_base64: barcode_base64 ?? undefined
 	};
 
-	const docDefinition = buildQuoteDocDefinition(resolvedSettings, payload);
+	// Convert image URLs to base64 if provided
+	const imagesBase64 = images && images.length > 0
+		? await Promise.all(images.map(url => urlToBase64DataUrl(url)))
+		: undefined;
+
+	const docDefinition = buildQuoteDocDefinition(resolvedSettings, payload, imagesBase64?.filter(Boolean) as string[] | undefined);
 	const pdfDoc = pdfmake.createPdf(docDefinition);
 	const buffer = await pdfDoc.getBuffer();
 	return Buffer.from(buffer);

@@ -9,6 +9,7 @@ import {
 	generatePdfFromDocDefinition,
 	type QuoteSettings
 } from '$lib/quote-pdf.server';
+import { randomUUID } from 'node:crypto';
 
 interface AuthInfo {
 	workspaceId: string;
@@ -638,8 +639,66 @@ export const POST: RequestHandler = async (event) => {
 				return json({ success: true, data: { email: data } });
 			}
 
+			case 'upload_quote_image': {
+				// Accept base64 image data or image URL
+				const { imageData, imageUrl, imageName } = params;
+				
+				if (!imageData && !imageUrl) {
+					return json({ error: 'imageData (base64) or imageUrl required' }, { status: 400 });
+				}
+
+				const BUCKET = 'quote_assets';
+				let imageUrlResult: string;
+
+				if (imageUrl) {
+					// If URL provided, use it directly (assume it's already uploaded)
+					imageUrlResult = String(imageUrl);
+				} else if (imageData) {
+					// Handle base64 image data
+					const base64Data = String(imageData);
+					const base64Match = base64Data.match(/^data:image\/(\w+);base64,(.+)$/);
+					if (!base64Match) {
+						return json({ error: 'Invalid base64 image format. Expected: data:image/type;base64,...' }, { status: 400 });
+					}
+
+					const imageType = base64Match[1];
+					const base64Content = base64Match[2];
+					const allowedTypes = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'];
+					if (!allowedTypes.includes(imageType.toLowerCase())) {
+						return json({ error: 'Invalid image type. Use PNG, JPEG, GIF, WebP, or SVG.' }, { status: 400 });
+					}
+
+					const buffer = Buffer.from(base64Content, 'base64');
+					if (buffer.length > 2 * 1024 * 1024) {
+						return json({ error: 'Image too large (max 2MB)' }, { status: 400 });
+					}
+
+					const safeExt = imageType.toLowerCase() === 'jpg' ? 'jpeg' : imageType.toLowerCase();
+					const fileName = imageName ? `${String(imageName).replace(/[^a-zA-Z0-9_-]/g, '_')}.${safeExt}` : `${randomUUID()}.${safeExt}`;
+					const path = `${authInfo.userId}/images/${fileName}`;
+
+					const contentType = `image/${safeExt === 'svg' ? 'svg+xml' : safeExt}`;
+					const { error: uploadErr } = await supabase.storage.from(BUCKET).upload(path, buffer, {
+						contentType,
+						upsert: true
+					});
+
+					if (uploadErr) {
+						console.error('quote_assets upload:', uploadErr);
+						return json({ error: uploadErr.message }, { status: 500 });
+					}
+
+					const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(path);
+					imageUrlResult = urlData.publicUrl;
+				} else {
+					return json({ error: 'imageData or imageUrl required' }, { status: 400 });
+				}
+
+				return json({ success: true, data: { imageUrl: imageUrlResult } });
+			}
+
 			case 'generate_quote': {
-				const { widgetId, conversationId, email, customer, project, lineItems } = params;
+				const { widgetId, conversationId, email, customer, project, lineItems, images } = params;
 				if (!widgetId) {
 					return json({ error: 'widgetId required' }, { status: 400 });
 				}
@@ -717,12 +776,13 @@ export const POST: RequestHandler = async (event) => {
 						subtotal: computed.subtotal,
 						gst: computed.gst,
 						total: computed.total
-					}
+					},
+					images: Array.isArray(images) ? images : []
 				};
 
 				let pdfBuffer: Buffer;
 				try {
-					pdfBuffer = await generatePdfFromDocDefinition(settings, payload);
+					pdfBuffer = await generatePdfFromDocDefinition(settings, payload, images as string[] | undefined);
 				} catch (e) {
 					const msg = e instanceof Error ? e.message : 'PDF generation failed';
 					console.error('generatePdfFromDocDefinition:', e);
@@ -880,6 +940,7 @@ export const POST: RequestHandler = async (event) => {
 							'generate_quote',
 							'get_quote_settings',
 							'update_quote_settings',
+							'upload_quote_image',
 						],
 					},
 				});

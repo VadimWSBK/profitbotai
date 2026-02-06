@@ -489,6 +489,22 @@ class ProfitBotMCPClient {
 							lineItems: {
 								type: 'array',
 								description: 'Custom line items - optional, uses template defaults if not provided',
+								items: {
+									type: 'object',
+									properties: {
+										desc: { type: 'string' },
+										price: { type: 'number' },
+										fixed: { type: 'boolean' },
+										total: { type: 'number' },
+									},
+								},
+							},
+							images: {
+								type: 'array',
+								description: 'Array of image URLs to include in the quote PDF (screenshots, photos, etc.)',
+								items: {
+									type: 'string'
+								}
 							},
 						},
 						required: ['widgetId'],
@@ -519,6 +535,15 @@ class ProfitBotMCPClient {
 							line_items: {
 								type: 'array',
 								description: 'Line items array with desc, price, fixed, total',
+								items: {
+									type: 'object',
+									properties: {
+										desc: { type: 'string' },
+										price: { type: 'number' },
+										fixed: { type: 'boolean' },
+										total: { type: 'number' },
+									},
+								},
 							},
 							deposit_percent: {
 								type: 'number',
@@ -597,6 +622,7 @@ class ProfitBotMCPClient {
 					generate_quote: 'generate_quote',
 					get_quote_settings: 'get_quote_settings',
 					update_quote_settings: 'update_quote_settings',
+					upload_quote_image: 'upload_quote_image',
 				};
 
 				const action = actionMap[toolName];
