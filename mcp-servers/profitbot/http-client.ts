@@ -460,6 +460,105 @@ class ProfitBotMCPClient {
 						required: ['emailId'],
 					},
 				},
+				{
+					name: 'generate_quote',
+					description: 'Generate a PDF quote for a contact/conversation. Returns PDF URL and total amount.',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							widgetId: {
+								type: 'string',
+								description: 'The widget ID (required)',
+							},
+							conversationId: {
+								type: 'string',
+								description: 'The conversation ID (optional if email provided)',
+							},
+							email: {
+								type: 'string',
+								description: 'Contact email (optional if conversationId provided)',
+							},
+							customer: {
+								type: 'object',
+								description: 'Customer details (name, email, phone) - optional, auto-filled from contact if conversationId provided',
+							},
+							project: {
+								type: 'object',
+								description: 'Project details (roofSize, fullAddress) - optional, auto-filled from contact if conversationId provided',
+							},
+							lineItems: {
+								type: 'array',
+								description: 'Custom line items - optional, uses template defaults if not provided',
+							},
+						},
+						required: ['widgetId'],
+					},
+				},
+				{
+					name: 'get_quote_settings',
+					description: 'Get quote template settings (company info, line items, pricing, etc.).',
+					inputSchema: {
+						type: 'object',
+						properties: {},
+					},
+				},
+				{
+					name: 'update_quote_settings',
+					description: 'Update quote template settings. All fields optional - only provided fields will be updated.',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							company: {
+								type: 'object',
+								description: 'Company details (name, address, phone, email)',
+							},
+							bank_details: {
+								type: 'object',
+								description: 'Bank details (name, accountName, bsb, accountNumber)',
+							},
+							line_items: {
+								type: 'array',
+								description: 'Line items array with desc, price, fixed, total',
+							},
+							deposit_percent: {
+								type: 'number',
+								description: 'Deposit percentage (0-100)',
+							},
+							tax_percent: {
+								type: 'number',
+								description: 'Tax percentage (0-100)',
+							},
+							valid_days: {
+								type: 'number',
+								description: 'Quote validity in days (1-365)',
+							},
+							logo_url: {
+								type: 'string',
+								description: 'Logo URL',
+							},
+							barcode_url: {
+								type: 'string',
+								description: 'Barcode/QR code URL',
+							},
+							barcode_title: {
+								type: 'string',
+								description: 'Barcode title text',
+							},
+							logo_size: {
+								type: 'number',
+								description: 'Logo size (20-80)',
+							},
+							qr_size: {
+								type: 'number',
+								description: 'QR code size (20-300)',
+							},
+							currency: {
+								type: 'string',
+								description: 'Currency code (e.g., USD, EUR)',
+							},
+						},
+					},
+				},
 			],
 		}));
 
@@ -492,6 +591,9 @@ class ProfitBotMCPClient {
 					delete_email_template: 'delete_email_template',
 					list_emails: 'list_emails',
 					get_email: 'get_email',
+					generate_quote: 'generate_quote',
+					get_quote_settings: 'get_quote_settings',
+					update_quote_settings: 'update_quote_settings',
 				};
 
 				const action = actionMap[name];

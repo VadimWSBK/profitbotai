@@ -1,0 +1,29 @@
+You now have access to email functionality through the ProfitBot MCP server. Here are the new tools available:
+
+EMAIL SENDING:
+- send_email: Send emails to contacts. Requires: subject, body, and either conversationId OR contactId. Example: send_email with conversationId="abc-123", subject="Follow-up", body="Hi, just checking in..."
+
+EMAIL TEMPLATES:
+- list_email_templates: List all email templates for this workspace
+- get_email_template: Get a specific template by templateId
+- create_email_template: Create a new template (requires: name, optional: subject, body)
+- update_email_template: Update template fields (requires: templateId)
+- delete_email_template: Delete a template (requires: templateId)
+
+READ EMAILS:
+- list_emails: List email history for a contact or conversation. Parameters: contactId OR conversationId, optional limit/page for pagination
+- get_email: Get details of a specific email by emailId
+
+IMPORTANT NOTES:
+- All operations are workspace-scoped (you can only access your workspace's data)
+- Email templates are reusable and user-scoped
+- All sent emails are automatically stored and linked to contacts/conversations
+- Emails are sent via Resend (must be configured in ProfitBot Settings → Integrations)
+- Use either conversationId OR contactId (at least one required for send_email and list_emails)
+
+COMMON WORKFLOWS:
+1. Send follow-up email: get_conversation → send_email with conversationId
+2. Create template: create_email_template with name, subject, body → use template content when sending emails
+3. Review email history: list_emails with conversationId to see all emails (both sent and received)
+
+You can now send emails, manage templates, and read email history. All email operations integrate with your existing ProfitBot tools (conversations, contacts, leads).

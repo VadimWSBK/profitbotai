@@ -4,6 +4,11 @@ import { env } from '$env/dynamic/private';
 import { createClient } from '@supabase/supabase-js';
 import { sendContactEmail } from '$lib/send-quote-email.server';
 import { getPrimaryEmail } from '$lib/contact-email-jsonb';
+import {
+	computeQuoteFromSettings,
+	generatePdfFromDocDefinition,
+	type QuoteSettings
+} from '$lib/quote-pdf.server';
 
 interface AuthInfo {
 	workspaceId: string;
@@ -633,6 +638,216 @@ export const POST: RequestHandler = async (event) => {
 				return json({ success: true, data: { email: data } });
 			}
 
+			case 'generate_quote': {
+				const { widgetId, conversationId, email, customer, project, lineItems } = params;
+				if (!widgetId) {
+					return json({ error: 'widgetId required' }, { status: 400 });
+				}
+				if (!conversationId && !email) {
+					return json({ error: 'conversationId or email required' }, { status: 400 });
+				}
+
+				// Verify widget belongs to workspace
+				const { data: widget, error: widgetErr } = await supabase
+					.from('widgets')
+					.select('id, created_by, workspace_id')
+					.eq('id', widgetId)
+					.eq('workspace_id', authInfo.workspaceId)
+					.single();
+				if (widgetErr || !widget) {
+					if (widgetErr?.code === 'PGRST116') return json({ error: 'Widget not found' }, { status: 404 });
+					throw new Error(widgetErr?.message ?? 'Widget not found');
+				}
+				const ownerId = (widget as { created_by?: string }).created_by;
+				if (!ownerId) {
+					return json({ error: 'Widget has no owner' }, { status: 400 });
+				}
+
+				// Load quote settings
+				const { data: settingsRow, error: settingsErr } = await supabase
+					.from('quote_settings')
+					.select('*')
+					.eq('user_id', ownerId)
+					.maybeSingle();
+				if (settingsErr || !settingsRow) {
+					return json({ error: 'Quote settings not found. Configure quote template first.' }, { status: 400 });
+				}
+
+				const settings: QuoteSettings = {
+					company: (settingsRow.company as QuoteSettings['company']) ?? {},
+					bank_details: (settingsRow.bank_details as QuoteSettings['bank_details']) ?? {},
+					line_items: (settingsRow.line_items as QuoteSettings['line_items']) ?? [],
+					deposit_percent: Number(settingsRow.deposit_percent) ?? 40,
+					tax_percent: Number(settingsRow.tax_percent) ?? 10,
+					valid_days: Number(settingsRow.valid_days) ?? 30,
+					logo_url: settingsRow.logo_url,
+					barcode_url: settingsRow.barcode_url,
+					barcode_title: settingsRow.barcode_title ?? 'Call Us or Visit Website',
+					currency: settingsRow.currency ?? 'USD'
+				};
+
+				// Load contact if conversationId provided
+				let customerData = customer ?? {};
+				let projectData = project ?? {};
+				if (conversationId) {
+					const { data: contact } = await supabase
+						.from('contacts')
+						.select('name, email, phone, address')
+						.eq('conversation_id', conversationId)
+						.eq('widget_id', widgetId)
+						.maybeSingle();
+					if (contact) {
+						customerData = { name: contact.name ?? '', email: contact.email ?? '', phone: contact.phone ?? '' };
+						if (contact.address) projectData = { ...projectData, fullAddress: contact.address };
+					}
+				} else if (email) {
+					customerData = { ...customerData, email: String(email) };
+				}
+
+				const roofSize = Math.max(0, Number(projectData?.roofSize) ?? 0);
+				const computed = computeQuoteFromSettings(settings, roofSize, { lineItems: lineItems as any });
+
+				const payload = {
+					customer: customerData,
+					project: { roofSize, fullAddress: projectData?.fullAddress },
+					quote: {
+						quoteDate: computed.quoteDate,
+						validUntil: computed.validUntil,
+						breakdownTotals: computed.breakdownTotals,
+						subtotal: computed.subtotal,
+						gst: computed.gst,
+						total: computed.total
+					}
+				};
+
+				let pdfBuffer: Buffer;
+				try {
+					pdfBuffer = await generatePdfFromDocDefinition(settings, payload);
+				} catch (e) {
+					const msg = e instanceof Error ? e.message : 'PDF generation failed';
+					console.error('generatePdfFromDocDefinition:', e);
+					return json({ error: msg }, { status: 500 });
+				}
+
+				const BUCKET = 'roof_quotes';
+				const customerName = ((customerData.name || customerData.email || 'Customer') as string)
+					.replace(/\s+/g, '_')
+					.replace(/[^a-zA-Z0-9_-]/g, '');
+				const ts = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
+				const fileName = conversationId
+					? `${conversationId}/quote_${customerName}_${ts}.pdf`
+					: `email_${String(email).replace(/[@.]/g, '_') ?? 'unknown'}_${ts}.pdf`;
+
+				const metadata: Record<string, string> = {
+					widget_id: widgetId
+				};
+				if (conversationId) metadata.conversation_id = conversationId;
+				if (email) metadata.email = String(email);
+
+				const { error: uploadErr } = await supabase.storage.from(BUCKET).upload(fileName, pdfBuffer, {
+					contentType: 'application/pdf',
+					upsert: true,
+					metadata
+				});
+				if (uploadErr) {
+					console.error('roof_quotes upload:', uploadErr);
+					return json({ error: uploadErr.message }, { status: 500 });
+				}
+
+				const { data: signed } = await supabase.storage.from(BUCKET).createSignedUrl(fileName, 3600);
+				const pdfUrl = signed?.signedUrl ?? fileName;
+
+				return json({ success: true, data: { pdfUrl, fileName, total: computed.total } });
+			}
+
+			case 'get_quote_settings': {
+				const { data, error } = await supabase
+					.from('quote_settings')
+					.select('*')
+					.eq('user_id', authInfo.userId)
+					.maybeSingle();
+				if (error) throw new Error(error.message);
+				if (!data) {
+					return json({
+						success: true,
+						data: {
+							company: {},
+							bank_details: {},
+							line_items: [],
+							deposit_percent: 40,
+							tax_percent: 10,
+							valid_days: 30,
+							logo_url: null,
+							barcode_url: null,
+							barcode_title: 'Call Us or Visit Website',
+							logo_size: 60,
+							qr_size: 80,
+							currency: 'USD'
+						}
+					});
+				}
+				return json({
+					success: true,
+					data: {
+						company: data.company ?? {},
+						bank_details: data.bank_details ?? {},
+						line_items: data.line_items ?? [],
+						deposit_percent: Number(data.deposit_percent) ?? 40,
+						tax_percent: Number(data.tax_percent) ?? 10,
+						valid_days: Number(data.valid_days) ?? 30,
+						logo_url: data.logo_url,
+						barcode_url: data.barcode_url,
+						barcode_title: data.barcode_title ?? 'Call Us or Visit Website',
+						logo_size: data.logo_size != null ? Math.min(80, Number(data.logo_size)) : 60,
+						qr_size: data.qr_size != null ? Number(data.qr_size) : 80,
+						currency: data.currency ?? 'USD'
+					}
+				});
+			}
+
+			case 'update_quote_settings': {
+				const {
+					company,
+					bank_details,
+					line_items,
+					deposit_percent,
+					tax_percent,
+					valid_days,
+					logo_url,
+					barcode_url,
+					barcode_title,
+					logo_size,
+					qr_size,
+					currency
+				} = params;
+
+				const logoSize = Math.max(20, Math.min(80, Number(logo_size) || 60));
+				const qrSize = Math.max(20, Math.min(300, Number(qr_size) || 80));
+
+				const row = {
+					user_id: authInfo.userId,
+					company: company ?? {},
+					bank_details: bank_details ?? {},
+					line_items: line_items ?? [],
+					deposit_percent: Math.max(0, Math.min(100, Number(deposit_percent) ?? 40)),
+					tax_percent: Math.max(0, Math.min(100, Number(tax_percent) ?? 10)),
+					valid_days: Math.max(1, Math.min(365, Number(valid_days) ?? 30)),
+					logo_url: logo_url ?? null,
+					barcode_url: barcode_url ?? null,
+					barcode_title: typeof barcode_title === 'string' ? barcode_title : 'Call Us or Visit Website',
+					logo_size: logoSize,
+					qr_size: qrSize,
+					currency: typeof currency === 'string' && currency.trim() ? currency.trim() : 'USD'
+				};
+
+				const { error } = await (supabase.from('quote_settings') as any).upsert(row, {
+					onConflict: 'user_id',
+					ignoreDuplicates: false
+				});
+				if (error) throw new Error(error.message);
+				return json({ success: true, data: { message: 'Quote settings updated' } });
+			}
+
 			case 'list_tools': {
 				// Return list of available tools
 				return json({
@@ -662,6 +877,9 @@ export const POST: RequestHandler = async (event) => {
 							'delete_email_template',
 							'list_emails',
 							'get_email',
+							'generate_quote',
+							'get_quote_settings',
+							'update_quote_settings',
 						],
 					},
 				});
