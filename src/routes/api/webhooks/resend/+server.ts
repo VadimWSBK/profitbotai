@@ -8,7 +8,7 @@
 
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { Resend } from 'resend';
+import { Webhook } from 'svix';
 import { getSupabaseAdmin } from '$lib/supabase.server';
 import { updateContactEmailStatus, storeContactEmail } from '$lib/contact-email.server';
 import { getResendConfigForUser, getReceivedEmail } from '$lib/resend.server';
@@ -56,13 +56,14 @@ export const POST: RequestHandler = async (event) => {
 		};
 	};
 	try {
-		const resend = new Resend();
-		const verified = resend.webhooks.verify({
-			payload: rawBody,
-			headers: { id, timestamp, signature },
-			webhookSecret: WEBHOOK_SECRET
-		});
-		payload = verified as typeof payload;
+		// Use Svix directly for webhook verification (Resend uses Svix under the hood)
+		const wh = new Webhook(WEBHOOK_SECRET);
+		const verified = wh.verify(rawBody, {
+			'svix-id': id,
+			'svix-timestamp': timestamp,
+			'svix-signature': signature
+		}) as typeof payload;
+		payload = verified;
 	} catch (e) {
 		console.error('[webhooks/resend] Verify failed:', e);
 		return json({ error: 'Invalid webhook signature' }, { status: 400 });
