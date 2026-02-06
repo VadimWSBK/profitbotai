@@ -6,8 +6,10 @@ const PUBLIC_PATHS = ['/login', '/auth/callback', '/auth/signup', '/auth/logout'
 const EMBED_PREFIX = '/embed';
 const API_EVENTS_PATH = '/api/widgets/events';
 
-/** Paths that require X-API-Key for server-to-server auth (e.g. n8n, MCP) */
-const API_KEY_PATHS = ['/api/contacts/signed-url', '/api/mcp'];
+/** Paths that require X-API-Key for server-to-server auth (e.g. n8n) */
+const API_KEY_PATHS = ['/api/contacts/signed-url'];
+/** Paths that handle their own authentication (MCP) */
+const SELF_AUTH_PATHS = ['/api/mcp'];
 /** Paths that accept either session or X-API-Key (e.g. quote generate, contacts, send-email from n8n) */
 const OPTIONAL_API_KEY_PATHS = [
 	'/api/quote/generate',
@@ -88,9 +90,11 @@ export const handle: Handle = async ({ event, resolve }) => {
 		event.locals.role = null;
 	}
 
-	// Require auth for non-public routes (except embed, static, and MCP which handles its own auth)
-	const isMcpPath = pathname === '/api/mcp' || pathname.startsWith('/api/mcp/');
-	if (!isPublicPath(event.url.pathname, event.request.method) && !isMcpPath) {
+	// Require auth for non-public routes (except embed, static, and self-auth paths like MCP)
+	const isSelfAuthPath = SELF_AUTH_PATHS.some(
+		(p) => pathname === p || pathname.startsWith(p + '/')
+	);
+	if (!isPublicPath(event.url.pathname, event.request.method) && !isSelfAuthPath) {
 		if (!event.locals.user) {
 			return Response.redirect(new URL('/login', event.url.origin), 302);
 		}
