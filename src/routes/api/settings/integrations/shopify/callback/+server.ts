@@ -60,6 +60,18 @@ export const GET: RequestHandler = async (event) => {
 	}
 
 	const supabase = getSupabaseClient(event);
+	
+	// Get user's workspace_id
+	const { data: profile } = await supabase
+		.from('profiles')
+		.select('workspace_id')
+		.eq('user_id', event.locals.user.id)
+		.single();
+
+	if (!profile?.workspace_id) {
+		redirect(302, '/integrations?error=workspace_not_found');
+	}
+
 	const { error } = await supabase.from('user_integrations').upsert(
 		{
 			user_id: event.locals.user.id,
@@ -69,6 +81,7 @@ export const GET: RequestHandler = async (event) => {
 				shopDomain,
 				apiVersion: '2024-04'
 			},
+			workspace_id: profile.workspace_id,
 			updated_at: new Date().toISOString()
 		},
 		{ onConflict: 'user_id,integration_type' }

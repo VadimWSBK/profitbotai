@@ -115,12 +115,24 @@ export const PUT: RequestHandler = async (event) => {
 		if (!userId) {
 			return json({ error: 'User not authenticated' }, { status: 401 });
 		}
+
+		// Get user's workspace_id
+		const { data: profile } = await supabase
+			.from('profiles')
+			.select('workspace_id')
+			.eq('user_id', userId)
+			.single();
+
+		if (!profile?.workspace_id) {
+			return json({ error: 'User workspace not found' }, { status: 500 });
+		}
 		
 		const { error } = await supabase.from('user_integrations').upsert(
 			{
 				user_id: userId,
 				integration_type: type,
 				config,
+				workspace_id: profile.workspace_id,
 				updated_at: new Date().toISOString()
 			},
 			{ onConflict: 'user_id,integration_type' }
