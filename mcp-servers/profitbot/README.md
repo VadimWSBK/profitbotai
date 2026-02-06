@@ -1,73 +1,64 @@
-# ProfitBot MCP Server
+# ProfitBot MCP Server (Tenant-Scoped)
 
-A comprehensive Model Context Protocol (MCP) server that exposes ProfitBot functionality to AI assistants like OpenClaw. This server provides tools to manage widgets, agents, team members, analytics, contacts, conversations, and training data.
+A comprehensive Model Context Protocol (MCP) server that exposes ProfitBot functionality to AI assistants like OpenClaw. **This server is tenant-scoped** - each API key provides access to only one workspace/tenant, ensuring secure multi-tenant operation.
 
 ## Features
 
-### Widget Management
-- List all widgets (with optional workspace filtering)
-- Get widget details by ID
-- Create new widgets
-- Update existing widgets
-- Delete widgets
+### 🔒 Tenant-Scoped Security
+- Each MCP API key is scoped to a specific workspace
+- OpenClaw can only access data for the tenant associated with the API key
+- Perfect for multi-tenant deployments where each tenant needs their own OpenClaw connection
 
-### Agent Management
-- List all agents
-- Get agent details by ID
-- Create new agents
-- Update existing agents
-- Delete agents
+### 🛠️ Available Tools
 
-### Team Management
-- List team members for a workspace
-- Get workspace ID for a user
+#### Leadflow Management
+- `list_leads` - List all leads in the pipeline (optionally filter by widget)
+- `get_lead` - Get lead details by ID
+- `move_lead` - Move a lead to a different stage
+- `list_lead_stages` - List all pipeline stages
+- `create_lead_stage` - Create a new stage
+- `update_lead_stage` - Update stage name or sort order
+- `delete_lead_stage` - Delete a stage (leads moved to first remaining stage)
 
-### Analytics
-- Get widget events/analytics with filtering by widget ID and date range
+#### Messaging & Conversations
+- `list_conversations` - List conversations (optionally filter by widget)
+- `get_conversation` - Get conversation details
+- `send_message` - Send a message as a human agent
+- `get_conversation_messages` - Get messages from a conversation
 
-### Contacts
-- List contacts with pagination and search
-- Get contact details by ID
+#### Contacts
+- `list_contacts` - List contacts with pagination and search
+- `get_contact` - Get contact details by ID
 
-### Conversations
-- List conversations (with optional widget filtering)
-- Get conversation details by ID
-
-### Training/Documents
-- Get documents for a widget
-- Count documents for a widget
+#### Widgets
+- `list_widgets` - List all widgets for the workspace
+- `get_widget` - Get widget details by ID
 
 ## Setup
 
-### Prerequisites
+### Step 1: Generate an MCP API Key
 
-1. Node.js and npm installed
-2. ProfitBot project with Supabase configured
-3. Supabase service role key (for admin access)
+1. Log into your ProfitBot dashboard
+2. Go to **Settings** → **MCP API Keys**
+3. Click **Create Key** (optionally add a name like "OpenClaw Production")
+4. **Copy the API key immediately** - you won't be able to see it again!
 
-### Installation
+### Step 2: Configure Environment Variables
 
-The MCP server is already included in the ProfitBot project. No additional installation needed.
-
-### Configuration
-
-1. Set environment variables:
-
-```bash
-export SUPABASE_URL=https://your-project.supabase.co
-export SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-```
-
-Or create a `.env` file in the project root:
+Create a `.env` file or set environment variables:
 
 ```env
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+MCP_API_KEY=pb_mcp_your-generated-api-key-here
 ```
 
-**Important:** The service role key bypasses Row Level Security (RLS), so keep it secure and never expose it to clients.
+**Important:** 
+- The `SUPABASE_SERVICE_ROLE_KEY` is required for the MCP server to access the database
+- The `MCP_API_KEY` is the tenant-specific key you generated in the dashboard
+- Keep both keys secure and never commit them to version control
 
-### Running the Server
+### Step 3: Run the Server
 
 ```bash
 npm run mcp:profitbot
@@ -79,6 +70,8 @@ Or directly:
 npx tsx mcp-servers/profitbot/index.ts
 ```
 
+You should see: `ProfitBot MCP server running on stdio (workspace: <workspace-id>)`
+
 ## Connecting to OpenClaw
 
 ### MCP Configuration
@@ -88,24 +81,57 @@ Add the ProfitBot MCP server to your OpenClaw configuration (typically in `~/.cu
 ```json
 {
   "mcpServers": {
-    "profitbot": {
-      "command": "npx",
-      "args": ["tsx", "/absolute/path/to/profitbotai/mcp-servers/profitbot/index.ts"],
+    "profitbot-netzero": {
+      "command": "npm",
+      "args": ["run", "mcp:profitbot"],
+      "cwd": "/absolute/path/to/profitbotai",
       "env": {
         "SUPABASE_URL": "https://your-project.supabase.co",
-        "SUPABASE_SERVICE_ROLE_KEY": "your-service-role-key"
+        "SUPABASE_SERVICE_ROLE_KEY": "your-service-role-key",
+        "MCP_API_KEY": "pb_mcp_your-generated-api-key-here"
       }
     }
   }
 }
 ```
 
-Or if using environment variables from `.env`:
+**For multiple tenants**, create separate MCP server entries:
 
 ```json
 {
   "mcpServers": {
-    "profitbot": {
+    "profitbot-netzero": {
+      "command": "npm",
+      "args": ["run", "mcp:profitbot"],
+      "cwd": "/absolute/path/to/profitbotai",
+      "env": {
+        "SUPABASE_URL": "https://your-project.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "your-service-role-key",
+        "MCP_API_KEY": "pb_mcp_netzero-key-here"
+      }
+    },
+    "profitbot-tenant2": {
+      "command": "npm",
+      "args": ["run", "mcp:profitbot"],
+      "cwd": "/absolute/path/to/profitbotai",
+      "env": {
+        "SUPABASE_URL": "https://your-project.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "your-service-role-key",
+        "MCP_API_KEY": "pb_mcp_tenant2-key-here"
+      }
+    }
+  }
+}
+```
+
+### Using Environment Variables from .env
+
+If your `.env` file is in the project root, you can reference it:
+
+```json
+{
+  "mcpServers": {
+    "profitbot-netzero": {
       "command": "npm",
       "args": ["run", "mcp:profitbot"],
       "cwd": "/absolute/path/to/profitbotai"
@@ -114,122 +140,93 @@ Or if using environment variables from `.env`:
 }
 ```
 
+Note: You'll need to create separate `.env` files or use different environment variable sources for each tenant.
+
 ## Available Tools
 
-### Widget Tools
+### Leadflow Tools
 
-#### `list_widgets`
-List all widgets in ProfitBot.
+#### `list_leads`
+List all leads in the pipeline.
 
 **Parameters:**
-- `workspaceId` (optional): Filter by workspace ID
+- `widgetId` (optional): Filter by widget ID
 
 **Example:**
 ```json
 {
-  "name": "list_widgets",
+  "name": "list_leads",
   "arguments": {
-    "workspaceId": "workspace-123"
+    "widgetId": "widget-123"
   }
 }
 ```
 
-#### `get_widget`
-Get details of a specific widget.
+#### `move_lead`
+Move a lead to a different stage.
 
 **Parameters:**
-- `widgetId` (required): Widget ID
+- `leadId` (required): Lead ID
+- `stageId` (required): Target stage ID
 
-#### `create_widget`
-Create a new widget.
+#### `list_lead_stages`
+List all pipeline stages.
 
-**Parameters:**
-- `name` (required): Widget name
-- `displayMode` (required): "popup" | "standalone" | "embedded"
-- `workspaceId` (required): Workspace ID
-- `createdBy` (required): User ID of creator
-- `config` (optional): Widget configuration object
-- `n8nWebhookUrl` (optional): n8n webhook URL
-
-#### `update_widget`
-Update an existing widget.
+#### `create_lead_stage`
+Create a new stage.
 
 **Parameters:**
-- `widgetId` (required): Widget ID
+- `name` (required): Stage name
+- `sortOrder` (optional): Sort order (default: 999)
+
+#### `update_lead_stage`
+Update a stage.
+
+**Parameters:**
+- `stageId` (required): Stage ID
 - `name` (optional): New name
-- `displayMode` (optional): New display mode
-- `config` (optional): Updated configuration
-- `n8nWebhookUrl` (optional): Updated webhook URL
+- `sortOrder` (optional): New sort order
 
-#### `delete_widget`
-Delete a widget.
+#### `delete_lead_stage`
+Delete a stage. Leads in this stage are moved to the first remaining stage.
 
-**Parameters:**
-- `widgetId` (required): Widget ID
+### Messaging Tools
 
-### Agent Tools
-
-#### `list_agents`
-List all agents.
-
-#### `get_agent`
-Get agent details by ID.
-
-#### `create_agent`
-Create a new agent.
+#### `send_message`
+Send a message as a human agent in a conversation.
 
 **Parameters:**
-- `name` (required): Agent name
-- `createdBy` (required): User ID
-- `description` (optional): Agent description
-- `systemPrompt` (optional): System prompt
+- `conversationId` (required): Conversation ID
+- `content` (required): Message content
 
-#### `update_agent`
-Update an agent.
+**Example:**
+```json
+{
+  "name": "send_message",
+  "arguments": {
+    "conversationId": "conv-123",
+    "content": "Hello! How can I help you today?"
+  }
+}
+```
 
-**Parameters:**
-- `agentId` (required): Agent ID
-- `name` (optional): New name
-- `description` (optional): New description
-- `systemPrompt` (optional): New system prompt
-- `chatBackend` (optional): Chat backend (e.g., "n8n", "openai")
-- `n8nWebhookUrl` (optional): n8n webhook URL
-- `botRole` (optional): Bot role description
-- `botTone` (optional): Bot tone
-- `botInstructions` (optional): Additional instructions
-
-#### `delete_agent`
-Delete an agent.
-
-### Team Tools
-
-#### `list_team_members`
-List team members for a workspace.
-
-**Parameters:**
-- `workspaceId` (required): Workspace ID
-
-#### `get_workspace_id`
-Get workspace ID for a user.
-
-**Parameters:**
-- `userId` (required): User ID
-
-### Analytics Tools
-
-#### `get_widget_events`
-Get widget analytics events.
+#### `list_conversations`
+List conversations.
 
 **Parameters:**
 - `widgetId` (optional): Filter by widget ID
-- `from` (optional): Start date (ISO 8601)
-- `to` (optional): End date (ISO 8601)
-- `limit` (optional): Max events (default: 500)
+
+#### `get_conversation_messages`
+Get messages from a conversation.
+
+**Parameters:**
+- `conversationId` (required): Conversation ID
+- `limit` (optional): Max messages (default: 50)
 
 ### Contact Tools
 
 #### `list_contacts`
-List contacts with pagination.
+List contacts with pagination and search.
 
 **Parameters:**
 - `widgetId` (optional): Filter by widget ID
@@ -240,74 +237,81 @@ List contacts with pagination.
 #### `get_contact`
 Get contact details by ID.
 
-**Parameters:**
-- `contactId` (required): Contact ID
+### Widget Tools
 
-### Conversation Tools
+#### `list_widgets`
+List all widgets for the workspace.
 
-#### `list_conversations`
-List conversations.
-
-**Parameters:**
-- `widgetId` (optional): Filter by widget ID
-
-#### `get_conversation`
-Get conversation details by ID.
-
-**Parameters:**
-- `conversationId` (required): Conversation ID
-
-### Training Tools
-
-#### `get_widget_documents`
-Get documents/training data for a widget.
-
-**Parameters:**
-- `widgetId` (required): Widget ID
-
-#### `count_widget_documents`
-Get count of documents for a widget.
-
-**Parameters:**
-- `widgetId` (required): Widget ID
+#### `get_widget`
+Get widget details by ID.
 
 ## Security Considerations
 
-⚠️ **Important Security Notes:**
+### Tenant Isolation
+- ✅ Each MCP API key is scoped to a single workspace
+- ✅ All operations automatically filter by workspace_id
+- ✅ Cross-tenant access is prevented at the database level
+- ✅ API keys can be revoked/deleted at any time
 
-1. **Service Role Key**: This MCP server uses the Supabase service role key, which bypasses Row Level Security (RLS). This gives full database access.
+### Best Practices
+1. **Generate separate keys per tenant** - Don't share keys between tenants
+2. **Rotate keys regularly** - Delete old keys and create new ones
+3. **Monitor key usage** - Check `last_used_at` in the dashboard
+4. **Use descriptive names** - Name keys like "OpenClaw Production" or "OpenClaw Staging"
+5. **Keep service role key secure** - Never expose it to clients or commit to git
 
-2. **Access Control**: Consider implementing additional access control if exposing this server to untrusted environments.
-
-3. **Environment Variables**: Never commit service role keys to version control. Use environment variables or secure secret management.
-
-4. **Network Security**: If running over a network, ensure proper authentication and encryption.
+### Access Control
+- MCP keys inherit the permissions of the user who created them
+- All operations respect Row Level Security (RLS) policies
+- The service role key is only used for database access, not for user impersonation
 
 ## Troubleshooting
 
-### Server won't start
-- Check that `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set correctly
-- Verify the Supabase project is accessible
-- Check Node.js version (requires Node.js 18+)
+### "Invalid MCP API key"
+- Verify the API key is correct (check for typos)
+- Ensure the key hasn't been deleted
+- Check that the key belongs to the correct workspace
 
-### Tools return errors
-- Verify the service role key has proper permissions
-- Check that required tables exist in Supabase
+### "Access denied: resource belongs to different workspace"
+- This means you're trying to access a resource from a different tenant
+- Verify you're using the correct MCP API key for the tenant
+- Check that the resource ID is correct
+
+### Server won't start
+- Check that all environment variables are set correctly
+- Verify the Supabase project is accessible
+- Ensure the API key exists in the database
+
+### Tools return empty results
+- Verify you're using the correct API key for the tenant
+- Check that the workspace has data (widgets, leads, etc.)
 - Review error messages for specific issues
 
-### Connection issues with OpenClaw
-- Verify the MCP server path is correct
-- Check that environment variables are accessible
-- Ensure the server starts without errors when run manually
+## Multi-Tenant Setup Example
+
+For a deployment with multiple tenants (e.g., "NetZero Coating" and "Another Company"):
+
+1. **Tenant 1 (NetZero Coating)**:
+   - Generate MCP key in NetZero's dashboard
+   - Configure OpenClaw with key: `pb_mcp_netzero_...`
+   - OpenClaw can only access NetZero's data
+
+2. **Tenant 2 (Another Company)**:
+   - Generate MCP key in Another Company's dashboard
+   - Configure OpenClaw with key: `pb_mcp_another_...`
+   - OpenClaw can only access Another Company's data
+
+Each tenant gets their own isolated OpenClaw connection!
 
 ## Development
 
 To extend the MCP server:
 
 1. Add new methods to the `ProfitBotClient` class
-2. Add corresponding tool definitions in `setupToolHandlers`
-3. Add tool handlers in the `CallToolRequestSchema` handler
-4. Update this README with new tool documentation
+2. Ensure all queries filter by `workspace_id` or use workspace-scoped joins
+3. Add corresponding tool definitions in `setupToolHandlers`
+4. Add tool handlers in the `CallToolRequestSchema` handler
+5. Update this README with new tool documentation
 
 ## License
 

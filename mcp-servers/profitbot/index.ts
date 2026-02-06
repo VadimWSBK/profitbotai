@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * MCP Server for ProfitBot
+ * MCP Server for ProfitBot (Tenant-Scoped)
  * 
- * Exposes ProfitBot widgets, agents, team, analytics, contacts, and conversations
- * as MCP tools, allowing AI assistants like OpenClaw to control ProfitBot actions.
+ * Exposes ProfitBot functionality as MCP tools, scoped to a specific workspace/tenant.
+ * Uses API key authentication to ensure OpenClaw only has access to one tenant.
  * 
  * Usage:
  *   npx tsx mcp-servers/profitbot/index.ts
@@ -11,6 +11,7 @@
  * Environment variables:
  *   SUPABASE_URL - Your Supabase project URL
  *   SUPABASE_SERVICE_ROLE_KEY - Your Supabase service role key (for admin access)
+ *   MCP_API_KEY - The MCP API key for the tenant (generated in dashboard)
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -23,359 +24,422 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { createClient } from '@supabase/supabase-js';
 
-interface ProfitBotWidget {
+interface AuthInfo {
+	workspaceId: string;
+	userId: string;
+	apiKeyId: string;
+}
+
+interface ProfitBotLead {
+	id: string;
+	contact_id: string;
+	stage_id: string;
+	created_at: string;
+	updated_at: string;
+}
+
+interface ProfitBotLeadStage {
 	id: string;
 	name: string;
-	display_mode: 'popup' | 'standalone' | 'embedded';
-	config: Record<string, unknown>;
-	n8n_webhook_url: string | null;
+	sort_order: number;
 	created_at: string;
-	updated_at: string;
-	workspace_id?: string;
-	created_by?: string;
-}
-
-interface ProfitBotAgent {
-	id: string;
-	name: string;
-	description: string | null;
-	system_prompt: string | null;
-	chat_backend: string | null;
-	n8n_webhook_url: string | null;
-	bot_role: string | null;
-	bot_tone: string | null;
-	bot_instructions: string | null;
-	created_at: string;
-	updated_at: string;
-	created_by?: string;
-}
-
-interface ProfitBotTeamMember {
-	id: string;
-	user_id: string;
-	workspace_id: string;
-	role: 'owner' | 'admin' | 'member';
-	created_at: string;
-}
-
-interface ProfitBotContact {
-	id: string;
-	conversation_id: string | null;
-	widget_id: string | null;
-	name: string | null;
-	email: string | null;
-	phone: string | null;
-	address: string | null;
-	tags: string[];
-	created_at: string;
-	updated_at: string;
-}
-
-interface ProfitBotConversation {
-	id: string;
-	widget_id: string;
-	session_id: string;
-	is_ai_active: boolean;
-	created_at: string;
-	updated_at: string;
 }
 
 class ProfitBotClient {
 	private supabase: ReturnType<typeof createClient>;
+	private authInfo: AuthInfo;
 
-	constructor(supabaseUrl: string, serviceRoleKey: string) {
+	constructor(supabaseUrl: string, serviceRoleKey: string, authInfo: AuthInfo) {
 		this.supabase = createClient(supabaseUrl, serviceRoleKey);
+		this.authInfo = authInfo;
 	}
 
-	// Widget operations
-	async listWidgets(workspaceId?: string): Promise<ProfitBotWidget[]> {
-		let query = this.supabase.from('widgets').select('*').order('updated_at', { ascending: false });
-		if (workspaceId) {
-			query = query.eq('workspace_id', workspaceId);
+	// Ensure all operations are scoped to workspace
+	private ensureWorkspaceScope<T extends { workspace_id?: string }>(
+		data: T | T[] | null
+	): T | T[] | null {
+		if (!data) return null;
+		if (Array.isArray(data)) {
+			return data.filter((item) => item.workspace_id === this.authInfo.workspaceId) as T[];
 		}
-		const { data, error } = await query;
-		if (error) throw new Error(`Failed to list widgets: ${error.message}`);
-		return (data ?? []) as ProfitBotWidget[];
+		if (data.workspace_id && data.workspace_id !== this.authInfo.workspaceId) {
+			throw new Error('Access denied: resource belongs to different workspace');
+		}
+		return data;
 	}
 
-	async getWidget(id: string): Promise<ProfitBotWidget | null> {
+	// Widget operations (scoped to workspace)
+	async listWidgets(): Promise<unknown[]> {
+		const { data, error } = await this.supabase
+			.from('widgets')
+			.select('*')
+			.eq('workspace_id', this.authInfo.workspaceId)
+			.order('updated_at', { ascending: false });
+		if (error) throw new Error(`Failed to list widgets: ${error.message}`);
+		return (data ?? []) as unknown[];
+	}
+
+	async getWidget(id: string): Promise<unknown | null> {
 		const { data, error } = await this.supabase
 			.from('widgets')
 			.select('*')
 			.eq('id', id)
+			.eq('workspace_id', this.authInfo.workspaceId)
 			.single();
 		if (error) {
 			if (error.code === 'PGRST116') return null;
 			throw new Error(`Failed to get widget: ${error.message}`);
 		}
-		return data as ProfitBotWidget;
+		return data as unknown;
 	}
 
-	async createWidget(
-		name: string,
-		displayMode: 'popup' | 'standalone' | 'embedded',
-		workspaceId: string,
-		createdBy: string,
-		config?: Record<string, unknown>,
-		n8nWebhookUrl?: string
-	): Promise<ProfitBotWidget> {
-		const { data, error } = await (this.supabase
-			.from('widgets') as any)
-			.insert({
-				name,
-				display_mode: displayMode,
-				config: config ?? {},
-				n8n_webhook_url: n8nWebhookUrl ?? null,
-				workspace_id: workspaceId,
-				created_by: createdBy,
-			})
-			.select()
-			.single();
-		if (error) throw new Error(`Failed to create widget: ${error.message}`);
-		return data as ProfitBotWidget;
-	}
-
-	async updateWidget(
-		id: string,
-		updates: Partial<ProfitBotWidget>
-	): Promise<ProfitBotWidget> {
-		const { data, error } = await (this.supabase
-			.from('widgets') as any)
-			.update(updates)
-			.eq('id', id)
-			.select()
-			.single();
-		if (error) {
-			if (error.code === 'PGRST116') throw new Error('Widget not found');
-			throw new Error(`Failed to update widget: ${error.message}`);
-		}
-		return data as ProfitBotWidget;
-	}
-
-	async deleteWidget(id: string): Promise<void> {
-		const { error } = await this.supabase.from('widgets').delete().eq('id', id);
-		if (error) {
-			if (error.code === 'PGRST116') throw new Error('Widget not found');
-			throw new Error(`Failed to delete widget: ${error.message}`);
-		}
-	}
-
-	// Agent operations
-	async listAgents(): Promise<ProfitBotAgent[]> {
-		const { data, error } = await this.supabase
-			.from('agents')
-			.select('*')
-			.order('updated_at', { ascending: false });
-		if (error) throw new Error(`Failed to list agents: ${error.message}`);
-		return (data ?? []) as ProfitBotAgent[];
-	}
-
-	async getAgent(id: string): Promise<ProfitBotAgent | null> {
-		const { data, error } = await this.supabase
-			.from('agents')
-			.select('*')
-			.eq('id', id)
-			.single();
-		if (error) {
-			if (error.code === 'PGRST116') return null;
-			throw new Error(`Failed to get agent: ${error.message}`);
-		}
-		return data as ProfitBotAgent;
-	}
-
-	async createAgent(
-		name: string,
-		createdBy: string,
-		description?: string,
-		systemPrompt?: string
-	): Promise<ProfitBotAgent> {
-		const { data, error } = await (this.supabase
-			.from('agents') as any)
-			.insert({
-				name,
-				description: description ?? null,
-				system_prompt: systemPrompt ?? null,
-				created_by: createdBy,
-			})
-			.select()
-			.single();
-		if (error) throw new Error(`Failed to create agent: ${error.message}`);
-		return data as ProfitBotAgent;
-	}
-
-	async updateAgent(id: string, updates: Partial<ProfitBotAgent>): Promise<ProfitBotAgent> {
-		const { data, error } = await (this.supabase
-			.from('agents') as any)
-			.update(updates)
-			.eq('id', id)
-			.select()
-			.single();
-		if (error) {
-			if (error.code === 'PGRST116') throw new Error('Agent not found');
-			throw new Error(`Failed to update agent: ${error.message}`);
-		}
-		return data as ProfitBotAgent;
-	}
-
-	async deleteAgent(id: string): Promise<void> {
-		const { error } = await this.supabase.from('agents').delete().eq('id', id);
-		if (error) {
-			if (error.code === 'PGRST116') throw new Error('Agent not found');
-			throw new Error(`Failed to delete agent: ${error.message}`);
-		}
-	}
-
-	// Team operations
-	async listTeamMembers(workspaceId: string): Promise<ProfitBotTeamMember[]> {
-		const { data, error } = await this.supabase
-			.from('team_members')
-			.select('*')
-			.eq('workspace_id', workspaceId)
-			.order('created_at', { ascending: true });
-		if (error) throw new Error(`Failed to list team members: ${error.message}`);
-		return (data ?? []) as ProfitBotTeamMember[];
-	}
-
-	async getWorkspaceId(userId: string): Promise<string | null> {
-		const { data, error } = await this.supabase
-			.from('profiles')
-			.select('workspace_id')
-			.eq('user_id', userId)
-			.single();
-		if (error || !data) return null;
-		return (data as { workspace_id: string }).workspace_id;
-	}
-
-	// Analytics operations
-	async getWidgetEvents(
-		widgetId?: string,
-		from?: string,
-		to?: string,
-		limit = 500
-	): Promise<unknown[]> {
+	// Leadflow operations
+	async listLeads(widgetId?: string): Promise<unknown[]> {
+		// Get leads via contacts (contacts are scoped to widgets which are scoped to workspace)
 		let query = this.supabase
-			.from('widget_events')
-			.select('*')
-			.order('created_at', { ascending: false })
-			.limit(limit);
-		if (widgetId) query = query.eq('widget_id', widgetId);
-		if (from) query = query.gte('created_at', from);
-		if (to) query = query.lte('created_at', to);
-		const { data, error } = await query;
-		if (error) throw new Error(`Failed to get events: ${error.message}`);
+			.from('leads')
+			.select(
+				`
+				id,
+				contact_id,
+				stage_id,
+				created_at,
+				updated_at,
+				contacts!inner(
+					id,
+					widget_id,
+					name,
+					email,
+					phone,
+					widgets!inner(workspace_id)
+				),
+				lead_stages!inner(id, name, sort_order)
+			`
+			)
+			.eq('contacts.widgets.workspace_id', this.authInfo.workspaceId);
+
+		if (widgetId) {
+			query = query.eq('contacts.widget_id', widgetId);
+		}
+
+		const { data, error } = await query.order('updated_at', { ascending: false });
+		if (error) throw new Error(`Failed to list leads: ${error.message}`);
 		return (data ?? []) as unknown[];
 	}
 
-	// Contact operations
-	async listContacts(
-		widgetId?: string,
-		search?: string,
-		limit = 50,
-		page = 1
-	): Promise<{ contacts: ProfitBotContact[]; totalCount: number }> {
-		const offset = (page - 1) * limit;
-		let query = this.supabase
-			.from('contacts')
-			.select('*', { count: 'exact' })
-			.order('updated_at', { ascending: false })
-			.range(offset, offset + limit - 1);
-		if (widgetId) query = query.eq('widget_id', widgetId);
-		if (search) {
-			query = query.or(`name.ilike.%${search}%,email.ilike.%${search}%`);
-		}
-		const { data, error, count } = await query;
-		if (error) throw new Error(`Failed to list contacts: ${error.message}`);
-		return {
-			contacts: (data ?? []) as ProfitBotContact[],
-			totalCount: count ?? 0,
-		};
-	}
-
-	async getContact(id: string): Promise<ProfitBotContact | null> {
+	async getLead(leadId: string): Promise<unknown | null> {
 		const { data, error } = await this.supabase
-			.from('contacts')
-			.select('*')
-			.eq('id', id)
+			.from('leads')
+			.select(
+				`
+				id,
+				contact_id,
+				stage_id,
+				created_at,
+				updated_at,
+				contacts!inner(
+					id,
+					widget_id,
+					name,
+					email,
+					phone,
+					widgets!inner(workspace_id)
+				),
+				lead_stages!inner(id, name, sort_order)
+			`
+			)
+			.eq('id', leadId)
+			.eq('contacts.widgets.workspace_id', this.authInfo.workspaceId)
 			.single();
 		if (error) {
 			if (error.code === 'PGRST116') return null;
-			throw new Error(`Failed to get contact: ${error.message}`);
+			throw new Error(`Failed to get lead: ${error.message}`);
 		}
-		return data as ProfitBotContact;
+		return data as unknown;
+	}
+
+	async moveLead(leadId: string, stageId: string): Promise<unknown> {
+		// Verify stage belongs to user's workspace
+		const { data: stage } = await this.supabase
+			.from('lead_stages')
+			.select('id, created_by')
+			.eq('id', stageId)
+			.eq('created_by', this.authInfo.userId)
+			.single();
+		if (!stage) throw new Error('Stage not found or access denied');
+
+		const { data, error } = await (this.supabase.from('leads') as any)
+			.update({ stage_id: stageId })
+			.eq('id', leadId)
+			.select()
+			.single();
+		if (error) {
+			if (error.code === 'PGRST116') throw new Error('Lead not found');
+			throw new Error(`Failed to move lead: ${error.message}`);
+		}
+		return data as unknown;
+	}
+
+	async listLeadStages(): Promise<ProfitBotLeadStage[]> {
+		const { data, error } = await this.supabase
+			.from('lead_stages')
+			.select('*')
+			.eq('created_by', this.authInfo.userId)
+			.order('sort_order', { ascending: true });
+		if (error) throw new Error(`Failed to list stages: ${error.message}`);
+		return (data ?? []) as ProfitBotLeadStage[];
+	}
+
+	async createLeadStage(name: string, sortOrder?: number): Promise<ProfitBotLeadStage> {
+		const { data, error } = await (this.supabase.from('lead_stages') as any)
+			.insert({
+				name: name.trim(),
+				sort_order: sortOrder ?? 999,
+				created_by: this.authInfo.userId,
+			})
+			.select()
+			.single();
+		if (error) throw new Error(`Failed to create stage: ${error.message}`);
+		return data as ProfitBotLeadStage;
+	}
+
+	async updateLeadStage(stageId: string, updates: Partial<ProfitBotLeadStage>): Promise<ProfitBotLeadStage> {
+		const { data, error } = await (this.supabase.from('lead_stages') as any)
+			.update(updates)
+			.eq('id', stageId)
+			.eq('created_by', this.authInfo.userId)
+			.select()
+			.single();
+		if (error) {
+			if (error.code === 'PGRST116') throw new Error('Stage not found');
+			throw new Error(`Failed to update stage: ${error.message}`);
+		}
+		return data as ProfitBotLeadStage;
+	}
+
+	async deleteLeadStage(stageId: string): Promise<void> {
+		// Get first other stage to reassign leads
+		const { data: otherStages } = await this.supabase
+			.from('lead_stages')
+			.select('id')
+			.eq('created_by', this.authInfo.userId)
+			.neq('id', stageId)
+			.order('sort_order', { ascending: true })
+			.limit(1);
+
+		const fallbackStageId = otherStages?.[0]?.id;
+
+		if (fallbackStageId) {
+			await this.supabase.from('leads').update({ stage_id: fallbackStageId }).eq('stage_id', stageId);
+		} else {
+			await this.supabase.from('leads').delete().eq('stage_id', stageId);
+		}
+
+		const { error } = await this.supabase
+			.from('lead_stages')
+			.delete()
+			.eq('id', stageId)
+			.eq('created_by', this.authInfo.userId);
+		if (error) throw new Error(`Failed to delete stage: ${error.message}`);
 	}
 
 	// Conversation operations
-	async listConversations(widgetId?: string): Promise<ProfitBotConversation[]> {
+	async listConversations(widgetId?: string): Promise<unknown[]> {
 		let query = this.supabase
 			.from('widget_conversations')
-			.select('*')
-			.order('updated_at', { ascending: false });
-		if (widgetId) query = query.eq('widget_id', widgetId);
-		const { data, error } = await query;
+			.select(
+				`
+				id,
+				widget_id,
+				session_id,
+				is_ai_active,
+				created_at,
+				updated_at,
+				widgets!inner(workspace_id)
+			`
+			)
+			.eq('widgets.workspace_id', this.authInfo.workspaceId);
+
+		if (widgetId) {
+			query = query.eq('widget_id', widgetId);
+		}
+
+		const { data, error } = await query.order('updated_at', { ascending: false });
 		if (error) throw new Error(`Failed to list conversations: ${error.message}`);
-		return (data ?? []) as ProfitBotConversation[];
+		return (data ?? []) as unknown[];
 	}
 
-	async getConversation(id: string): Promise<ProfitBotConversation | null> {
+	async getConversation(conversationId: string): Promise<unknown | null> {
 		const { data, error } = await this.supabase
 			.from('widget_conversations')
-			.select('*')
-			.eq('id', id)
+			.select(
+				`
+				id,
+				widget_id,
+				session_id,
+				is_ai_active,
+				created_at,
+				updated_at,
+				widgets!inner(workspace_id)
+			`
+			)
+			.eq('id', conversationId)
+			.eq('widgets.workspace_id', this.authInfo.workspaceId)
 			.single();
 		if (error) {
 			if (error.code === 'PGRST116') return null;
 			throw new Error(`Failed to get conversation: ${error.message}`);
 		}
-		return data as ProfitBotConversation;
+		return data as unknown;
 	}
 
-	// Document/training operations
-	async getWidgetDocuments(widgetId: string): Promise<unknown[]> {
+	async sendMessage(conversationId: string, content: string): Promise<unknown> {
+		// Verify conversation belongs to workspace
+		const { data: conv } = await this.supabase
+			.from('widget_conversations')
+			.select('id, widgets!inner(workspace_id)')
+			.eq('id', conversationId)
+			.eq('widgets.workspace_id', this.authInfo.workspaceId)
+			.single();
+		if (!conv) throw new Error('Conversation not found or access denied');
+
+		const { data, error } = await (this.supabase.from('widget_conversation_messages') as any)
+			.insert({
+				conversation_id: conversationId,
+				role: 'human_agent',
+				content: content.trim(),
+				created_by: this.authInfo.userId,
+			})
+			.select('id, role, content, created_at')
+			.single();
+		if (error) throw new Error(`Failed to send message: ${error.message}`);
+
+		// Update conversation updated_at
+		await this.supabase
+			.from('widget_conversations')
+			.update({ updated_at: new Date().toISOString() })
+			.eq('id', conversationId);
+
+		return data as unknown;
+	}
+
+	async getConversationMessages(conversationId: string, limit = 50): Promise<unknown[]> {
+		// Verify conversation belongs to workspace
+		const { data: conv } = await this.supabase
+			.from('widget_conversations')
+			.select('id, widgets!inner(workspace_id)')
+			.eq('id', conversationId)
+			.eq('widgets.workspace_id', this.authInfo.workspaceId)
+			.single();
+		if (!conv) throw new Error('Conversation not found or access denied');
+
 		const { data, error } = await this.supabase
-			.from('widget_documents')
-			.select('id, widget_id, metadata, created_at')
-			.eq('widget_id', widgetId)
-			.order('created_at', { ascending: false });
-		if (error) {
-			// Table might not exist
-			if (error.code === '42P01') return [];
-			throw new Error(`Failed to get documents: ${error.message}`);
-		}
+			.from('widget_conversation_messages')
+			.select('*')
+			.eq('conversation_id', conversationId)
+			.order('created_at', { ascending: false })
+			.limit(limit);
+		if (error) throw new Error(`Failed to get messages: ${error.message}`);
 		return (data ?? []) as unknown[];
 	}
 
-	async countWidgetDocuments(widgetId: string): Promise<number> {
-		const { count, error } = await this.supabase
-			.from('widget_documents')
-			.select('*', { count: 'exact', head: true })
-			.eq('widget_id', widgetId);
-		if (error) {
-			if (error.code === '42P01') return 0;
-			throw new Error(`Failed to count documents: ${error.message}`);
+	// Contact operations (scoped via widgets)
+	async listContacts(widgetId?: string, search?: string, limit = 50, page = 1): Promise<{
+		contacts: unknown[];
+		totalCount: number;
+	}> {
+		const offset = (page - 1) * limit;
+		let query = this.supabase
+			.from('contacts')
+			.select(
+				`
+				id,
+				conversation_id,
+				widget_id,
+				name,
+				email,
+				phone,
+				address,
+				tags,
+				created_at,
+				updated_at,
+				widgets!inner(workspace_id)
+			`,
+				{ count: 'exact' }
+			)
+			.eq('widgets.workspace_id', this.authInfo.workspaceId)
+			.order('updated_at', { ascending: false })
+			.range(offset, offset + limit - 1);
+
+		if (widgetId) {
+			query = query.eq('widget_id', widgetId);
 		}
-		return count ?? 0;
+		if (search) {
+			query = query.or(`name.ilike.%${search}%,email.ilike.%${search}%`);
+		}
+
+		const { data, error, count } = await query;
+		if (error) throw new Error(`Failed to list contacts: ${error.message}`);
+		return {
+			contacts: (data ?? []) as unknown[],
+			totalCount: count ?? 0,
+		};
+	}
+
+	async getContact(contactId: string): Promise<unknown | null> {
+		const { data, error } = await this.supabase
+			.from('contacts')
+			.select(
+				`
+				id,
+				conversation_id,
+				widget_id,
+				name,
+				email,
+				phone,
+				address,
+				tags,
+				created_at,
+				updated_at,
+				widgets!inner(workspace_id)
+			`
+			)
+			.eq('id', contactId)
+			.eq('widgets.workspace_id', this.authInfo.workspaceId)
+			.single();
+		if (error) {
+			if (error.code === 'PGRST116') return null;
+			throw new Error(`Failed to get contact: ${error.message}`);
+		}
+		return data as unknown;
 	}
 }
 
 class ProfitBotMCPServer {
 	private server: Server;
 	private client: ProfitBotClient;
+	private authInfo: AuthInfo;
 
 	constructor() {
 		const supabaseUrl = process.env.SUPABASE_URL;
 		const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+		const mcpApiKey = process.env.MCP_API_KEY;
 
 		if (!supabaseUrl || !serviceRoleKey) {
-			throw new Error(
-				'Missing required environment variables: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY'
-			);
+			throw new Error('Missing required environment variables: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY');
+		}
+		if (!mcpApiKey) {
+			throw new Error('Missing required environment variable: MCP_API_KEY');
 		}
 
-		this.client = new ProfitBotClient(supabaseUrl, serviceRoleKey);
+		// Validate API key and get auth info (will be set in initialize)
+		this.authInfo = { workspaceId: '', userId: '', apiKeyId: '' };
+		this.client = new ProfitBotClient(supabaseUrl, serviceRoleKey, this.authInfo);
+
 		this.server = new Server(
 			{
 				name: 'profitbot-mcp-server',
-				version: '1.0.0',
+				version: '2.0.0',
 			},
 			{
 				capabilities: {
@@ -388,21 +452,39 @@ class ProfitBotMCPServer {
 		this.setupErrorHandling();
 	}
 
+	private async initialize(): Promise<void> {
+		const supabaseUrl = process.env.SUPABASE_URL!;
+		const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+		const mcpApiKey = process.env.MCP_API_KEY!;
+
+		const admin = createClient(supabaseUrl, serviceRoleKey);
+		const { data, error } = await admin.rpc('validate_mcp_api_key', {
+			p_api_key: mcpApiKey,
+		});
+
+		if (error || !data || data.length === 0) {
+			throw new Error('Invalid MCP API key');
+		}
+
+		const authData = data[0] as { workspace_id: string; user_id: string; api_key_id: string };
+		this.authInfo.workspaceId = authData.workspace_id;
+		this.authInfo.userId = authData.user_id;
+		this.authInfo.apiKeyId = authData.api_key_id;
+
+		// Recreate client with auth info
+		this.client = new ProfitBotClient(supabaseUrl, serviceRoleKey, this.authInfo);
+	}
+
 	private setupToolHandlers() {
 		this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
 			tools: [
 				// Widget tools
 				{
 					name: 'list_widgets',
-					description: 'List all widgets in ProfitBot. Optionally filter by workspace ID.',
+					description: 'List all widgets for the current workspace.',
 					inputSchema: {
 						type: 'object',
-						properties: {
-							workspaceId: {
-								type: 'string',
-								description: 'Optional workspace ID to filter widgets',
-							},
-						},
+						properties: {},
 					},
 				},
 				{
@@ -419,255 +501,183 @@ class ProfitBotMCPServer {
 						required: ['widgetId'],
 					},
 				},
+				// Leadflow tools
 				{
-					name: 'create_widget',
-					description: 'Create a new widget in ProfitBot.',
-					inputSchema: {
-						type: 'object',
-						properties: {
-							name: {
-								type: 'string',
-								description: 'Widget name',
-							},
-							displayMode: {
-								type: 'string',
-								enum: ['popup', 'standalone', 'embedded'],
-								description: 'Display mode for the widget',
-							},
-							workspaceId: {
-								type: 'string',
-								description: 'Workspace ID to create the widget in',
-							},
-							createdBy: {
-								type: 'string',
-								description: 'User ID of the creator',
-							},
-							config: {
-								type: 'object',
-								description: 'Optional widget configuration (JSON object)',
-							},
-							n8nWebhookUrl: {
-								type: 'string',
-								description: 'Optional n8n webhook URL',
-							},
-						},
-						required: ['name', 'displayMode', 'workspaceId', 'createdBy'],
-					},
-				},
-				{
-					name: 'update_widget',
-					description: 'Update an existing widget.',
+					name: 'list_leads',
+					description: 'List all leads in the pipeline. Optionally filter by widget ID.',
 					inputSchema: {
 						type: 'object',
 						properties: {
 							widgetId: {
 								type: 'string',
-								description: 'The ID of the widget to update',
-							},
-							name: {
-								type: 'string',
-								description: 'New widget name',
-							},
-							displayMode: {
-								type: 'string',
-								enum: ['popup', 'standalone', 'embedded'],
-								description: 'New display mode',
-							},
-							config: {
-								type: 'object',
-								description: 'Updated widget configuration (JSON object)',
-							},
-							n8nWebhookUrl: {
-								type: 'string',
-								description: 'Updated n8n webhook URL',
+								description: 'Optional widget ID to filter leads',
 							},
 						},
-						required: ['widgetId'],
 					},
 				},
 				{
-					name: 'delete_widget',
-					description: 'Delete a widget by ID.',
+					name: 'get_lead',
+					description: 'Get details of a specific lead by ID.',
 					inputSchema: {
 						type: 'object',
 						properties: {
-							widgetId: {
+							leadId: {
 								type: 'string',
-								description: 'The ID of the widget to delete',
+								description: 'The ID of the lead to retrieve',
 							},
 						},
-						required: ['widgetId'],
+						required: ['leadId'],
 					},
 				},
-				// Agent tools
 				{
-					name: 'list_agents',
-					description: 'List all agents in ProfitBot.',
+					name: 'move_lead',
+					description: 'Move a lead to a different stage.',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							leadId: {
+								type: 'string',
+								description: 'The ID of the lead to move',
+							},
+							stageId: {
+								type: 'string',
+								description: 'The ID of the target stage',
+							},
+						},
+						required: ['leadId', 'stageId'],
+					},
+				},
+				{
+					name: 'list_lead_stages',
+					description: 'List all lead stages in the pipeline.',
 					inputSchema: {
 						type: 'object',
 						properties: {},
 					},
 				},
 				{
-					name: 'get_agent',
-					description: 'Get details of a specific agent by ID.',
-					inputSchema: {
-						type: 'object',
-						properties: {
-							agentId: {
-								type: 'string',
-								description: 'The ID of the agent to retrieve',
-							},
-						},
-						required: ['agentId'],
-					},
-				},
-				{
-					name: 'create_agent',
-					description: 'Create a new agent in ProfitBot.',
+					name: 'create_lead_stage',
+					description: 'Create a new lead stage.',
 					inputSchema: {
 						type: 'object',
 						properties: {
 							name: {
 								type: 'string',
-								description: 'Agent name',
+								description: 'Stage name',
 							},
-							createdBy: {
-								type: 'string',
-								description: 'User ID of the creator',
-							},
-							description: {
-								type: 'string',
-								description: 'Optional agent description',
-							},
-							systemPrompt: {
-								type: 'string',
-								description: 'Optional system prompt for the agent',
+							sortOrder: {
+								type: 'number',
+								description: 'Optional sort order (default: 999)',
 							},
 						},
-						required: ['name', 'createdBy'],
+						required: ['name'],
 					},
 				},
 				{
-					name: 'update_agent',
-					description: 'Update an existing agent.',
+					name: 'update_lead_stage',
+					description: 'Update a lead stage (name or sort order).',
 					inputSchema: {
 						type: 'object',
 						properties: {
-							agentId: {
+							stageId: {
 								type: 'string',
-								description: 'The ID of the agent to update',
+								description: 'The ID of the stage to update',
 							},
 							name: {
 								type: 'string',
-								description: 'New agent name',
+								description: 'New stage name',
 							},
-							description: {
-								type: 'string',
-								description: 'New agent description',
-							},
-							systemPrompt: {
-								type: 'string',
-								description: 'New system prompt',
-							},
-							chatBackend: {
-								type: 'string',
-								description: 'Chat backend (e.g., "n8n", "openai")',
-							},
-							n8nWebhookUrl: {
-								type: 'string',
-								description: 'n8n webhook URL',
-							},
-							botRole: {
-								type: 'string',
-								description: 'Bot role description',
-							},
-							botTone: {
-								type: 'string',
-								description: 'Bot tone',
-							},
-							botInstructions: {
-								type: 'string',
-								description: 'Additional bot instructions',
+							sortOrder: {
+								type: 'number',
+								description: 'New sort order',
 							},
 						},
-						required: ['agentId'],
+						required: ['stageId'],
 					},
 				},
 				{
-					name: 'delete_agent',
-					description: 'Delete an agent by ID.',
+					name: 'delete_lead_stage',
+					description: 'Delete a lead stage. Leads in this stage will be moved to the first remaining stage.',
 					inputSchema: {
 						type: 'object',
 						properties: {
-							agentId: {
+							stageId: {
 								type: 'string',
-								description: 'The ID of the agent to delete',
+								description: 'The ID of the stage to delete',
 							},
 						},
-						required: ['agentId'],
+						required: ['stageId'],
 					},
 				},
-				// Team tools
+				// Conversation tools
 				{
-					name: 'list_team_members',
-					description: 'List team members for a workspace.',
-					inputSchema: {
-						type: 'object',
-						properties: {
-							workspaceId: {
-								type: 'string',
-								description: 'Workspace ID to list members for',
-							},
-						},
-						required: ['workspaceId'],
-					},
-				},
-				{
-					name: 'get_workspace_id',
-					description: 'Get workspace ID for a user.',
-					inputSchema: {
-						type: 'object',
-						properties: {
-							userId: {
-								type: 'string',
-								description: 'User ID to get workspace for',
-							},
-						},
-						required: ['userId'],
-					},
-				},
-				// Analytics tools
-				{
-					name: 'get_widget_events',
-					description: 'Get widget analytics events. Optionally filter by widget ID and date range.',
+					name: 'list_conversations',
+					description: 'List conversations. Optionally filter by widget ID.',
 					inputSchema: {
 						type: 'object',
 						properties: {
 							widgetId: {
 								type: 'string',
-								description: 'Optional widget ID to filter events',
+								description: 'Optional widget ID to filter conversations',
 							},
-							from: {
+						},
+					},
+				},
+				{
+					name: 'get_conversation',
+					description: 'Get details of a specific conversation by ID.',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							conversationId: {
 								type: 'string',
-								description: 'Optional start date (ISO 8601 format)',
+								description: 'The ID of the conversation to retrieve',
 							},
-							to: {
+						},
+						required: ['conversationId'],
+					},
+				},
+				{
+					name: 'send_message',
+					description: 'Send a message as a human agent in a conversation.',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							conversationId: {
 								type: 'string',
-								description: 'Optional end date (ISO 8601 format)',
+								description: 'The ID of the conversation',
+							},
+							content: {
+								type: 'string',
+								description: 'Message content',
+							},
+						},
+						required: ['conversationId', 'content'],
+					},
+				},
+				{
+					name: 'get_conversation_messages',
+					description: 'Get messages from a conversation.',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							conversationId: {
+								type: 'string',
+								description: 'The ID of the conversation',
 							},
 							limit: {
 								type: 'number',
-								description: 'Maximum number of events to return (default: 500)',
-								default: 500,
+								description: 'Maximum number of messages (default: 50)',
+								default: 50,
 							},
 						},
+						required: ['conversationId'],
 					},
 				},
 				// Contact tools
 				{
 					name: 'list_contacts',
-					description: 'List contacts. Supports pagination and filtering.',
+					description: 'List contacts. Supports pagination and search.',
 					inputSchema: {
 						type: 'object',
 						properties: {
@@ -706,63 +716,6 @@ class ProfitBotMCPServer {
 						required: ['contactId'],
 					},
 				},
-				// Conversation tools
-				{
-					name: 'list_conversations',
-					description: 'List conversations. Optionally filter by widget ID.',
-					inputSchema: {
-						type: 'object',
-						properties: {
-							widgetId: {
-								type: 'string',
-								description: 'Optional widget ID to filter conversations',
-							},
-						},
-					},
-				},
-				{
-					name: 'get_conversation',
-					description: 'Get details of a specific conversation by ID.',
-					inputSchema: {
-						type: 'object',
-						properties: {
-							conversationId: {
-								type: 'string',
-								description: 'The ID of the conversation to retrieve',
-							},
-						},
-						required: ['conversationId'],
-					},
-				},
-				// Training/document tools
-				{
-					name: 'get_widget_documents',
-					description: 'Get documents/training data for a widget.',
-					inputSchema: {
-						type: 'object',
-						properties: {
-							widgetId: {
-								type: 'string',
-								description: 'Widget ID to get documents for',
-							},
-						},
-						required: ['widgetId'],
-					},
-				},
-				{
-					name: 'count_widget_documents',
-					description: 'Get count of documents/training data for a widget.',
-					inputSchema: {
-						type: 'object',
-						properties: {
-							widgetId: {
-								type: 'string',
-								description: 'Widget ID to count documents for',
-							},
-						},
-						required: ['widgetId'],
-					},
-				},
 			],
 		}));
 
@@ -771,30 +724,13 @@ class ProfitBotMCPServer {
 
 			try {
 				switch (name) {
-					// Widget operations
 					case 'list_widgets': {
-						const widgets = await this.client.listWidgets(
-							args?.workspaceId as string | undefined
-						);
+						const widgets = await this.client.listWidgets();
 						return {
 							content: [
 								{
 									type: 'text',
-									text: JSON.stringify(
-										{
-											widgets: widgets.map((w) => ({
-												id: w.id,
-												name: w.name,
-												displayMode: w.display_mode,
-												n8nWebhookUrl: w.n8n_webhook_url,
-												createdAt: w.created_at,
-												updatedAt: w.updated_at,
-											})),
-											count: widgets.length,
-										},
-										null,
-										2
-									),
+									text: JSON.stringify({ widgets, count: widgets.length }, null, 2),
 								},
 							],
 						};
@@ -813,252 +749,193 @@ class ProfitBotMCPServer {
 							content: [
 								{
 									type: 'text',
-									text: JSON.stringify(widget, null, 2),
-								},
-							],
-						};
-					}
-
-					case 'create_widget': {
-						const name = args?.name as string;
-						const displayMode = args?.displayMode as 'popup' | 'standalone' | 'embedded';
-						const workspaceId = args?.workspaceId as string;
-						const createdBy = args?.createdBy as string;
-						const config = args?.config as Record<string, unknown> | undefined;
-						const n8nWebhookUrl = args?.n8nWebhookUrl as string | undefined;
-
-						if (!name || !displayMode || !workspaceId || !createdBy) {
-							throw new McpError(
-								ErrorCode.InvalidParams,
-								'name, displayMode, workspaceId, and createdBy are required'
-							);
-						}
-
-						const widget = await this.client.createWidget(
-							name,
-							displayMode,
-							workspaceId,
-							createdBy,
-							config,
-							n8nWebhookUrl
-						);
-						return {
-							content: [
-								{
-									type: 'text',
 									text: JSON.stringify({ widget }, null, 2),
 								},
 							],
 						};
 					}
 
-					case 'update_widget': {
-						const widgetId = args?.widgetId as string;
-						if (!widgetId) {
-							throw new McpError(ErrorCode.InvalidParams, 'widgetId is required');
-						}
-
-						const updates: Partial<ProfitBotWidget> = {};
-						if (args?.name) updates.name = args.name as string;
-						if (args?.displayMode) {
-							updates.display_mode = args.displayMode as 'popup' | 'standalone' | 'embedded';
-						}
-						if (args?.config) updates.config = args.config as Record<string, unknown>;
-						if (args?.n8nWebhookUrl !== undefined) {
-							updates.n8n_webhook_url = (args.n8nWebhookUrl as string) || null;
-						}
-
-						const widget = await this.client.updateWidget(widgetId, updates);
-						return {
-							content: [
-								{
-									type: 'text',
-									text: JSON.stringify({ widget }, null, 2),
-								},
-							],
-						};
-					}
-
-					case 'delete_widget': {
-						const widgetId = args?.widgetId as string;
-						if (!widgetId) {
-							throw new McpError(ErrorCode.InvalidParams, 'widgetId is required');
-						}
-						await this.client.deleteWidget(widgetId);
-						return {
-							content: [
-								{
-									type: 'text',
-									text: JSON.stringify({ success: true, message: 'Widget deleted' }, null, 2),
-								},
-							],
-						};
-					}
-
-					// Agent operations
-					case 'list_agents': {
-						const agents = await this.client.listAgents();
-						return {
-							content: [
-								{
-									type: 'text',
-									text: JSON.stringify(
-										{
-											agents: agents.map((a) => ({
-												id: a.id,
-												name: a.name,
-												description: a.description,
-												createdAt: a.created_at,
-												updatedAt: a.updated_at,
-											})),
-											count: agents.length,
-										},
-										null,
-										2
-									),
-								},
-							],
-						};
-					}
-
-					case 'get_agent': {
-						const agentId = args?.agentId as string;
-						if (!agentId) {
-							throw new McpError(ErrorCode.InvalidParams, 'agentId is required');
-						}
-						const agent = await this.client.getAgent(agentId);
-						if (!agent) {
-							throw new McpError(ErrorCode.InvalidParams, 'Agent not found');
-						}
-						return {
-							content: [
-								{
-									type: 'text',
-									text: JSON.stringify(agent, null, 2),
-								},
-							],
-						};
-					}
-
-					case 'create_agent': {
-						const name = args?.name as string;
-						const createdBy = args?.createdBy as string;
-						const description = args?.description as string | undefined;
-						const systemPrompt = args?.systemPrompt as string | undefined;
-
-						if (!name || !createdBy) {
-							throw new McpError(ErrorCode.InvalidParams, 'name and createdBy are required');
-						}
-
-						const agent = await this.client.createAgent(name, createdBy, description, systemPrompt);
-						return {
-							content: [
-								{
-									type: 'text',
-									text: JSON.stringify({ agent }, null, 2),
-								},
-							],
-						};
-					}
-
-					case 'update_agent': {
-						const agentId = args?.agentId as string;
-						if (!agentId) {
-							throw new McpError(ErrorCode.InvalidParams, 'agentId is required');
-						}
-
-						const updates: Partial<ProfitBotAgent> = {};
-						if (args?.name) updates.name = args.name as string;
-						if (args?.description !== undefined) updates.description = args.description as string | null;
-						if (args?.systemPrompt !== undefined) {
-							updates.system_prompt = args.systemPrompt as string | null;
-						}
-						if (args?.chatBackend) updates.chat_backend = args.chatBackend as string;
-						if (args?.n8nWebhookUrl !== undefined) {
-							updates.n8n_webhook_url = (args.n8nWebhookUrl as string) || null;
-						}
-						if (args?.botRole) updates.bot_role = args.botRole as string;
-						if (args?.botTone) updates.bot_tone = args.botTone as string;
-						if (args?.botInstructions) updates.bot_instructions = args.botInstructions as string;
-
-						const agent = await this.client.updateAgent(agentId, updates);
-						return {
-							content: [
-								{
-									type: 'text',
-									text: JSON.stringify({ agent }, null, 2),
-								},
-							],
-						};
-					}
-
-					case 'delete_agent': {
-						const agentId = args?.agentId as string;
-						if (!agentId) {
-							throw new McpError(ErrorCode.InvalidParams, 'agentId is required');
-						}
-						await this.client.deleteAgent(agentId);
-						return {
-							content: [
-								{
-									type: 'text',
-									text: JSON.stringify({ success: true, message: 'Agent deleted' }, null, 2),
-								},
-							],
-						};
-					}
-
-					// Team operations
-					case 'list_team_members': {
-						const workspaceId = args?.workspaceId as string;
-						if (!workspaceId) {
-							throw new McpError(ErrorCode.InvalidParams, 'workspaceId is required');
-						}
-						const members = await this.client.listTeamMembers(workspaceId);
-						return {
-							content: [
-								{
-									type: 'text',
-									text: JSON.stringify({ members, count: members.length }, null, 2),
-								},
-							],
-						};
-					}
-
-					case 'get_workspace_id': {
-						const userId = args?.userId as string;
-						if (!userId) {
-							throw new McpError(ErrorCode.InvalidParams, 'userId is required');
-						}
-						const workspaceId = await this.client.getWorkspaceId(userId);
-						return {
-							content: [
-								{
-									type: 'text',
-									text: JSON.stringify({ userId, workspaceId }, null, 2),
-								},
-							],
-						};
-					}
-
-					// Analytics operations
-					case 'get_widget_events': {
+					case 'list_leads': {
 						const widgetId = args?.widgetId as string | undefined;
-						const from = args?.from as string | undefined;
-						const to = args?.to as string | undefined;
-						const limit = (args?.limit as number) || 500;
-						const events = await this.client.getWidgetEvents(widgetId, from, to, limit);
+						const leads = await this.client.listLeads(widgetId);
 						return {
 							content: [
 								{
 									type: 'text',
-									text: JSON.stringify({ events, count: events.length }, null, 2),
+									text: JSON.stringify({ leads, count: leads.length }, null, 2),
 								},
 							],
 						};
 					}
 
-					// Contact operations
+					case 'get_lead': {
+						const leadId = args?.leadId as string;
+						if (!leadId) {
+							throw new McpError(ErrorCode.InvalidParams, 'leadId is required');
+						}
+						const lead = await this.client.getLead(leadId);
+						if (!lead) {
+							throw new McpError(ErrorCode.InvalidParams, 'Lead not found');
+						}
+						return {
+							content: [
+								{
+									type: 'text',
+									text: JSON.stringify({ lead }, null, 2),
+								},
+							],
+						};
+					}
+
+					case 'move_lead': {
+						const leadId = args?.leadId as string;
+						const stageId = args?.stageId as string;
+						if (!leadId || !stageId) {
+							throw new McpError(ErrorCode.InvalidParams, 'leadId and stageId are required');
+						}
+						const lead = await this.client.moveLead(leadId, stageId);
+						return {
+							content: [
+								{
+									type: 'text',
+									text: JSON.stringify({ lead, message: 'Lead moved successfully' }, null, 2),
+								},
+							],
+						};
+					}
+
+					case 'list_lead_stages': {
+						const stages = await this.client.listLeadStages();
+						return {
+							content: [
+								{
+									type: 'text',
+									text: JSON.stringify({ stages, count: stages.length }, null, 2),
+								},
+							],
+						};
+					}
+
+					case 'create_lead_stage': {
+						const name = args?.name as string;
+						const sortOrder = args?.sortOrder as number | undefined;
+						if (!name) {
+							throw new McpError(ErrorCode.InvalidParams, 'name is required');
+						}
+						const stage = await this.client.createLeadStage(name, sortOrder);
+						return {
+							content: [
+								{
+									type: 'text',
+									text: JSON.stringify({ stage }, null, 2),
+								},
+							],
+						};
+					}
+
+					case 'update_lead_stage': {
+						const stageId = args?.stageId as string;
+						const name = args?.name as string | undefined;
+						const sortOrder = args?.sortOrder as number | undefined;
+						if (!stageId) {
+							throw new McpError(ErrorCode.InvalidParams, 'stageId is required');
+						}
+						const updates: Partial<ProfitBotLeadStage> = {};
+						if (name) updates.name = name;
+						if (sortOrder !== undefined) updates.sort_order = sortOrder;
+						const stage = await this.client.updateLeadStage(stageId, updates);
+						return {
+							content: [
+								{
+									type: 'text',
+									text: JSON.stringify({ stage }, null, 2),
+								},
+							],
+						};
+					}
+
+					case 'delete_lead_stage': {
+						const stageId = args?.stageId as string;
+						if (!stageId) {
+							throw new McpError(ErrorCode.InvalidParams, 'stageId is required');
+						}
+						await this.client.deleteLeadStage(stageId);
+						return {
+							content: [
+								{
+									type: 'text',
+									text: JSON.stringify({ success: true, message: 'Stage deleted' }, null, 2),
+								},
+							],
+						};
+					}
+
+					case 'list_conversations': {
+						const widgetId = args?.widgetId as string | undefined;
+						const conversations = await this.client.listConversations(widgetId);
+						return {
+							content: [
+								{
+									type: 'text',
+									text: JSON.stringify({ conversations, count: conversations.length }, null, 2),
+								},
+							],
+						};
+					}
+
+					case 'get_conversation': {
+						const conversationId = args?.conversationId as string;
+						if (!conversationId) {
+							throw new McpError(ErrorCode.InvalidParams, 'conversationId is required');
+						}
+						const conversation = await this.client.getConversation(conversationId);
+						if (!conversation) {
+							throw new McpError(ErrorCode.InvalidParams, 'Conversation not found');
+						}
+						return {
+							content: [
+								{
+									type: 'text',
+									text: JSON.stringify({ conversation }, null, 2),
+								},
+							],
+						};
+					}
+
+					case 'send_message': {
+						const conversationId = args?.conversationId as string;
+						const content = args?.content as string;
+						if (!conversationId || !content) {
+							throw new McpError(ErrorCode.InvalidParams, 'conversationId and content are required');
+						}
+						const message = await this.client.sendMessage(conversationId, content);
+						return {
+							content: [
+								{
+									type: 'text',
+									text: JSON.stringify({ message, success: true }, null, 2),
+								},
+							],
+						};
+					}
+
+					case 'get_conversation_messages': {
+						const conversationId = args?.conversationId as string;
+						const limit = (args?.limit as number) || 50;
+						if (!conversationId) {
+							throw new McpError(ErrorCode.InvalidParams, 'conversationId is required');
+						}
+						const messages = await this.client.getConversationMessages(conversationId, limit);
+						return {
+							content: [
+								{
+									type: 'text',
+									text: JSON.stringify({ messages, count: messages.length }, null, 2),
+								},
+							],
+						};
+					}
+
 					case 'list_contacts': {
 						const widgetId = args?.widgetId as string | undefined;
 						const search = args?.search as string | undefined;
@@ -1094,72 +971,6 @@ class ProfitBotMCPServer {
 						};
 					}
 
-					// Conversation operations
-					case 'list_conversations': {
-						const widgetId = args?.widgetId as string | undefined;
-						const conversations = await this.client.listConversations(widgetId);
-						return {
-							content: [
-								{
-									type: 'text',
-									text: JSON.stringify({ conversations, count: conversations.length }, null, 2),
-								},
-							],
-						};
-					}
-
-					case 'get_conversation': {
-						const conversationId = args?.conversationId as string;
-						if (!conversationId) {
-							throw new McpError(ErrorCode.InvalidParams, 'conversationId is required');
-						}
-						const conversation = await this.client.getConversation(conversationId);
-						if (!conversation) {
-							throw new McpError(ErrorCode.InvalidParams, 'Conversation not found');
-						}
-						return {
-							content: [
-								{
-									type: 'text',
-									text: JSON.stringify({ conversation }, null, 2),
-								},
-							],
-						};
-					}
-
-					// Training/document operations
-					case 'get_widget_documents': {
-						const widgetId = args?.widgetId as string;
-						if (!widgetId) {
-							throw new McpError(ErrorCode.InvalidParams, 'widgetId is required');
-						}
-						const documents = await this.client.getWidgetDocuments(widgetId);
-						return {
-							content: [
-								{
-									type: 'text',
-									text: JSON.stringify({ documents, count: documents.length }, null, 2),
-								},
-							],
-						};
-					}
-
-					case 'count_widget_documents': {
-						const widgetId = args?.widgetId as string;
-						if (!widgetId) {
-							throw new McpError(ErrorCode.InvalidParams, 'widgetId is required');
-						}
-						const count = await this.client.countWidgetDocuments(widgetId);
-						return {
-							content: [
-								{
-									type: 'text',
-									text: JSON.stringify({ widgetId, documentCount: count }, null, 2),
-								},
-							],
-						};
-					}
-
 					default:
 						throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
 				}
@@ -1185,9 +996,12 @@ class ProfitBotMCPServer {
 	}
 
 	async run() {
+		// Initialize auth before starting
+		await this.initialize();
+
 		const transport = new StdioServerTransport();
 		await this.server.connect(transport);
-		console.error('ProfitBot MCP server running on stdio');
+		console.error(`ProfitBot MCP server running on stdio (workspace: ${this.authInfo.workspaceId})`);
 	}
 }
 

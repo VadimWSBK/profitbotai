@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { Check } from '@lucide/svelte';
 
 	type Member = {
 		id: string;
@@ -25,6 +26,7 @@
 	let loaded = $state(false);
 	let loading = $state(false);
 	let error = $state<string | null>(null);
+	let copiedInvitationId = $state<string | null>(null);
 
 	// Invite form
 	let inviteEmail = $state('');
@@ -141,7 +143,11 @@
 		const origin = typeof window !== 'undefined' ? window.location.origin : '';
 		const url = `${origin}/team/accept?token=${invitation.token}`;
 		navigator.clipboard.writeText(url).then(() => {
-			alert('Invitation link copied to clipboard!');
+			copiedInvitationId = invitation.id;
+			// Reset after 2 seconds
+			setTimeout(() => {
+				copiedInvitationId = null;
+			}, 2000);
 		});
 	}
 
@@ -287,10 +293,15 @@
 									{#if invitation.token}
 										<button
 											onclick={() => copyInviteLink(invitation)}
-											class="text-amber-600 hover:text-amber-700 text-sm font-medium"
+											class="text-amber-600 hover:text-amber-700 text-sm font-medium flex items-center gap-1.5"
 											title="Copy invitation link"
 										>
-											Copy Link
+											{#if copiedInvitationId === invitation.id}
+												<Check class="w-4 h-4" />
+												<span>Copied</span>
+											{:else}
+												<span>Copy Link</span>
+											{/if}
 										</button>
 									{/if}
 									<button
