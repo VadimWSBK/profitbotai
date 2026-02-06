@@ -1,0 +1,79 @@
+{
+  "meta": {
+    "lastTouchedVersion": "2026.2.4",
+    "lastTouchedAt": "2026-02-06T14:47:37.728Z"
+  },
+  "browser": {},
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "google/gemini-2.5-flash"
+      },
+      "models": {
+        "google/gemini-2.5-flash": {}
+      },
+      "compaction": {
+        "mode": "safeguard"
+      },
+      "maxConcurrent": 4,
+      "subagents": {
+        "maxConcurrent": 8
+      }
+    }
+  },
+  "tools": {
+    "exec": {}
+  },
+  "messages": {
+    "ackReactionScope": "group-mentions"
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto"
+  },
+  "gateway": {
+    "mode": "local",
+    "controlUi": {
+      "allowInsecureAuth": true
+    },
+    "auth": {
+      "mode": "token",
+      "token": "__OPENCLAW_REDACTED__"
+    }
+  },
+  "plugins": {
+    "entries": {
+      "openclaw-mcp-adapter": {
+        "enabled": true,
+        "config": {
+          "servers": [
+            {
+              "name": "tavily",
+              "transport": "http",
+              "url": "https://mcp.tavily.com/mcp/?tavilyApiKey=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"
+            },
+            {
+              "name": "profitbot",
+              "transport": "stdio",
+              "command": "npx",
+              "args": ["tsx", "/home/node/profitbotai/mcp-servers/profitbot/http-client.ts"],
+              "env": {
+                "MCP_API_KEY": "${MCP_API_KEY}",
+                "PROFITBOT_API_URL": "https://app.profitbot.ai"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "installs": {
+      "openclaw-mcp-adapter": {
+        "source": "npm",
+        "spec": "openclaw-mcp-adapter",
+        "installPath": "/home/node/.openclaw/extensions/openclaw-mcp-adapter",
+        "version": "0.1.1",
+        "installedAt": "2026-02-06T14:45:54.815Z"
+      }
+    }
+  }
+}
