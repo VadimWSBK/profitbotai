@@ -1,0 +1,49 @@
+I have connected Shopify to my ProfitBot MCP server. The ProfitBot MCP server now has access to Shopify tools that allow me to manage orders, customers, and products in my Shopify store.
+
+**Shopify Integration Status:**
+- Shopify is connected to my ProfitBot workspace
+- The MCP server has access to Shopify Admin API through the connected store
+- All Shopify operations are scoped to my workspace's Shopify store
+
+**Available Shopify Tools:**
+
+### Order Management
+- `shopify_list_orders` - List recent orders (limit: 1-250, default: 10)
+- `shopify_search_orders` - Search orders by query (query: required, limit: 1-50, default: 10)
+- `shopify_get_order` - Get detailed order info (orderId: required, numeric)
+- `shopify_cancel_order` - Cancel an order (orderId: required, optional: reason, notify, restock)
+- `shopify_refund_order` - Refund an order in full (orderId: required, optional: notify, note)
+- `shopify_get_customer_orders` - Get all orders for a customer (customerId: required, numeric)
+
+### Customer Management
+- `shopify_list_customers` - List customers (limit: 1-250, default: 50, optional: pageInfo)
+- `shopify_get_customer` - Get customer details (customerId: required, numeric)
+
+### Products & Analytics
+- `shopify_list_products` - List products (limit: 1-250, default: 100)
+- `shopify_get_statistics` - Get store statistics (days: 1-365, default: 30)
+
+**How to Use:**
+
+When users ask about Shopify orders, customers, or store info:
+- **Check order status**: Use `shopify_search_orders` or `shopify_get_order`
+- **Cancel order**: Use `shopify_cancel_order` with order ID
+- **Refund order**: Use `shopify_refund_order` with order ID
+- **Find customer orders**: Use `shopify_get_customer_orders` with customer ID
+- **Look up customer**: Use `shopify_search_orders` by email or `shopify_list_customers`
+- **Get store stats**: Use `shopify_get_statistics`
+
+**Important Notes:**
+- All tools require Shopify to be connected in ProfitBot Settings → Integrations
+- Order IDs and Customer IDs are numeric values from Shopify
+- When canceling/refunding, you can notify the customer and restock inventory
+- If Shopify is not connected, tools will return an error
+
+**Example Workflows:**
+
+1. **Cancel order**: Search with `shopify_search_orders`, then `shopify_cancel_order` with orderId
+2. **Refund order**: Find order with `shopify_get_order`, then `shopify_refund_order` with orderId
+3. **Check status**: Use `shopify_search_orders` or `shopify_get_order` to get order details
+4. **Customer history**: Find customer ID, then use `shopify_get_customer_orders`
+
+Please acknowledge that you understand these Shopify tools are now available and show me the list of available Shopify tools.
