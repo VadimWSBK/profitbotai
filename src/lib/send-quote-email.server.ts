@@ -6,6 +6,14 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { storeContactEmail } from '$lib/contact-email.server';
 import { getResendConfigForUser, sendEmailWithResend } from '$lib/resend.server';
 
+export interface EmailFooterConfig {
+	logoUrl?: string;
+	websiteUrl?: string;
+	websiteText?: string;
+	phone?: string;
+	email?: string;
+}
+
 export interface SendQuoteEmailOptions {
 	toEmail: string;
 	quoteDownloadUrl: string;
@@ -86,27 +94,36 @@ export async function sendQuoteEmail(
 
 	const subject =
 		typeof customSubject === 'string' && customSubject.trim() ? customSubject.trim() : 'Your quote';
-	// Support [[link text]] → <a href="quoteDownloadUrl">link text</a> for custom link text
-	const linkTexts: string[] = [];
-	let bodyProcessed = customBody!.trim().replace(/\[\[([^\]]*)\]\]/g, (_, text: string) => {
-		linkTexts.push(escapeHtml(text));
-		return `\x00L${linkTexts.length - 1}\x00`;
-	});
-	bodyProcessed = escapeHtml(bodyProcessed).replaceAll(/\n/g, '<br>\n');
-	bodyProcessed = linkify(bodyProcessed);
-	bodyProcessed = bodyProcessed.replace(/\x00L(\d+)\x00/g, (_, i: string) =>
-		`<a href="${escapeHtml(quoteDownloadUrl)}" style="color: #b45309; font-weight: 600;">${linkTexts[Number(i)]}</a>`
-	);
-	const bodyWithLinks = bodyProcessed;
-	const hasLink = bodyWithLinks.includes('href=');
+	
+	// Detect if body contains HTML
+	const bodyIsHtml = containsHtml(customBody!);
+	const bodyProcessed = processEmailBody(customBody!.trim(), bodyIsHtml, quoteDownloadUrl);
+	const hasLink = bodyProcessed.includes('href=');
+	
+	// Build HTML email - if body is already HTML, wrap it; otherwise use pre-wrap for plain text
+	const bodyWrapper = bodyIsHtml 
+		? `<div>${bodyProcessed}</div>`
+		: `<div style="white-space: pre-wrap;">${bodyProcessed}</div>`;
+	
+	// Get email footer config from integration
+	const { data: integrationData } = await supabase
+		.from('user_integrations')
+		.select('config')
+		.eq('user_id', userId)
+		.eq('integration_type', 'resend')
+		.maybeSingle();
+	const integrationConfig = (integrationData?.config as { emailFooter?: EmailFooterConfig }) ?? {};
+	const footerHtml = buildEmailFooter(integrationConfig.emailFooter);
+	
 	const html = `
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
 <body style="font-family: system-ui, -apple-system, sans-serif; line-height: 1.5; color: #1f2937; max-width: 560px; margin: 0 auto; padding: 24px;">
-  <div style="white-space: pre-wrap;">${bodyWithLinks}</div>
+  ${bodyWrapper}
   ${!hasLink ? `<p><a href="${escapeHtml(quoteDownloadUrl)}" style="color: #b45309; font-weight: 600;">Download your quote</a></p><p style="color: #6b7280; font-size: 14px;">This link will expire in 1 hour.</p>` : ''}
   <p style="color: #6b7280; font-size: 14px;">— ${escapeHtml(fromName)}</p>
+  ${footerHtml}
 </body>
 </html>`;
 
@@ -197,14 +214,35 @@ export async function sendContactEmail(
 	const from = fromName ? `${fromName} <${fromEmail}>` : fromEmail;
 
 	const greeting = customerName?.trim() ? `Hi ${customerName.trim()},` : 'Hi,';
+	
+	// Detect if body contains HTML
+	const bodyIsHtml = containsHtml(body);
+	const bodyProcessed = processEmailBody(body.trim(), bodyIsHtml);
+	
+	// Build HTML email - if body is already HTML, wrap it; otherwise use pre-wrap for plain text
+	const bodyWrapper = bodyIsHtml 
+		? `<div>${bodyProcessed}</div>`
+		: `<div style="white-space: pre-wrap;">${bodyProcessed}</div>`;
+	
+	// Get email footer config from integration
+	const { data: integrationData } = await supabase
+		.from('user_integrations')
+		.select('config')
+		.eq('user_id', userId)
+		.eq('integration_type', 'resend')
+		.maybeSingle();
+	const integrationConfig = (integrationData?.config as { emailFooter?: EmailFooterConfig }) ?? {};
+	const footerHtml = buildEmailFooter(integrationConfig.emailFooter);
+	
 	const html = `
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
 <body style="font-family: system-ui, -apple-system, sans-serif; line-height: 1.5; color: #1f2937; max-width: 560px; margin: 0 auto; padding: 24px;">
   <p>${escapeHtml(greeting)}</p>
-  <div style="white-space: pre-wrap;">${escapeHtml(body).replaceAll(/\n/g, '<br>\n')}</div>
+  ${bodyWrapper}
   <p style="color: #6b7280; font-size: 14px; margin-top: 24px;">— ${escapeHtml(fromName)}</p>
+  ${footerHtml}
 </body>
 </html>`;
 
@@ -236,7 +274,7 @@ export async function sendContactEmail(
 }
 
 function stripHtml(html: string): string {
-	return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+	return html.replaceAll(/<[^>]*>/g, ' ').replaceAll(/\s+/g, ' ').trim();
 }
 
 function escapeHtml(s: string): string {
@@ -248,10 +286,116 @@ function escapeHtml(s: string): string {
 		.replaceAll("'", '&#39;');
 }
 
+/**
+ * Check if a string contains HTML tags (basic detection).
+ * Looks for common HTML tags like <p>, <div>, <table>, <a>, etc.
+ */
+function containsHtml(content: string): boolean {
+	if (!content || typeof content !== 'string') return false;
+	// Check for HTML tags (allowing for whitespace and attributes)
+	const htmlTagPattern = /<[a-z][a-z0-9]*(\s[^>]*)?>/i;
+	return htmlTagPattern.test(content);
+}
+
 /** Turn plain http(s) URLs in text into clickable links (text already escaped). */
 function linkify(text: string): string {
 	return text.replace(
 		/(https?:\/\/[^\s<]+)/g,
 		(url) => `<a href="${escapeHtml(url)}" style="color: #b45309; font-weight: 600;">${escapeHtml(url)}</a>`
 	);
+}
+
+/**
+ * Build email footer HTML with logo, website link, phone, and email.
+ */
+function buildEmailFooter(footer?: EmailFooterConfig | null): string {
+	if (!footer) return '';
+	
+	const hasLogo = footer.logoUrl && footer.logoUrl.trim();
+	const hasWebsite = footer.websiteUrl && footer.websiteUrl.trim();
+	const hasPhone = footer.phone && footer.phone.trim();
+	const hasEmail = footer.email && footer.email.trim();
+	
+	if (!hasLogo && !hasWebsite && !hasPhone && !hasEmail) return '';
+	
+	const websiteText = footer.websiteText?.trim() || (hasWebsite ? 'Visit our website' : '');
+	const websiteLink = hasWebsite 
+		? `<a href="${escapeHtml(footer.websiteUrl!)}" style="color: #b45309; text-decoration: none; font-weight: 600;">${escapeHtml(websiteText)}</a>`
+		: '';
+	
+	const phoneLink = hasPhone 
+		? `<a href="tel:${escapeHtml(footer.phone!.replaceAll(/\s+/g, ''))}" style="color: #6b7280; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">
+			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0;">
+				<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
+			</svg>
+			${escapeHtml(footer.phone!)}
+		</a>`
+		: '';
+	
+	const emailLink = hasEmail
+		? `<a href="mailto:${escapeHtml(footer.email!)}" style="color: #6b7280; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">
+			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0;">
+				<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+				<polyline points="22,6 12,13 2,6"></polyline>
+			</svg>
+			${escapeHtml(footer.email!)}
+		</a>`
+		: '';
+	
+	const items: string[] = [];
+	if (hasLogo) {
+		items.push(`<img src="${escapeHtml(footer.logoUrl!)}" alt="" style="max-height: 40px; width: auto; margin-bottom: 8px; display: block;" />`);
+	}
+	if (websiteLink) items.push(`<div>${websiteLink}</div>`);
+	if (phoneLink) items.push(`<div>${phoneLink}</div>`);
+	if (emailLink) items.push(`<div>${emailLink}</div>`);
+	
+	if (items.length === 0) return '';
+	
+	return `
+	<div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid #e5e7eb;">
+		<div style="display: flex; flex-direction: column; gap: 8px; align-items: flex-start;">
+			${items.join('')}
+		</div>
+	</div>`;
+}
+
+/**
+ * Process email body: if it contains HTML, use as-is (but still process [[link text]]).
+ * If plain text, escape and convert newlines to <br>.
+ */
+function processEmailBody(body: string, isHtml: boolean, quoteDownloadUrl?: string): string {
+	if (isHtml) {
+		// HTML content: support [[link text]] syntax for quote links
+		if (quoteDownloadUrl) {
+			const linkTexts: string[] = [];
+			let processed = body.replace(/\[\[([^\]]*)\]\]/g, (_, text: string) => {
+				linkTexts.push(text); // Don't escape link text in HTML mode
+				return `\x00L${linkTexts.length - 1}\x00`;
+			});
+			processed = processed.replace(/\x00L(\d+)\x00/g, (_, i: string) =>
+				`<a href="${escapeHtml(quoteDownloadUrl)}" style="color: #b45309; font-weight: 600;">${linkTexts[Number(i)]}</a>`
+			);
+			return processed;
+		}
+		return body;
+	} else {
+		// Plain text: escape and convert newlines
+		let processed = escapeHtml(body).replaceAll(/\n/g, '<br>\n');
+		if (quoteDownloadUrl) {
+			// Support [[link text]] syntax
+			const linkTexts: string[] = [];
+			processed = processed.replace(/\[\[([^\]]*)\]\]/g, (_, text: string) => {
+				linkTexts.push(escapeHtml(text));
+				return `\x00L${linkTexts.length - 1}\x00`;
+			});
+			processed = linkify(processed);
+			processed = processed.replace(/\x00L(\d+)\x00/g, (_, i: string) =>
+				`<a href="${escapeHtml(quoteDownloadUrl)}" style="color: #b45309; font-weight: 600;">${linkTexts[Number(i)]}</a>`
+			);
+		} else {
+			processed = linkify(processed);
+		}
+		return processed;
+	}
 }

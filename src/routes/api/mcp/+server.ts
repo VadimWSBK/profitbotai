@@ -10,6 +10,19 @@ import {
 	type QuoteSettings
 } from '$lib/quote-pdf.server';
 import { randomUUID } from 'node:crypto';
+import {
+	getShopifyConfigForUser,
+	listRecentOrders,
+	searchOrders,
+	getOrder,
+	listCustomers,
+	getCustomer,
+	listOrdersForCustomer,
+	cancelOrder,
+	refundOrderFull,
+	getShopifyStatistics,
+	listProductsWithImages
+} from '$lib/shopify.server';
 
 interface AuthInfo {
 	workspaceId: string;
@@ -909,6 +922,165 @@ export const POST: RequestHandler = async (event) => {
 				return json({ success: true, data: { message: 'Quote settings updated' } });
 			}
 
+			case 'shopify_list_orders': {
+				const config = await getShopifyConfigForUser(supabase, authInfo.userId);
+				if (!config) {
+					return json({ error: 'Shopify is not connected. Connect Shopify in Settings → Integrations.' }, { status: 400 });
+				}
+				const { limit = 10 } = params;
+				const limitNum = Math.min(Math.max(1, Number(limit)), 250);
+				const { orders, error: shopifyError } = await listRecentOrders(config, limitNum);
+				if (shopifyError) return json({ error: shopifyError }, { status: 500 });
+				return json({ success: true, data: { orders: orders ?? [], count: (orders ?? []).length } });
+			}
+
+			case 'shopify_search_orders': {
+				const config = await getShopifyConfigForUser(supabase, authInfo.userId);
+				if (!config) {
+					return json({ error: 'Shopify is not connected. Connect Shopify in Settings → Integrations.' }, { status: 400 });
+				}
+				const { query: searchQuery, limit = 10 } = params;
+				if (!searchQuery || typeof searchQuery !== 'string') {
+					return json({ error: 'query parameter required' }, { status: 400 });
+				}
+				const limitNum = Math.min(Math.max(1, Number(limit)), 50);
+				const { orders, error: shopifyError } = await searchOrders(config, String(searchQuery), limitNum);
+				if (shopifyError) return json({ error: shopifyError }, { status: 500 });
+				return json({ success: true, data: { orders: orders ?? [], count: (orders ?? []).length } });
+			}
+
+			case 'shopify_get_order': {
+				const config = await getShopifyConfigForUser(supabase, authInfo.userId);
+				if (!config) {
+					return json({ error: 'Shopify is not connected. Connect Shopify in Settings → Integrations.' }, { status: 400 });
+				}
+				const { orderId } = params;
+				if (!orderId) return json({ error: 'orderId required' }, { status: 400 });
+				const orderIdNum = Number(orderId);
+				if (!Number.isFinite(orderIdNum)) {
+					return json({ error: 'orderId must be a number' }, { status: 400 });
+				}
+				const { order, error: shopifyError } = await getOrder(config, orderIdNum);
+				if (shopifyError) return json({ error: shopifyError }, { status: 500 });
+				if (!order) return json({ error: 'Order not found' }, { status: 404 });
+				return json({ success: true, data: { order } });
+			}
+
+			case 'shopify_list_customers': {
+				const config = await getShopifyConfigForUser(supabase, authInfo.userId);
+				if (!config) {
+					return json({ error: 'Shopify is not connected. Connect Shopify in Settings → Integrations.' }, { status: 400 });
+				}
+				const { limit = 50, pageInfo } = params;
+				const limitNum = Math.min(Math.max(1, Number(limit)), 250);
+				const { customers, nextPageInfo, error: shopifyError } = await listCustomers(config, {
+					limit: limitNum,
+					pageInfo: typeof pageInfo === 'string' ? pageInfo : undefined
+				});
+				if (shopifyError) return json({ error: shopifyError }, { status: 500 });
+				return json({
+					success: true,
+					data: { customers: customers ?? [], count: (customers ?? []).length, nextPageInfo }
+				});
+			}
+
+			case 'shopify_get_customer': {
+				const config = await getShopifyConfigForUser(supabase, authInfo.userId);
+				if (!config) {
+					return json({ error: 'Shopify is not connected. Connect Shopify in Settings → Integrations.' }, { status: 400 });
+				}
+				const { customerId } = params;
+				if (!customerId) return json({ error: 'customerId required' }, { status: 400 });
+				const customerIdNum = Number(customerId);
+				if (!Number.isFinite(customerIdNum)) {
+					return json({ error: 'customerId must be a number' }, { status: 400 });
+				}
+				const { customer, error: shopifyError } = await getCustomer(config, customerIdNum);
+				if (shopifyError) return json({ error: shopifyError }, { status: 500 });
+				if (!customer) return json({ error: 'Customer not found' }, { status: 404 });
+				return json({ success: true, data: { customer } });
+			}
+
+			case 'shopify_get_customer_orders': {
+				const config = await getShopifyConfigForUser(supabase, authInfo.userId);
+				if (!config) {
+					return json({ error: 'Shopify is not connected. Connect Shopify in Settings → Integrations.' }, { status: 400 });
+				}
+				const { customerId } = params;
+				if (!customerId) return json({ error: 'customerId required' }, { status: 400 });
+				const customerIdNum = Number(customerId);
+				if (!Number.isFinite(customerIdNum)) {
+					return json({ error: 'customerId must be a number' }, { status: 400 });
+				}
+				const { orders, error: shopifyError } = await listOrdersForCustomer(config, customerIdNum);
+				if (shopifyError) return json({ error: shopifyError }, { status: 500 });
+				return json({ success: true, data: { orders: orders ?? [], count: (orders ?? []).length } });
+			}
+
+			case 'shopify_cancel_order': {
+				const config = await getShopifyConfigForUser(supabase, authInfo.userId);
+				if (!config) {
+					return json({ error: 'Shopify is not connected. Connect Shopify in Settings → Integrations.' }, { status: 400 });
+				}
+				const { orderId, reason, notify, restock } = params;
+				if (!orderId) return json({ error: 'orderId required' }, { status: 400 });
+				const orderIdNum = Number(orderId);
+				if (!Number.isFinite(orderIdNum)) {
+					return json({ error: 'orderId must be a number' }, { status: 400 });
+				}
+				const { ok, error: shopifyError } = await cancelOrder(config, orderIdNum, {
+					reason: typeof reason === 'string' ? reason : undefined,
+					notify: notify === true || notify === 'true',
+					restock: restock === true || restock === 'true'
+				});
+				if (!ok) return json({ error: shopifyError ?? 'Failed to cancel order' }, { status: 500 });
+				return json({ success: true, data: { message: 'Order cancelled successfully' } });
+			}
+
+			case 'shopify_refund_order': {
+				const config = await getShopifyConfigForUser(supabase, authInfo.userId);
+				if (!config) {
+					return json({ error: 'Shopify is not connected. Connect Shopify in Settings → Integrations.' }, { status: 400 });
+				}
+				const { orderId, notify, note } = params;
+				if (!orderId) return json({ error: 'orderId required' }, { status: 400 });
+				const orderIdNum = Number(orderId);
+				if (!Number.isFinite(orderIdNum)) {
+					return json({ error: 'orderId must be a number' }, { status: 400 });
+				}
+				const { ok, error: shopifyError } = await refundOrderFull(config, orderIdNum, {
+					notify: notify === true || notify === 'true',
+					note: typeof note === 'string' ? note : undefined
+				});
+				if (!ok) return json({ error: shopifyError ?? 'Failed to refund order' }, { status: 500 });
+				return json({ success: true, data: { message: 'Order refunded successfully' } });
+			}
+
+			case 'shopify_get_statistics': {
+				const config = await getShopifyConfigForUser(supabase, authInfo.userId);
+				if (!config) {
+					return json({ error: 'Shopify is not connected. Connect Shopify in Settings → Integrations.' }, { status: 400 });
+				}
+				const { days = 30 } = params;
+				const daysNum = Math.min(Math.max(1, Number(days)), 365);
+				const { statistics, error: shopifyError } = await getShopifyStatistics(config, { days: daysNum });
+				if (shopifyError) return json({ error: shopifyError }, { status: 500 });
+				if (!statistics) return json({ error: 'Failed to get statistics' }, { status: 500 });
+				return json({ success: true, data: { statistics } });
+			}
+
+			case 'shopify_list_products': {
+				const config = await getShopifyConfigForUser(supabase, authInfo.userId);
+				if (!config) {
+					return json({ error: 'Shopify is not connected. Connect Shopify in Settings → Integrations.' }, { status: 400 });
+				}
+				const { limit = 100 } = params;
+				const limitNum = Math.min(Math.max(1, Number(limit)), 250);
+				const { products, error: shopifyError } = await listProductsWithImages(config, limitNum);
+				if (shopifyError) return json({ error: shopifyError }, { status: 500 });
+				return json({ success: true, data: { products: products ?? [], count: (products ?? []).length } });
+			}
+
 			case 'list_tools': {
 				// Return list of available tools
 				return json({
@@ -942,6 +1114,16 @@ export const POST: RequestHandler = async (event) => {
 							'get_quote_settings',
 							'update_quote_settings',
 							'upload_quote_image',
+							'shopify_list_orders',
+							'shopify_search_orders',
+							'shopify_get_order',
+							'shopify_list_customers',
+							'shopify_get_customer',
+							'shopify_get_customer_orders',
+							'shopify_cancel_order',
+							'shopify_refund_order',
+							'shopify_get_statistics',
+							'shopify_list_products',
 						],
 					},
 				});

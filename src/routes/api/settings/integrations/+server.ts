@@ -21,11 +21,14 @@ export const GET: RequestHandler = async (event) => {
 		const connected = rows
 			.map((r) => r.integration_type)
 			.filter((t) => INTEGRATION_IDS.includes(t as (typeof INTEGRATION_IDS)[number]));
-		const configs: Record<string, { fromEmail?: string; shopDomain?: string; apiVersion?: string }> = {};
+		const configs: Record<string, { fromEmail?: string; shopDomain?: string; apiVersion?: string; emailFooter?: { logoUrl?: string; websiteUrl?: string; websiteText?: string; phone?: string; email?: string } }> = {};
 		for (const r of rows) {
-			const config = r.config as { fromEmail?: string; shopDomain?: string; apiVersion?: string } | null;
+			const config = r.config as { fromEmail?: string; shopDomain?: string; apiVersion?: string; emailFooter?: { logoUrl?: string; websiteUrl?: string; websiteText?: string; phone?: string; email?: string } } | null;
 			if (r.integration_type === 'resend' && config) {
-				configs.resend = { fromEmail: typeof config.fromEmail === 'string' ? config.fromEmail : undefined };
+				configs.resend = {
+					fromEmail: typeof config.fromEmail === 'string' ? config.fromEmail : undefined,
+					emailFooter: config.emailFooter && typeof config.emailFooter === 'object' ? config.emailFooter : undefined
+				};
 			}
 			if (r.integration_type === 'shopify' && config) {
 				configs.shopify = {
@@ -63,23 +66,41 @@ export const PUT: RequestHandler = async (event) => {
 		if (type === 'resend') {
 			const apiKey = (config.apiKey as string)?.trim?.();
 			const fromEmail = typeof config.fromEmail === 'string' ? config.fromEmail.trim() : undefined;
-			// If apiKey provided, full config (connect or reconnect); otherwise merge fromEmail into existing (update flow)
+			const emailFooter = config.emailFooter as { logoUrl?: string; websiteUrl?: string; websiteText?: string; phone?: string; email?: string } | undefined;
+			// If apiKey provided, full config (connect or reconnect); otherwise merge into existing (update flow)
 			if (apiKey) {
 				if (!apiKey.startsWith('re_')) {
 					return json({ error: 'Invalid Resend API key format (should start with re_)' }, { status: 400 });
 				}
-				config = { apiKey, fromEmail };
+				config = { apiKey, fromEmail, ...(emailFooter ? { emailFooter } : {}) };
 			} else {
-				const { data: existing } = await supabase
+				// Fetch existing config - if not found, return error (can't update non-existent integration)
+				const { data: existing, error: fetchError } = await supabase
 					.from('user_integrations')
 					.select('config')
 					.eq('user_id', event.locals.user.id)
 					.eq('integration_type', 'resend')
-					.single();
-				const existingConfig = (existing?.config as { apiKey?: string; fromEmail?: string }) ?? {};
+					.maybeSingle();
+				
+				if (fetchError) {
+					console.error('Error fetching existing resend config:', fetchError);
+					return json({ error: 'Failed to load existing integration config' }, { status: 500 });
+				}
+				
+				if (!existing) {
+					return json({ error: 'Resend integration not found. Please connect Resend first.' }, { status: 400 });
+				}
+				
+				const existingConfig = (existing.config as { apiKey?: string; fromEmail?: string; emailFooter?: { logoUrl?: string; websiteUrl?: string; websiteText?: string; phone?: string; email?: string } }) ?? {};
+				if (!existingConfig.apiKey) {
+					return json({ error: 'Resend integration is missing API key. Please reconnect.' }, { status: 400 });
+				}
+				
 				config = {
-					...existingConfig,
-					...(fromEmail === undefined ? {} : { fromEmail: fromEmail || undefined })
+					apiKey: existingConfig.apiKey, // Always preserve apiKey
+					...(existingConfig.fromEmail ? { fromEmail: existingConfig.fromEmail } : {}),
+					...(fromEmail === undefined ? {} : { fromEmail: fromEmail || undefined }),
+					...(emailFooter === undefined ? (existingConfig.emailFooter ? { emailFooter: existingConfig.emailFooter } : {}) : { emailFooter })
 				};
 			}
 		}
@@ -89,9 +110,15 @@ export const PUT: RequestHandler = async (event) => {
 			return json({ error: 'Use the Connect with Shopify button to connect your store via OAuth.' }, { status: 400 });
 		}
 
+		// Ensure user_id matches the authenticated user
+		const userId = event.locals.user.id;
+		if (!userId) {
+			return json({ error: 'User not authenticated' }, { status: 401 });
+		}
+		
 		const { error } = await supabase.from('user_integrations').upsert(
 			{
-				user_id: event.locals.user.id,
+				user_id: userId,
 				integration_type: type,
 				config,
 				updated_at: new Date().toISOString()
@@ -100,6 +127,10 @@ export const PUT: RequestHandler = async (event) => {
 		);
 		if (error) {
 			console.error('user_integrations upsert error:', error);
+			// Provide more helpful error message for RLS violations
+			if (error.code === '42501') {
+				return json({ error: 'Permission denied. Please ensure you are logged in and have permission to manage integrations.' }, { status: 403 });
+			}
 			return json({ error: error.message }, { status: 500 });
 		}
 		return json({ ok: true });

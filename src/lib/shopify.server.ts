@@ -417,6 +417,91 @@ export async function listOrdersForCustomer(
 	return { orders: res.data?.orders ?? [] };
 }
 
+export async function getOrder(
+	config: ShopifyConfig,
+	orderId: number
+): Promise<{ order?: ShopifyOrderSummary & { line_items?: unknown[]; customer?: unknown }; error?: string }> {
+	const res = await shopifyRequest<{ order: ShopifyOrderSummary & { line_items?: unknown[]; customer?: unknown } }>(
+		config,
+		`orders/${orderId}.json`,
+		{
+			query: {
+				fields:
+					'id,name,email,created_at,financial_status,fulfillment_status,cancelled_at,cancel_reason,total_price,currency,order_status_url,discount_codes,line_items,customer'
+			}
+		}
+	);
+	if (!res.ok) return { error: res.error ?? 'Failed to get order' };
+	return { order: res.data?.order };
+}
+
+export async function getCustomer(
+	config: ShopifyConfig,
+	customerId: number
+): Promise<{ customer?: ShopifyCustomerSummary & { orders_count?: number; total_spent?: string }; error?: string }> {
+	const res = await shopifyRequest<{
+		customer: ShopifyCustomerSummary & { orders_count?: number; total_spent?: string };
+	}>(config, `customers/${customerId}.json`, {
+		query: {
+			fields: 'id,email,first_name,last_name,phone,default_address,orders_count,total_spent'
+		}
+	});
+	if (!res.ok) return { error: res.error ?? 'Failed to get customer' };
+	return { customer: res.data?.customer };
+}
+
+export async function getShopifyStatistics(
+	config: ShopifyConfig,
+	opts?: { days?: number }
+): Promise<{
+	statistics?: {
+		totalOrders: number;
+		totalRevenue: number;
+		averageOrderValue: number;
+		currency: string;
+		recentOrders: ShopifyOrderSummary[];
+	};
+	error?: string;
+}> {
+	const days = opts?.days ?? 30;
+	const sinceDate = new Date();
+	sinceDate.setDate(sinceDate.getDate() - days);
+	const sinceISO = sinceDate.toISOString();
+
+	const res = await shopifyRequest<{ orders: ShopifyOrderSummary[] }>(config, 'orders.json', {
+		query: {
+			status: 'any',
+			limit: 250,
+			created_at_min: sinceISO,
+			fields:
+				'id,name,email,created_at,financial_status,fulfillment_status,cancelled_at,cancel_reason,total_price,currency,order_status_url'
+		}
+	});
+	if (!res.ok) return { error: res.error ?? 'Failed to fetch orders for statistics' };
+
+	const orders = res.data?.orders ?? [];
+	const paidOrders = orders.filter(
+		(o) => o.financial_status === 'paid' && !o.cancelled_at && o.total_price
+	);
+	const totalRevenue = paidOrders.reduce((sum, o) => {
+		const price = Number.parseFloat(o.total_price ?? '0');
+		return sum + (Number.isFinite(price) ? price : 0);
+	}, 0);
+	const totalOrders = paidOrders.length;
+	const averageOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
+	const currency = paidOrders[0]?.currency ?? 'USD';
+
+	return {
+		statistics: {
+			totalOrders,
+			totalRevenue,
+			averageOrderValue,
+			currency,
+			recentOrders: orders.slice(0, 10)
+		}
+	};
+}
+
 export async function refundOrderFull(
 	config: ShopifyConfig,
 	orderId: number,

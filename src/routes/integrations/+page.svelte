@@ -4,7 +4,7 @@
 	import { goto } from '$app/navigation';
 
 	let connected = $state<string[]>([]);
-	let configs = $state<Record<string, { fromEmail?: string; shopDomain?: string; apiVersion?: string }>>({});
+	let configs = $state<Record<string, { fromEmail?: string; shopDomain?: string; apiVersion?: string; emailFooter?: { logoUrl?: string; websiteUrl?: string; websiteText?: string; phone?: string; email?: string } }>>({});
 	let loaded = $state(false);
 	let saving = $state(false);
 	let disconnecting = $state<string | null>(null);
@@ -18,6 +18,18 @@
 	// Resend from-email update (when already connected)
 	let resendFromEmail = $state('');
 	let resendFromEmailSaving = $state(false);
+	// Email footer configuration
+	let emailFooterLogoUrl = $state('');
+	let emailFooterWebsiteUrl = $state('');
+	let emailFooterWebsiteText = $state('');
+	let emailFooterPhone = $state('');
+	let emailFooterEmail = $state('');
+	let emailFooterSaving = $state(false);
+	// Logo upload
+	let logoFileInput: HTMLInputElement | undefined;
+	let logoUploading = $state(false);
+	let logoUploadError = $state<string | null>(null);
+	let logoPreviewUrl = $state<string | null>(null);
 	// Sync received emails
 	let syncReceivedLoading = $state(false);
 	let syncReceivedResult = $state<{ synced: number; skipped: number } | null>(null);
@@ -35,6 +47,13 @@
 			connected = data.connected ?? [];
 			configs = data.configs ?? {};
 			resendFromEmail = configs.resend?.fromEmail ?? '';
+			const footer = configs.resend?.emailFooter ?? {};
+			emailFooterLogoUrl = footer.logoUrl ?? '';
+			emailFooterWebsiteUrl = footer.websiteUrl ?? '';
+			emailFooterWebsiteText = footer.websiteText ?? '';
+			emailFooterPhone = footer.phone ?? '';
+			emailFooterEmail = footer.email ?? '';
+			logoPreviewUrl = emailFooterLogoUrl || null;
 		} catch {
 			connected = [];
 			configs = {};
@@ -133,6 +152,97 @@
 			error = e instanceof Error ? e.message : 'Failed to update';
 		} finally {
 			resendFromEmailSaving = false;
+		}
+	}
+
+	async function uploadLogo() {
+		if (!logoFileInput) {
+			logoUploadError = 'File input not available';
+			return;
+		}
+		const file = logoFileInput.files?.[0];
+		if (!file) {
+			logoUploadError = 'Please select a file';
+			return;
+		}
+		
+		// Validate file size (2MB max)
+		if (file.size > 2 * 1024 * 1024) {
+			logoUploadError = 'File too large (max 2MB)';
+			return;
+		}
+		
+		// Validate file type
+		const allowedTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'];
+		if (!allowedTypes.includes(file.type)) {
+			logoUploadError = 'Invalid file type. Use PNG, JPEG, GIF, WebP, or SVG.';
+			return;
+		}
+		
+		logoUploading = true;
+		logoUploadError = null;
+		
+		try {
+			const formData = new FormData();
+			formData.append('file', file);
+			
+			const res = await fetch('/api/settings/integrations/resend/upload-logo', {
+				method: 'POST',
+				body: formData
+			});
+			
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok) {
+				throw new Error(data.error || 'Upload failed');
+			}
+			
+			emailFooterLogoUrl = data.url || '';
+			logoPreviewUrl = data.url || null;
+			
+			// Auto-save the footer with the new logo URL
+			await updateEmailFooter();
+		} catch (e) {
+			logoUploadError = e instanceof Error ? e.message : 'Failed to upload logo';
+		} finally {
+			logoUploading = false;
+		}
+	}
+	
+	function handleLogoFileChange() {
+		const file = logoFileInput?.files?.[0];
+		if (file) {
+			// Create preview
+			const reader = new FileReader();
+			reader.onload = (e) => {
+				logoPreviewUrl = e.target?.result as string || null;
+			};
+			reader.readAsDataURL(file);
+		}
+	}
+	
+	async function updateEmailFooter() {
+		emailFooterSaving = true;
+		error = null;
+		try {
+			const footer = {
+				logoUrl: emailFooterLogoUrl.trim() || undefined,
+				websiteUrl: emailFooterWebsiteUrl.trim() || undefined,
+				websiteText: emailFooterWebsiteText.trim() || undefined,
+				phone: emailFooterPhone.trim() || undefined,
+				email: emailFooterEmail.trim() || undefined
+			};
+			const res = await fetch('/api/settings/integrations', {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ type: 'resend', config: { emailFooter: footer } })
+			});
+			const result = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(result.error || 'Failed to update footer');
+			await load();
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to update footer';
+		} finally {
+			emailFooterSaving = false;
 		}
 	}
 
@@ -380,6 +490,106 @@
 												{#if testEmailSuccess}
 													<p class="mt-1.5 text-sm text-green-600">Test email sent. Check the inbox for {testEmailTo || 'that address'}.</p>
 												{/if}
+											</div>
+											<div class="pt-3 border-t border-gray-200">
+												<p class="text-sm font-medium text-gray-700 mb-1">Email footer</p>
+												<p class="text-xs text-gray-500 mb-3">Customize the footer that appears at the bottom of all emails. Add your logo, website link, phone, and email for a professional look.</p>
+												<div class="space-y-3">
+													<div>
+														<div class="block mb-1">
+															<label for="logo-upload" class="text-xs font-medium text-gray-600">Logo</label>
+															<p class="text-xs text-gray-500 mt-0.5">Recommended: 200x40px or similar aspect ratio. Max 2MB. PNG, JPEG, GIF, WebP, or SVG.</p>
+														</div>
+														<div class="flex flex-col sm:flex-row gap-3 items-start">
+															<div class="flex-1">
+																<input
+																	id="logo-upload"
+																	type="file"
+																	accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+																	bind:this={logoFileInput}
+																	onchange={handleLogoFileChange}
+																	disabled={logoUploading || emailFooterSaving}
+																	class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 disabled:opacity-60 file:mr-4 file:py-1 file:px-3 file:rounded file:border-0 file:text-sm file:font-medium file:bg-amber-50 file:text-amber-700 hover:file:bg-amber-100"
+																/>
+																{#if logoUploadError}
+																	<p class="mt-1 text-xs text-red-600">{logoUploadError}</p>
+																{/if}
+															</div>
+															<button
+																type="button"
+																disabled={logoUploading || emailFooterSaving || !logoFileInput?.files?.length}
+																onclick={uploadLogo}
+																class="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white font-medium rounded-lg transition-colors text-sm whitespace-nowrap"
+															>
+																{logoUploading ? 'Uploading…' : 'Upload logo'}
+															</button>
+														</div>
+														{#if logoPreviewUrl}
+															<div class="mt-2 p-2 border border-gray-200 rounded-lg bg-gray-50">
+																<p class="text-xs text-gray-600 mb-1">Preview:</p>
+																<img src={logoPreviewUrl} alt="Logo preview" class="max-h-10 w-auto" />
+															</div>
+														{/if}
+														{#if emailFooterLogoUrl && !logoPreviewUrl}
+															<div class="mt-2 p-2 border border-gray-200 rounded-lg bg-gray-50">
+																<p class="text-xs text-gray-600 mb-1">Current logo:</p>
+																<img src={emailFooterLogoUrl} alt="Current logo" class="max-h-10 w-auto" />
+															</div>
+														{/if}
+													</div>
+													<div class="grid grid-cols-2 gap-3">
+														<label class="block">
+															<span class="text-xs font-medium text-gray-600 mb-1 block">Website URL</span>
+															<input
+																type="url"
+																placeholder="https://example.com"
+																bind:value={emailFooterWebsiteUrl}
+																disabled={emailFooterSaving}
+																class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 disabled:opacity-60"
+															/>
+														</label>
+														<label class="block">
+															<span class="text-xs font-medium text-gray-600 mb-1 block">Website text (optional)</span>
+															<input
+																type="text"
+																placeholder="Visit our website"
+																bind:value={emailFooterWebsiteText}
+																disabled={emailFooterSaving}
+																class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 disabled:opacity-60"
+															/>
+														</label>
+													</div>
+													<div class="grid grid-cols-2 gap-3">
+														<label class="block">
+															<span class="text-xs font-medium text-gray-600 mb-1 block">Phone</span>
+															<input
+																type="tel"
+																placeholder="+1 234 567 8900"
+																bind:value={emailFooterPhone}
+																disabled={emailFooterSaving}
+																class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 disabled:opacity-60"
+															/>
+														</label>
+														<label class="block">
+															<span class="text-xs font-medium text-gray-600 mb-1 block">Email</span>
+															<input
+																type="email"
+																placeholder="contact@example.com"
+																bind:value={emailFooterEmail}
+																disabled={emailFooterSaving}
+																class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 disabled:opacity-60"
+															/>
+														</label>
+													</div>
+													<button
+														type="button"
+														disabled={emailFooterSaving}
+														onclick={updateEmailFooter}
+														class="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white font-medium rounded-lg transition-colors text-sm"
+													>
+														{emailFooterSaving ? 'Saving…' : 'Save footer'}
+													</button>
+												</div>
 											</div>
 										</div>
 									{:else if integration.id === 'shopify'}
