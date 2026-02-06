@@ -309,6 +309,157 @@ class ProfitBotMCPClient {
 						required: ['contactId'],
 					},
 				},
+				{
+					name: 'send_email',
+					description: 'Send an email to a contact. Requires either conversationId or contactId.',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							conversationId: {
+								type: 'string',
+								description: 'The ID of the conversation (optional if contactId provided)',
+							},
+							contactId: {
+								type: 'string',
+								description: 'The ID of the contact (optional if conversationId provided)',
+							},
+							subject: {
+								type: 'string',
+								description: 'Email subject',
+							},
+							body: {
+								type: 'string',
+								description: 'Email body content',
+							},
+						},
+						required: ['subject', 'body'],
+					},
+				},
+				{
+					name: 'list_email_templates',
+					description: 'List all email templates for the current workspace.',
+					inputSchema: {
+						type: 'object',
+						properties: {},
+					},
+				},
+				{
+					name: 'get_email_template',
+					description: 'Get details of a specific email template by ID.',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							templateId: {
+								type: 'string',
+								description: 'The ID of the template to retrieve',
+							},
+						},
+						required: ['templateId'],
+					},
+				},
+				{
+					name: 'create_email_template',
+					description: 'Create a new email template.',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							name: {
+								type: 'string',
+								description: 'Template name',
+							},
+							subject: {
+								type: 'string',
+								description: 'Email subject template',
+							},
+							body: {
+								type: 'string',
+								description: 'Email body template',
+							},
+						},
+						required: ['name'],
+					},
+				},
+				{
+					name: 'update_email_template',
+					description: 'Update an email template (name, subject, or body).',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							templateId: {
+								type: 'string',
+								description: 'The ID of the template to update',
+							},
+							name: {
+								type: 'string',
+								description: 'New template name',
+							},
+							subject: {
+								type: 'string',
+								description: 'New email subject template',
+							},
+							body: {
+								type: 'string',
+								description: 'New email body template',
+							},
+						},
+						required: ['templateId'],
+					},
+				},
+				{
+					name: 'delete_email_template',
+					description: 'Delete an email template.',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							templateId: {
+								type: 'string',
+								description: 'The ID of the template to delete',
+							},
+						},
+						required: ['templateId'],
+					},
+				},
+				{
+					name: 'list_emails',
+					description: 'List emails for a contact or conversation. Supports pagination.',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							contactId: {
+								type: 'string',
+								description: 'Filter by contact ID (optional if conversationId provided)',
+							},
+							conversationId: {
+								type: 'string',
+								description: 'Filter by conversation ID (optional if contactId provided)',
+							},
+							limit: {
+								type: 'number',
+								description: 'Number of emails per page (default: 50, max: 100)',
+								default: 50,
+							},
+							page: {
+								type: 'number',
+								description: 'Page number (default: 1)',
+								default: 1,
+							},
+						},
+					},
+				},
+				{
+					name: 'get_email',
+					description: 'Get details of a specific email by ID.',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							emailId: {
+								type: 'string',
+								description: 'The ID of the email to retrieve',
+							},
+						},
+						required: ['emailId'],
+					},
+				},
 			],
 		}));
 
@@ -333,6 +484,14 @@ class ProfitBotMCPClient {
 					get_conversation_messages: 'get_conversation_messages',
 					list_contacts: 'list_contacts',
 					get_contact: 'get_contact',
+					send_email: 'send_email',
+					list_email_templates: 'list_email_templates',
+					get_email_template: 'get_email_template',
+					create_email_template: 'create_email_template',
+					update_email_template: 'update_email_template',
+					delete_email_template: 'delete_email_template',
+					list_emails: 'list_emails',
+					get_email: 'get_email',
 				};
 
 				const action = actionMap[name];

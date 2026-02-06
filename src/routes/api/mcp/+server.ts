@@ -1,8 +1,9 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getSupabaseAdmin } from '$lib/supabase.server';
 import { env } from '$env/dynamic/private';
 import { createClient } from '@supabase/supabase-js';
+import { sendContactEmail } from '$lib/send-quote-email.server';
+import { getPrimaryEmail } from '$lib/contact-email-jsonb';
 
 interface AuthInfo {
 	workspaceId: string;
@@ -423,6 +424,215 @@ export const POST: RequestHandler = async (event) => {
 				return json({ success: true, data: { contact: data } });
 			}
 
+			case 'send_email': {
+				const { conversationId, contactId, subject, body } = params;
+				if (!subject || !body) {
+					return json({ error: 'subject and body required' }, { status: 400 });
+				}
+				if (!conversationId && !contactId) {
+					return json({ error: 'conversationId or contactId required' }, { status: 400 });
+				}
+
+				// Get contact and verify workspace access
+				let contactRow: { id: string; name: string | null; email: unknown; conversation_id: string | null } | null = null;
+				if (contactId) {
+					const { data, error } = await supabase
+						.from('contacts')
+						.select('id, name, email, conversation_id, widgets!inner(workspace_id)')
+						.eq('id', contactId)
+						.eq('widgets.workspace_id', authInfo.workspaceId)
+						.single();
+					if (error) {
+						if (error.code === 'PGRST116') return json({ error: 'Contact not found' }, { status: 404 });
+						throw new Error(error.message);
+					}
+					contactRow = data as typeof contactRow;
+				} else if (conversationId) {
+					const { data, error } = await supabase
+						.from('contacts')
+						.select('id, name, email, conversation_id, widgets!inner(workspace_id)')
+						.eq('conversation_id', conversationId)
+						.eq('widgets.workspace_id', authInfo.workspaceId)
+						.maybeSingle();
+					if (error) throw new Error(error.message);
+					contactRow = data as typeof contactRow;
+				}
+
+				if (!contactRow) {
+					return json({ error: 'Contact not found for this conversation' }, { status: 404 });
+				}
+
+				const toEmail = getPrimaryEmail(contactRow.email);
+				if (!toEmail) {
+					return json({ error: 'Contact has no email' }, { status: 400 });
+				}
+
+				const result = await sendContactEmail(supabase, authInfo.userId, {
+					toEmail,
+					subject: String(subject),
+					body: String(body),
+					contactId: contactRow.id,
+					conversationId: contactRow.conversation_id,
+					customerName: contactRow.name
+				});
+
+				if (result.sent) {
+					return json({ success: true, data: { sent: true } });
+				}
+				return json({ error: result.error ?? 'Failed to send email' }, { status: 500 });
+			}
+
+			case 'list_email_templates': {
+				const { data, error } = await supabase
+					.from('email_templates')
+					.select('id, name, subject, body, created_at, updated_at')
+					.eq('user_id', authInfo.userId)
+					.order('created_at', { ascending: false });
+				if (error) throw new Error(error.message);
+				return json({ success: true, data: { templates: data ?? [], count: (data ?? []).length } });
+			}
+
+			case 'get_email_template': {
+				const { templateId } = params;
+				if (!templateId) return json({ error: 'templateId required' }, { status: 400 });
+				const { data, error } = await supabase
+					.from('email_templates')
+					.select('id, name, subject, body, created_at, updated_at')
+					.eq('id', templateId)
+					.eq('user_id', authInfo.userId)
+					.single();
+				if (error) {
+					if (error.code === 'PGRST116') return json({ error: 'Template not found' }, { status: 404 });
+					throw new Error(error.message);
+				}
+				return json({ success: true, data: { template: data } });
+			}
+
+			case 'create_email_template': {
+				const { name, subject, body } = params;
+				if (!name) return json({ error: 'name required' }, { status: 400 });
+				const { data, error } = await (supabase.from('email_templates') as any)
+					.insert({
+						user_id: authInfo.userId,
+						name: String(name),
+						subject: subject ? String(subject) : '',
+						body: body ? String(body) : ''
+					})
+					.select('id, name, subject, body, created_at, updated_at')
+					.single();
+				if (error) throw new Error(error.message);
+				return json({ success: true, data: { template: data } });
+			}
+
+			case 'update_email_template': {
+				const { templateId, name, subject, body } = params;
+				if (!templateId) return json({ error: 'templateId required' }, { status: 400 });
+				const updates: Record<string, unknown> = {};
+				if (name !== undefined) updates.name = String(name);
+				if (subject !== undefined) updates.subject = String(subject);
+				if (body !== undefined) updates.body = String(body);
+				if (Object.keys(updates).length === 0) {
+					return json({ error: 'No fields to update' }, { status: 400 });
+				}
+				const { data, error } = await (supabase.from('email_templates') as any)
+					.update(updates)
+					.eq('id', templateId)
+					.eq('user_id', authInfo.userId)
+					.select('id, name, subject, body, created_at, updated_at')
+					.single();
+				if (error) {
+					if (error.code === 'PGRST116') return json({ error: 'Template not found' }, { status: 404 });
+					throw new Error(error.message);
+				}
+				return json({ success: true, data: { template: data } });
+			}
+
+			case 'delete_email_template': {
+				const { templateId } = params;
+				if (!templateId) return json({ error: 'templateId required' }, { status: 400 });
+				const { error } = await supabase
+					.from('email_templates')
+					.delete()
+					.eq('id', templateId)
+					.eq('user_id', authInfo.userId);
+				if (error) {
+					if (error.code === 'PGRST116') return json({ error: 'Template not found' }, { status: 404 });
+					throw new Error(error.message);
+				}
+				return json({ success: true, data: { message: 'Template deleted' } });
+			}
+
+			case 'list_emails': {
+				const { contactId, conversationId, limit = 50, page = 1 } = params;
+				if (!contactId && !conversationId) {
+					return json({ error: 'contactId or conversationId required' }, { status: 400 });
+				}
+
+				let query = supabase.from('contact_emails').select('*');
+				
+				if (contactId) {
+					// Verify contact belongs to workspace
+					const { data: contact } = await supabase
+						.from('contacts')
+						.select('id, widgets!inner(workspace_id)')
+						.eq('id', contactId)
+						.eq('widgets.workspace_id', authInfo.workspaceId)
+						.single();
+					if (!contact) {
+						return json({ error: 'Contact not found' }, { status: 404 });
+					}
+					query = query.eq('contact_id', contactId);
+				} else if (conversationId) {
+					// Verify conversation belongs to workspace
+					const { data: conv } = await supabase
+						.from('widget_conversations')
+						.select('id, widgets!inner(workspace_id)')
+						.eq('id', conversationId)
+						.eq('widgets.workspace_id', authInfo.workspaceId)
+						.single();
+					if (!conv) {
+						return json({ error: 'Conversation not found' }, { status: 404 });
+					}
+					query = query.eq('conversation_id', conversationId);
+				}
+
+				const pageLimit = Math.min(Math.max(1, Number(limit)), 100);
+				const pageNum = Math.max(1, Number(page));
+				const offset = (pageNum - 1) * pageLimit;
+
+				const { data, error } = await query
+					.order('created_at', { ascending: false })
+					.range(offset, offset + pageLimit - 1);
+				if (error) throw new Error(error.message);
+				return json({ success: true, data: { emails: data ?? [], count: (data ?? []).length } });
+			}
+
+			case 'get_email': {
+				const { emailId } = params;
+				if (!emailId) return json({ error: 'emailId required' }, { status: 400 });
+				
+				// Verify email belongs to workspace via contact
+				const { data, error } = await supabase
+					.from('contact_emails')
+					.select(
+						`
+						*,
+						contacts!inner(
+							id,
+							widgets!inner(workspace_id)
+						)
+						`
+					)
+					.eq('id', emailId)
+					.eq('contacts.widgets.workspace_id', authInfo.workspaceId)
+					.single();
+				if (error) {
+					if (error.code === 'PGRST116') return json({ error: 'Email not found' }, { status: 404 });
+					throw new Error(error.message);
+				}
+				return json({ success: true, data: { email: data } });
+			}
+
 			case 'list_tools': {
 				// Return list of available tools
 				return json({
@@ -444,6 +654,14 @@ export const POST: RequestHandler = async (event) => {
 							'get_conversation_messages',
 							'list_contacts',
 							'get_contact',
+							'send_email',
+							'list_email_templates',
+							'get_email_template',
+							'create_email_template',
+							'update_email_template',
+							'delete_email_template',
+							'list_emails',
+							'get_email',
 						],
 					},
 				});
