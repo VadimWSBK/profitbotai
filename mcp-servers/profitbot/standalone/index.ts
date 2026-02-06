@@ -584,6 +584,179 @@ class ProfitBotMCPClient {
 						},
 					},
 				},
+				// Shopify tools
+				{
+					name: 'shopify_list_orders',
+					description: 'List recent orders from Shopify store.',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							limit: {
+								type: 'number',
+								description: 'Number of orders to return (default: 10, max: 250)',
+								default: 10,
+							},
+						},
+					},
+				},
+				{
+					name: 'shopify_search_orders',
+					description: 'Search for orders by query (order number, email, customer name, etc.).',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							query: {
+								type: 'string',
+								description: 'Search query (order number, email, customer name, etc.)',
+							},
+							limit: {
+								type: 'number',
+								description: 'Number of results (default: 10, max: 50)',
+								default: 10,
+							},
+						},
+						required: ['query'],
+					},
+				},
+				{
+					name: 'shopify_get_order',
+					description: 'Get detailed information about a specific Shopify order.',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							orderId: {
+								type: 'number',
+								description: 'Shopify order ID (numeric)',
+							},
+						},
+						required: ['orderId'],
+					},
+				},
+				{
+					name: 'shopify_cancel_order',
+					description: 'Cancel a Shopify order.',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							orderId: {
+								type: 'number',
+								description: 'Shopify order ID (numeric)',
+							},
+							reason: {
+								type: 'string',
+								description: 'Cancellation reason (optional)',
+							},
+							notify: {
+								type: 'boolean',
+								description: 'Send cancellation email to customer (default: false)',
+								default: false,
+							},
+							restock: {
+								type: 'boolean',
+								description: 'Restock inventory (default: false)',
+								default: false,
+							},
+						},
+						required: ['orderId'],
+					},
+				},
+				{
+					name: 'shopify_refund_order',
+					description: 'Refund a Shopify order in full.',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							orderId: {
+								type: 'number',
+								description: 'Shopify order ID (numeric)',
+							},
+							notify: {
+								type: 'boolean',
+								description: 'Send refund notification email to customer (default: false)',
+								default: false,
+							},
+							note: {
+								type: 'string',
+								description: 'Refund note/reason (optional)',
+							},
+						},
+						required: ['orderId'],
+					},
+				},
+				{
+					name: 'shopify_list_customers',
+					description: 'List customers from Shopify store.',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							limit: {
+								type: 'number',
+								description: 'Number of customers to return (default: 50, max: 250)',
+								default: 50,
+							},
+							pageInfo: {
+								type: 'string',
+								description: 'Pagination token for next page (optional)',
+							},
+						},
+					},
+				},
+				{
+					name: 'shopify_get_customer',
+					description: 'Get detailed information about a specific Shopify customer.',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							customerId: {
+								type: 'number',
+								description: 'Shopify customer ID (numeric)',
+							},
+						},
+						required: ['customerId'],
+					},
+				},
+				{
+					name: 'shopify_get_customer_orders',
+					description: 'Get all orders for a specific Shopify customer.',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							customerId: {
+								type: 'number',
+								description: 'Shopify customer ID (numeric)',
+							},
+						},
+						required: ['customerId'],
+					},
+				},
+				{
+					name: 'shopify_list_products',
+					description: 'List products from Shopify store.',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							limit: {
+								type: 'number',
+								description: 'Number of products to return (default: 100, max: 250)',
+								default: 100,
+							},
+						},
+					},
+				},
+				{
+					name: 'shopify_get_statistics',
+					description: 'Get Shopify store statistics (orders, revenue, average order value).',
+					inputSchema: {
+						type: 'object',
+						properties: {
+							days: {
+								type: 'number',
+								description: 'Number of days to analyze (default: 30, max: 365)',
+								default: 30,
+							},
+						},
+					},
+				},
 			],
 		}));
 
@@ -623,6 +796,16 @@ class ProfitBotMCPClient {
 					get_quote_settings: 'get_quote_settings',
 					update_quote_settings: 'update_quote_settings',
 					upload_quote_image: 'upload_quote_image',
+					shopify_list_orders: 'shopify_list_orders',
+					shopify_search_orders: 'shopify_search_orders',
+					shopify_get_order: 'shopify_get_order',
+					shopify_cancel_order: 'shopify_cancel_order',
+					shopify_refund_order: 'shopify_refund_order',
+					shopify_list_customers: 'shopify_list_customers',
+					shopify_get_customer: 'shopify_get_customer',
+					shopify_get_customer_orders: 'shopify_get_customer_orders',
+					shopify_list_products: 'shopify_list_products',
+					shopify_get_statistics: 'shopify_get_statistics',
 				};
 
 				const action = actionMap[toolName];
