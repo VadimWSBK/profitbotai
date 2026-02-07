@@ -262,7 +262,10 @@
 			background-color: {bubble.backgroundColor};
 			border-radius: {bubbleRadius};
 		"
-		onclick={() => (open = !open)}
+		onclick={(e) => {
+			e.stopPropagation();
+			open = !open;
+		}}
 		aria-label={open ? 'Close chat' : 'Open chat'}
 		aria-expanded={open}
 		>
@@ -300,9 +303,15 @@
 		background: transparent !important;
 		background-color: transparent !important;
 	}
-	/* All interactive children need pointer-events restored */
-	.widget-preview-wrapper :global(*) {
+	/* Explicitly restore pointer-events on interactive elements */
+	.widget-preview-wrapper > * {
 		pointer-events: auto;
+	}
+	.bubble-preview,
+	.tooltip-preview,
+	.chat-backdrop,
+	.chat-window-container {
+		pointer-events: auto !important;
 	}
 
 	/* Desktop: chat window positioned above the bubble icon */
@@ -331,6 +340,8 @@
 	/* Bubble button with prominent dropshadow */
 	.bubble-preview {
 		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25), 0 4px 8px rgba(0, 0, 0, 0.15);
+		pointer-events: auto !important;
+		cursor: pointer;
 	}
 
 	/* Bubble attention pulse — plays 3 times on load, then stops */
