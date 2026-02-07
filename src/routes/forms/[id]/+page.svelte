@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { fly, fade, scale } from 'svelte/transition';
+	import { cubicOut, backOut } from 'svelte/easing';
 
 	type Field = { key: string; label: string; required: boolean; placeholder?: string; type?: string };
 	type Step = { title: string; description?: string; fields: Field[] };
@@ -64,12 +66,14 @@
 	const previewCurrentStepData = $derived(steps[previewStep]);
 	let previewShowSuccess = $state(false);
 	let previewSubmitting = $state(false);
+	let previewSlideDirection = $state<'forward' | 'backward'>('forward');
 
 	function previewSetValue(key: string, value: string) {
 		previewValues = { ...previewValues, [key]: value };
 	}
 
 	function previewNext() {
+		previewSlideDirection = 'forward';
 		if (previewIsLastStep) {
 			if (previewSubmitting) return;
 			previewShowSuccess = false;
@@ -84,12 +88,14 @@
 	}
 
 	function previewPrev() {
+		previewSlideDirection = 'backward';
 		previewShowSuccess = false;
 		previewSubmitting = false;
 		if (previewStep > 0) previewStep -= 1;
 	}
 
 	function previewStartOver() {
+		previewSlideDirection = 'backward';
 		previewStep = 0;
 		previewValues = {};
 		previewShowSuccess = false;
@@ -324,15 +330,22 @@
             <h2 class="text-lg font-semibold text-gray-900 mb-2">Preview</h2>
             <p class="text-sm text-gray-500 mb-4">See how your form will look to visitors. Submissions from the preview are not saved.</p>
             <div class="flex justify-center bg-gray-100 rounded-xl p-6 min-h-[360px]">
-                <div class="min-h-[320px] w-full max-w-lg p-6 bg-white rounded-2xl shadow-lg border border-gray-200" style="--primary: {primaryColor}">
+                <div class="preview-form-card min-h-[320px] w-full max-w-lg p-6 bg-white rounded-2xl shadow-lg border border-gray-200 flex flex-col overflow-hidden" style="--primary: {primaryColor}">
                     {#if previewShowSuccess}
-                        <div class="text-center py-6">
-                            <h3 class="text-xl font-bold text-gray-900 mb-2">{successTitle || 'Thank you'} (preview)</h3>
-                            <p class="text-gray-500 text-sm mb-6 whitespace-pre-line">{successMessage || 'We\'ll be in touch soon.'}</p>
-                            <div class="flex flex-wrap gap-3 justify-center">
+                        <div class="flex-1 flex flex-col items-center justify-center py-6" in:scale={{ start: 0.9, duration: 400, easing: backOut }}>
+                            <!-- Animated checkmark -->
+                            <div class="preview-check-circle" style="border-color: var(--primary)">
+                                <svg class="preview-check-icon" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                                    <path class="preview-check-path" d="M5 13l4 4L19 7" />
+                                </svg>
+                            </div>
+                            <h3 class="text-xl font-bold text-gray-900 mb-2 mt-6" in:fly={{ y: 8, duration: 300, delay: 200, easing: cubicOut }}>{successTitle || 'Thank you'} <span class="text-gray-400 text-sm font-normal">(preview)</span></h3>
+                            <p class="text-gray-500 text-sm mb-6 whitespace-pre-line text-center" in:fly={{ y: 8, duration: 300, delay: 300, easing: cubicOut }}>{successMessage || 'We\'ll be in touch soon.'}</p>
+                            <div class="flex flex-wrap gap-3 justify-center" in:fly={{ y: 8, duration: 300, delay: 400, easing: cubicOut }}>
                                	{#each successButtons.filter(b => b.linkToQuote || (b.url ?? '').trim()) as btn}
 									{#if btn.linkToQuote}
-										<span class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-white opacity-80" style="background-color: var(--primary)" title="Links to quote PDF when workflow generates one">
+										<span class="preview-btn preview-btn-primary opacity-80" style="background-color: var(--primary)" title="Links to quote PDF when workflow generates one">
+											<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
 											{btn.label || 'Download Quote'} (Quote PDF)
 										</span>
 									{:else}
@@ -340,7 +353,7 @@
 											href={btn.url}
 											target="_blank"
 											rel="noopener"
-											class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-white transition-colors"
+											class="preview-btn preview-btn-primary"
 											style="background-color: var(--primary)"
 										>
 											{btn.label || 'Button'}
@@ -353,17 +366,19 @@
                                 <button
                                     type="button"
                                     onclick={previewStartOver}
-                                    class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold border-2 transition-colors"
-                                    style="border-color: var(--primary); color: var(--primary); background: transparent"
+                                    class="preview-btn preview-btn-outline"
+                                    style="border-color: var(--primary); color: var(--primary)"
                                 >
                                     Start over
                                 </button>
                             </div>
                         </div>
                     {:else if previewSubmitting}
-                        <div class="flex flex-col items-center justify-center gap-4 py-10">
-                            <div class="w-10 h-10 rounded-full border-4 border-amber-200 border-t-amber-500 animate-spin"></div>
-                            <div class="text-center">
+                        <div class="flex-1 flex flex-col items-center justify-center gap-5 py-10" in:fade={{ duration: 200 }}>
+                            <div class="preview-loading-ring" style="--ring-color: {primaryColor}">
+                                <div class="preview-loading-ring-inner"></div>
+                            </div>
+                            <div class="text-center" in:fly={{ y: 8, duration: 300, delay: 100, easing: cubicOut }}>
                                 <h3 class="text-lg font-semibold text-gray-900 mb-1">Generating your quote…</h3>
                                 <p class="text-sm text-gray-500">This shows the loading state visitors will see.</p>
                             </div>
@@ -371,96 +386,124 @@
                     {:else if steps.length === 0}
                         <p class="text-gray-500 text-sm py-8 text-center">Add at least one step above to see the preview.</p>
                     {:else}
-                        <!-- Step indicator -->
-                        <div class="flex items-center justify-center gap-2 mb-6">
-                            {#each steps as _, i}
-                                <div class="flex items-center" aria-current={i === previewStep ? 'step' : undefined}>
-                                    <div
-                                        class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold transition-colors"
-                                        style:background-color={i <= previewStep ? primaryColor : '#e5e7eb'}
-                                        style:color={i <= previewStep ? 'white' : '#9ca3af'}
-                                    >
-                                        {i + 1}
-                                    </div>
-                                    {#if i < previewTotalSteps - 1}
-                                        <div
-                                            class="w-8 h-0.5 mx-0.5"
-                                            style="background-color: {i < previewStep ? primaryColor : '#e5e7eb'}"
-                                        ></div>
+                        <div class="flex flex-col flex-1 min-h-0">
+                            <!-- Step indicators -->
+                            {#if previewTotalSteps > 1}
+                                <div class="flex items-center justify-between mb-6 shrink-0">
+                                    {#each steps as _, i}
+                                        <button
+                                            type="button"
+                                            class="preview-step-dot"
+                                            class:preview-step-active={i === previewStep}
+                                            class:preview-step-done={i < previewStep}
+                                            style:--primary={primaryColor}
+                                            onclick={() => { if (i < previewStep) { previewSlideDirection = 'backward'; previewStep = i; } }}
+                                            disabled={i > previewStep}
+                                            aria-current={i === previewStep ? 'step' : undefined}
+                                            aria-label="Step {i + 1}"
+                                        >
+                                            {#if i < previewStep}
+                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                                            {:else}
+                                                {i + 1}
+                                            {/if}
+                                        </button>
+                                        {#if i < previewTotalSteps - 1}
+                                            <div class="preview-step-line">
+                                                <div class="preview-step-line-fill" style="width: {i < previewStep ? '100%' : '0%'}; background-color: {primaryColor}"></div>
+                                            </div>
+                                        {/if}
+                                    {/each}
+                                </div>
+                            {/if}
+
+                            <!-- Step content with slide -->
+                            {#key previewStep}
+                                <div
+                                    class="flex-1 flex flex-col text-center"
+                                    in:fly={{ x: previewSlideDirection === 'forward' ? 30 : -30, duration: 300, easing: cubicOut }}
+                                >
+                                    <h3 class="text-xl font-bold text-gray-900 mb-1">{title}</h3>
+                                    {#if previewCurrentStepData?.description}
+                                        <p class="text-sm text-gray-500 mb-6">{previewCurrentStepData.description}</p>
+                                    {:else}
+                                        <p class="text-sm text-gray-500 mb-6">Step {previewStep + 1} of {previewTotalSteps}</p>
+                                    {/if}
+                                    {#if previewCurrentStepData}
+                                        <div class="space-y-4 mb-6 w-full max-w-sm mx-auto">
+                                            {#each previewCurrentStepData.fields as field, fi}
+                                                <div class="text-left" in:fly={{ y: 10, duration: 280, delay: fi * 50, easing: cubicOut }}>
+                                                    <label for="preview-field-{field.key}-{previewStep}" class="block text-sm font-semibold text-gray-900 mb-1.5">
+                                                        {field.label}
+                                                        {#if field.required}<span class="text-red-500">*</span>{/if}
+                                                    </label>
+                                                    {#if field.type === 'select'}
+                                                        <select
+                                                            id="preview-field-{field.key}-{previewStep}"
+                                                            value={previewValues[field.key] ?? ''}
+                                                            onchange={(e) => previewSetValue(field.key, (e.currentTarget as HTMLSelectElement).value)}
+                                                            class="preview-input"
+                                                            style="--ring-color: {primaryColor}"
+                                                        >
+                                                            <option value="">{field.placeholder ?? 'Select…'}</option>
+                                                            <option value="NSW">NSW</option>
+                                                            <option value="VIC">VIC</option>
+                                                            <option value="QLD">QLD</option>
+                                                            <option value="WA">WA</option>
+                                                            <option value="SA">SA</option>
+                                                            <option value="TAS">TAS</option>
+                                                            <option value="ACT">ACT</option>
+                                                            <option value="NT">NT</option>
+                                                        </select>
+                                                    {:else}
+                                                        <input
+                                                            id="preview-field-{field.key}-{previewStep}"
+                                                            type={field.key === 'email' ? 'email' : field.key === 'phone' ? 'tel' : 'text'}
+                                                            value={previewValues[field.key] ?? ''}
+                                                            oninput={(e) => previewSetValue(field.key, (e.currentTarget as HTMLInputElement).value)}
+                                                            class="preview-input"
+                                                            style="--ring-color: {primaryColor}"
+                                                            placeholder={field.placeholder}
+                                                        />
+                                                    {/if}
+                                                </div>
+                                            {/each}
+                                        </div>
                                     {/if}
                                 </div>
-                            {/each}
-                        </div>
-                        <h3 class="text-xl font-bold text-gray-900 mb-1">{title}</h3>
-                        {#if previewCurrentStepData?.description}
-                            <p class="text-sm text-gray-500 mb-6">{previewCurrentStepData.description}</p>
-                        {:else}
-                            <p class="text-sm text-gray-500 mb-6">Step {previewStep + 1} of {previewTotalSteps}</p>
-                        {/if}
-                        {#if previewCurrentStepData}
-                            <div class="space-y-4 mb-6">
-                                {#each previewCurrentStepData.fields as field}
-                                    <div>
-                                        <label for="preview-field-{field.key}-{previewStep}" class="block text-sm font-semibold text-gray-900 mb-1">
-                                            {field.label}
-                                            {#if field.required}<span class="text-red-500">*</span>{/if}
-                                        </label>
-                                        {#if field.type === 'select'}
-                                            <select
-                                                id="preview-field-{field.key}-{previewStep}"
-                                                value={previewValues[field.key] ?? ''}
-                                                onchange={(e) => previewSetValue(field.key, (e.currentTarget as HTMLSelectElement).value)}
-                                                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900 focus:ring-2 focus:ring-offset-0"
-                                                style="--tw-ring-color: {primaryColor}"
-                                            >
-                                                <option value="">{field.placeholder ?? 'Select…'}</option>
-                                                <option value="NSW">NSW</option>
-                                                <option value="VIC">VIC</option>
-                                                <option value="QLD">QLD</option>
-                                                <option value="WA">WA</option>
-                                                <option value="SA">SA</option>
-                                                <option value="TAS">TAS</option>
-                                                <option value="ACT">ACT</option>
-                                                <option value="NT">NT</option>
-                                            </select>
-                                        {:else}
-                                            <input
-                                                id="preview-field-{field.key}-{previewStep}"
-                                                type={field.key === 'email' ? 'email' : field.key === 'phone' ? 'tel' : 'text'}
-                                                value={previewValues[field.key] ?? ''}
-                                                oninput={(e) => previewSetValue(field.key, (e.currentTarget as HTMLInputElement).value)}
-                                                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900 focus:ring-2 focus:ring-offset-0 focus:border-transparent"
-                                                style="--tw-ring-color: {primaryColor}"
-                                                placeholder={field.placeholder}
-                                            />
-                                        {/if}
-                                    </div>
-                                {/each}
-                            </div>
-                            <div class="flex items-center justify-between gap-3">
-                                {#if previewStep > 0}
+                            {/key}
+
+                            <!-- Buttons pinned to bottom -->
+                            {#if previewCurrentStepData}
+                                <div class="flex items-center justify-between gap-3 mt-auto pt-4 shrink-0">
+                                    {#if previewStep > 0}
+                                        <button
+                                            type="button"
+                                            onclick={previewPrev}
+                                            class="preview-btn preview-btn-outline group"
+                                            style="border-color: var(--primary); color: var(--primary)"
+                                        >
+                                            <svg class="w-4 h-4 transition-transform group-hover:-translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                                            Previous
+                                        </button>
+                                    {:else}
+                                        <span></span>
+                                    {/if}
                                     <button
                                         type="button"
-                                        onclick={previewPrev}
-                                        class="px-4 py-2 rounded-lg font-semibold border-2 transition-colors"
-                                        style="border-color: var(--primary); color: var(--primary); background: transparent"
+                                        onclick={previewNext}
+                                        disabled={previewSubmitting}
+                                        class="preview-btn preview-btn-primary group"
+                                        style="background-color: var(--primary)"
                                     >
-                                        Previous
+                                        {previewIsLastStep ? 'Generate quote' : 'Next'}
+                                        {#if !previewIsLastStep}
+                                            <svg class="w-4 h-4 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                                        {/if}
                                     </button>
-                                {:else}
-                                    <span></span>
-                                {/if}
-                                <button
-                                    type="button"
-                                    onclick={previewNext}
-                                    disabled={previewSubmitting}
-                                    class="px-5 py-2.5 rounded-lg font-semibold text-white transition-colors disabled:opacity-50"
-                                    style="background-color: var(--primary)"
-                                >
-                                    {previewIsLastStep ? 'Generate quote' : 'Next'}
-                                </button>
-                            </div>
-                        {/if}
+                                </div>
+                            {/if}
+                        </div>
                     {/if}
                 </div>
             </div>
@@ -504,3 +547,184 @@
 		</div>
 	</div>
 </div>
+
+<style>
+	/* Preview card overflow for transitions */
+	.preview-form-card {
+		position: relative;
+	}
+
+	/* Step indicator pills (preview) */
+	.preview-step-dot {
+		width: 32px;
+		height: 32px;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 0.8rem;
+		font-weight: 600;
+		border: 2px solid #e5e7eb;
+		background: white;
+		color: #9ca3af;
+		cursor: default;
+		transition: all 0.3s ease-out;
+		flex-shrink: 0;
+	}
+	.preview-step-dot.preview-step-active {
+		border-color: var(--primary);
+		background-color: var(--primary);
+		color: white;
+		transform: scale(1.1);
+		box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 15%, transparent);
+	}
+	.preview-step-dot.preview-step-done {
+		border-color: var(--primary);
+		background-color: var(--primary);
+		color: white;
+		cursor: pointer;
+	}
+	.preview-step-dot.preview-step-done:hover {
+		transform: scale(1.05);
+	}
+	.preview-step-dot:disabled:not(.preview-step-active):not(.preview-step-done) {
+		cursor: default;
+	}
+
+	/* Step connector line (preview) */
+	.preview-step-line {
+		flex: 1;
+		height: 2px;
+		background: #e5e7eb;
+		margin: 0 4px;
+		border-radius: 1px;
+		overflow: hidden;
+	}
+	.preview-step-line-fill {
+		height: 100%;
+		border-radius: 1px;
+		transition: width 0.4s ease-out;
+	}
+
+	/* Preview inputs */
+	.preview-input {
+		width: 100%;
+		border-radius: 0.75rem;
+		border: 1.5px solid #e5e7eb;
+		padding: 0.625rem 0.875rem;
+		color: #111827;
+		background: #fafafa;
+		font-size: 0.95rem;
+		transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s;
+		outline: none;
+	}
+	.preview-input:hover {
+		border-color: #d1d5db;
+		background: #ffffff;
+	}
+	.preview-input:focus {
+		border-color: var(--ring-color, #D4AF37);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring-color, #D4AF37) 12%, transparent);
+		background: #ffffff;
+	}
+	.preview-input::placeholder {
+		color: #9ca3af;
+	}
+
+	/* Preview buttons */
+	.preview-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.625rem 1.25rem;
+		border-radius: 0.75rem;
+		font-weight: 600;
+		font-size: 0.95rem;
+		transition: all 0.2s ease-out;
+		cursor: pointer;
+		border: none;
+	}
+	.preview-btn:active {
+		transform: scale(0.97);
+	}
+	.preview-btn:disabled {
+		opacity: 0.5;
+		cursor: default;
+	}
+	.preview-btn-primary {
+		color: white;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+	}
+	.preview-btn-primary:hover:not(:disabled) {
+		box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1), 0 2px 4px rgba(0, 0, 0, 0.06);
+		filter: brightness(1.05);
+	}
+	.preview-btn-outline {
+		background: transparent;
+		border: 2px solid;
+	}
+	.preview-btn-outline:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--primary) 8%, transparent);
+	}
+
+	/* Success checkmark animation (preview) */
+	.preview-check-circle {
+		width: 64px;
+		height: 64px;
+		border-radius: 50%;
+		border: 3px solid;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		animation: preview-check-pop 0.5s ease-out;
+	}
+	.preview-check-icon {
+		width: 32px;
+		height: 32px;
+	}
+	.preview-check-path {
+		stroke-dasharray: 30;
+		stroke-dashoffset: 30;
+		animation: preview-check-draw 0.4s 0.3s ease-out forwards;
+	}
+	@keyframes preview-check-pop {
+		0% { transform: scale(0); opacity: 0; }
+		50% { transform: scale(1.15); }
+		100% { transform: scale(1); opacity: 1; }
+	}
+	@keyframes preview-check-draw {
+		to { stroke-dashoffset: 0; }
+	}
+
+	/* Loading ring (preview) */
+	.preview-loading-ring {
+		width: 48px;
+		height: 48px;
+		position: relative;
+	}
+	.preview-loading-ring-inner {
+		width: 100%;
+		height: 100%;
+		border-radius: 50%;
+		border: 4px solid #e5e7eb;
+		border-top-color: var(--ring-color, #D4AF37);
+		animation: preview-ring-spin 0.8s linear infinite;
+	}
+	@keyframes preview-ring-spin {
+		to { transform: rotate(360deg); }
+	}
+
+	/* Reduced-motion */
+	@media (prefers-reduced-motion: reduce) {
+		.preview-step-dot,
+		.preview-step-line-fill,
+		.preview-input,
+		.preview-btn {
+			transition-duration: 0.01ms !important;
+		}
+		.preview-check-circle,
+		.preview-check-path {
+			animation-duration: 0.01ms !important;
+		}
+	}
+</style>
