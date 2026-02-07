@@ -1,5 +1,16 @@
 # n8n setup: Vector Store & app tools
 
+## ⚠️ Important: Use Separate HTTP Request Tools, Not MCP API
+
+For chat interactions (DIY checkout, updating contacts, sending emails), use **separate HTTP Request nodes** as Tools in your AI Agent. 
+
+**Do NOT use the ProfitBot MCP API (`/api/mcp`) for these actions** - it's designed for widget/lead management, not chat interactions. The MCP API doesn't support:
+- DIY checkout
+- Update contact  
+- Get product pricing
+
+**Use separate HTTP Request tools** for better control, easier debugging, and full feature support. See the detailed setup guide: [n8n-tools-setup-guide.md](./n8n-tools-setup-guide.md)
+
 ## 1. Supabase Vector Store (match_documents)
 
 The **PGRST202 Could not find the function public.match_documents** error is fixed.
@@ -7,7 +18,9 @@ The **PGRST202 Could not find the function public.match_documents** error is fix
 - **Migration**: `20260204110000_match_documents_rpc.sql` adds `public.match_documents(filter, match_count, query_embedding)`.
 - **Table**: It queries `widget_documents` (content, embedding, metadata). Use **Table Name** = `widget_documents` in n8n.
 - **Query name**: In the Supabase Vector Store node options, set **Query Name** to `match_documents` (this is the default).
-- **Embedding**: Use **768 dimensions** (Supabase tables use `vector(768)`). In n8n use the default Embeddings Google Gemini model (e.g. `text-embedding-004` or `gemini-embedding-001`), which outputs 768 by default—no dimension setting needed.
+- **Embedding**: Use **3072 dimensions** (Supabase tables use `vector(3072)` to match n8n's `gemini-embedding-001` default output). In n8n's **Embeddings Google Gemini** node:
+  - **Model**: Use `gemini-embedding-001` (this is the correct model name - `text-embedding-004` is not available)
+  - **No configuration needed**: n8n outputs 3072 dimensions by default, which matches Supabase. Note: No vector index is created (pgvector indexes max 2000 dims), but sequential scan works fine for small datasets.
 
 Optional: to restrict results by widget, use **Metadata Filter** in n8n (e.g. `widget_id` = the widget UUID from your chat context).
 
@@ -22,7 +35,7 @@ Your **Instructions / rules (RAG)** are stored in the `agent_rules` table (one r
 - **Migration**: `20260204200000_match_agent_rules_for_n8n.sql` adds `public.match_agent_rules_documents(filter, match_count, query_embedding)` with the same signature as `match_documents`.
 - **Table**: In n8n add a **second** Supabase Vector Store (or use this instead of `widget_documents` if you only need rules). Set **Table Name** = `agent_rules`.
 - **Query name**: Set **Query Name** to `match_agent_rules_documents`.
-- **Embedding**: Same as above — **768 dimensions** (default for Gemini embedding models in n8n).
+- **Embedding**: Same as above — **3072 dimensions** (matches n8n `gemini-embedding-001` default output). No configuration needed.
 - **Metadata filter**: The RPC filters by `agent_id`. In the Vector Store node set **Metadata Filter** so that `agent_id` equals the agent UUID. The chat widget sends `agentId` in the webhook body when the widget uses an agent — use **`{{ $json.agentId }}`** (or the path your trigger exposes, e.g. `{{ $json.body.agentId }}`).
 
 The widget now includes **`agentId`** in the webhook payload when the widget is configured with an agent, so n8n can pass it into the Vector Store metadata filter and only relevant rules for that agent are retrieved.
@@ -92,17 +105,34 @@ The chat widget renders Markdown, so `[Download Quote](url)` will show as a clic
 2. **Contact and product pricing (so the AI has current contact + Shopify/product pricing)**  
    Add **Tools** that call your app (no Supabase node needed in n8n):
    - **Get current contact** — **Tool** with **HTTP Request** GET  
-     `https://your-domain.com/api/widgets/{{ $json.widgetId }}/contacts?conversationId={{ $json.conversationId }}`  
+     `https://app.profitbot.ai/api/widgets/{{ $('When chat message received').item.json.widgetId }}/contacts?conversationId={{ $('When chat message received').item.json.conversationId }}`  
      and header `X-API-Key: <SIGNED_URL_API_KEY>`. Returns `{ contact: { name, email, phone, address, roofSizeSqm, ... } }` or `{ contact: null }`.  
-     *Description for AI:* e.g. "Get the current contact for this conversation (name, email, phone, address, roof size). Use before asking for details or generating a quote so you only ask for missing info."
+     *Tool name:* `Get current contact`  
+     *Description for AI:* "Get the current contact for this conversation (name, email, phone, address, roof size in square meters). ALWAYS call this tool BEFORE generating a DIY checkout or quote to check if the customer's roof size is already saved. If roof size is missing, ask the customer for it before calling Create DIY checkout."
    - **Get product pricing** — **Tool** with **HTTP Request** GET  
-     `https://your-domain.com/api/widgets/{{ $json.widgetId }}/product-pricing`  
+     `https://app.profitbot.ai/api/widgets/{{ $('When chat message received').item.json.widgetId }}/product-pricing`  
      and header `X-API-Key: <SIGNED_URL_API_KEY>`. Returns `{ products: [ { name, sizeLitres, price, currency, coverageSqm }, ... ] }` (DIY bucket sizes and prices).  
-     *Description for AI:* e.g. "Get current DIY product pricing (bucket sizes, prices, coverage in m²). Use when calculating a DIY quote or when the user asks about pricing."
+     *Tool name:* `Get product pricing`  
+     *Description for AI:* "Get current DIY product pricing (bucket sizes, prices, coverage in m²). ALWAYS call this tool BEFORE generating a DIY checkout or quote to get current pricing and product variants. The product has a coverage of 0.5L per square metre (1L covers 2 m²). Use this information when explaining coverage to customers."
    - **Update contact** — **Tool** with **HTTP Request** PATCH  
-     `https://your-domain.com/api/widgets/{{ $json.widgetId }}/contacts`  
-     and header `X-API-Key: <SIGNED_URL_API_KEY>`. Body can include: `conversationId` (required), and any of `name`, `email`, `phone`, `address` (single line), or **split address**: `street_address`, `city`, `state`, `postcode`, `country`, plus `roof_size_sqm`. Only include fields you want to set; empty values are ignored.  
-     *Description for AI:* e.g. "Update the current contact. When the user gives an address, save it in the correct columns: street_address (street and number), city, state, postcode, country. Also accept name, email, phone, roof_size_sqm. Call as soon as the user provides any of these; use Get current contact first to avoid overwriting with empty values."  
+     `https://app.profitbot.ai/api/widgets/{{ $('When chat message received').item.json.widgetId }}/contacts`  
+     and header `X-API-Key: <SIGNED_URL_API_KEY>`. Body (JSON): Click **fx** button and enter:
+     ```javascript
+     {
+       "conversationId": $('When chat message received').item.json.conversationId || "",
+       "name": $json.name || null,
+       "email": $json.email || null,
+       "phone": $json.phone || null,
+       "street_address": $json.street_address || null,
+       "city": $json.city || null,
+       "state": $json.state || null,
+       "postcode": $json.postcode || null,
+       "country": $json.country || null,
+       "roof_size_sqm": $json.roof_size_sqm || null
+     }
+     ```
+     *Tool name:* `Update contact`  
+     *Description for AI:* "Update the current contact's information. Use this tool immediately when the customer provides their name, email, address, phone number, or roof size. Always call 'Get current contact' first to avoid overwriting existing information with empty values. Only update fields that the customer has actually provided. When the user gives an address, save it in the correct columns: street_address (street and number), city, state, postcode, country."  
    The **vector store** is for agent rules (RAG). Contact and pricing are **structured data** — the AI gets them by calling these tools when needed.
 
 3. **Send email (using the ProfitBot user's email client)**  
@@ -116,7 +146,7 @@ The chat widget renders Markdown, so `[Download Quote](url)` will show as a clic
 **Send email tool – paste into n8n**
 
 - **Tool name:** `Send email`
-- **Description:** Send an email to the current contact for this conversation. Use when the customer asks to receive something by email (e.g. quote link, follow-up, summary). Pass the conversation ID from the chat trigger, and provide subject and body (plain text or simple HTML). The email is sent using the ProfitBot user's connected Resend account to the contact's email for this conversation. Get the contact first if you need their name for the body.
+- **Description:** Send an email to the current contact for this conversation. Use this tool when the customer asks to receive something by email (e.g. quote link, DIY checkout link, follow-up, summary) or when you've generated a quote or checkout link and want to send it to them. Pass the conversation ID from the chat trigger, and provide subject and body (plain text or simple HTML). Include the quote or checkout URL in the email body. The email is sent using the ProfitBot user's connected Resend account to the contact's email for this conversation. Get the contact first if you need their name for the body.
 - **URL:** `https://app.profitbot.ai/api/conversations/{{ $json.conversationId }}/send-email`
 - **Method:** POST  
 - **Headers:** `X-API-Key`: your `SIGNED_URL_API_KEY`
@@ -179,6 +209,11 @@ The chat widget renders Markdown, so `[Download Quote](url)` will show as a clic
 Add this to your **System Message** (or agent instructions in ProfitBot) so the AI always does the right order:
 
 *When the customer asks for a discount: first call the Create discount tool with discount_percent 10 (or 15 if they ask for more). Tell them the discount is applied (e.g. mention the code CHAT10 or CHAT15). When they then ask for their checkout link or DIY quote, call the Create DIY checkout tool and pass the same discount_percent (10 or 15) so the checkout link includes the discount. Never create a DIY checkout with a discount unless you have already called Create discount with that percentage in this conversation.*
+
+**IMPORTANT: Always get contact info before creating DIY checkout**  
+Add this to your **System Message**:
+
+*Before calling the "Create DIY checkout" tool, you MUST first call the "Get current contact" tool to check if the customer's roof size (roofSizeSqm) is already saved. If the contact has a roof size, use that value when calling Create DIY checkout. If the contact doesn't have a roof size, ask the customer "What is the size of your roof in square meters?" and wait for their response. Once they provide the roof size, use the "Update contact" tool to save it, then call Create DIY checkout with that roof_size_sqm value. Never call Create DIY checkout without a roof_size_sqm value - the API will return an error.*
 
 ### Passing context from the chat trigger
 
@@ -360,9 +395,106 @@ When something goes wrong in your workflow (API call fails, tool error, etc.), y
 
 ---
 
+## 4. Storing messages in widget_conversation_messages (optional)
+
+If you want messages saved by n8n to appear in the Messages dashboard and be properly scoped per conversation, add an **HTTP Request** node after your **Respond to Webhook** node to save the assistant's message.
+
+### Setup: Store in Widget messages
+
+**Option 1: Using Merge node (Recommended)**
+
+1. Add a **Merge** node after **Respond to Webhook** to combine data from "When chat message received" and "AI Agent"
+2. Configure Merge node:
+   - **Mode**: "Merge by Index" or "Append"
+   - Connect both "When chat message received" and "AI Agent" outputs to the Merge node
+3. Add **HTTP Request** node (e.g., "Store in Widget messages") after Merge:
+   - **Method**: `POST`
+   - **URL**: `https://app.profitbot.ai/api/widgets/{{ $json.widgetId }}/messages/save`
+   - **Headers**: `Content-Type: application/json`
+   - **Body (JSON)**: Click **fx** button and enter:
+     ```javascript
+     {
+       "conversationId": $json.conversationId,
+       "role": "assistant",
+       "content": $json.output || ""
+     }
+     ```
+
+**Option 2: Use Code node to build JSON (if you need data from multiple nodes)**
+
+If you need to combine data from multiple nodes (e.g., "When chat message received" and "AI Agent"):
+
+1. Add a **Code** node after "Respond to Webhook"
+2. In the Code node, use this code:
+   ```javascript
+   // Get data from the previous node (Respond to Webhook or AI Agent)
+   const currentItem = $input.item.json;
+   
+   // Get data from "When chat message received" node
+   const triggerNode = $node["When chat message received"];
+   const triggerData = triggerNode ? triggerNode.json : {};
+   
+   // Get data from "AI Agent" node  
+   const agentNode = $node["AI Agent"];
+   const agentData = agentNode ? agentNode.json : {};
+   
+   return {
+     conversationId: triggerData.conversationId || currentItem.conversationId || "",
+     role: "assistant",
+     content: agentData.output || currentItem.output || currentItem.content || ""
+   };
+   ```
+3. In your HTTP Request node after the Code node:
+   - **Body Content Type**: `JSON`
+   - **Specify Body**: `Using JSON`
+   - Click **fx** button and enter: `$json`
+
+**Option 3: Direct reference (if data flows through)**
+
+If your workflow passes data through nodes, use `$json` to reference the previous node's output:
+
+1. **Method**: `POST`
+2. **URL**: `https://app.profitbot.ai/api/widgets/{{ $json.widgetId }}/messages/save`
+3. **Headers**: `Content-Type: application/json`
+4. **Body (JSON)**: Click **fx** button and enter:
+   ```javascript
+   {
+     "conversationId": $json.conversationId || $json[0]?.conversationId,
+     "role": "assistant",
+     "content": $json.output || $json[0]?.output || ""
+   }
+   ```
+
+**Troubleshooting:**
+- If you see "JSON parameter needs to be valid JSON", make sure you clicked the **fx** button (expression editor), not typing in the text field
+- Check the **INPUT** panel of your HTTP Request node to see what data is available in `$json`
+- If `conversationId` or `output` are undefined, use a **Set** node before the HTTP Request to map the fields correctly
+
+### Why use the expression editor (fx button)?
+
+When the AI Agent generates responses with special characters (quotes, newlines, markdown), inserting the content directly as a string template breaks the JSON. The expression editor properly escapes these characters.
+
+**Example of what breaks:**
+```json
+{
+  "content": "{{ $json.output }}"
+}
+```
+If `$json.output` contains `Here's your quote: "DIY bucket..."`, this becomes invalid JSON.
+
+**Correct way (using fx expression):**
+```javascript
+{
+  "content": $json.output || ""
+}
+```
+n8n automatically escapes special characters when using expressions.
+
+---
+
 ## Summary
 
-- **Vector store**: Use table `widget_documents` and query name `match_documents`; embedding **768 dimensions** (Gemini default in n8n). For **agent rules (RAG)** add a second Vector Store: table `agent_rules`, query name `match_agent_rules_documents`, metadata filter `agent_id` = `{{ $json.agentId }}`.
+- **Vector store**: Use table `widget_documents` and query name `match_documents`; embedding **3072 dimensions** (matches n8n `gemini-embedding-001` default). For **agent rules (RAG)** add a second Vector Store: table `agent_rules`, query name `match_agent_rules_documents`, metadata filter `agent_id` = `{{ $json.agentId }}`.
 - **Tools in n8n**: Add Tool nodes that call `POST /api/quote/generate`, `GET /api/widgets/{id}/contacts`, `GET /api/widgets/{id}/product-pricing`, `POST /api/conversations/{id}/send-email`, `POST /api/widgets/{id}/create-discount` (10% or 15%), and `POST /api/widgets/{id}/diy-checkout` for quote, contact, pricing, email, discount, and one-click checkout. Pass `widgetId` and `conversationId` from the chat trigger; use header `X-API-Key` (same as `SIGNED_URL_API_KEY`). Base URL: **https://app.profitbot.ai**.
 - **Response**: The widget waits for the webhook’s HTTP response (no separate callback). Add a **Respond to Webhook** node and return JSON with `{ "output": "..." }` (or `message` / `reply` / `text`). To show the **DIY checkout table with product images and “GO TO CHECKOUT” button**, also include `checkoutPreview: { lineItemsUI, summary, checkoutUrl }` in the same response (from the diy-checkout tool result).
 

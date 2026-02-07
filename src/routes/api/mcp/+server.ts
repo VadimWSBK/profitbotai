@@ -3,7 +3,7 @@ import type { RequestHandler } from './$types';
 import { env } from '$env/dynamic/private';
 import { createClient } from '@supabase/supabase-js';
 import { sendContactEmail } from '$lib/send-quote-email.server';
-import { getPrimaryEmail } from '$lib/contact-email-jsonb';
+import { getPrimaryEmail, parseEmailsFromDb, emailsToJsonb } from '$lib/contact-email-jsonb';
 import {
 	computeQuoteFromSettings,
 	generatePdfFromDocDefinition,
@@ -23,6 +23,8 @@ import {
 	getShopifyStatistics,
 	listProductsWithImages
 } from '$lib/shopify.server';
+import { createDiyCheckoutForOwner } from '$lib/diy-checkout.server';
+import { getProductPricingForOwner } from '$lib/product-pricing.server';
 
 interface AuthInfo {
 	workspaceId: string;
@@ -1081,6 +1083,266 @@ export const POST: RequestHandler = async (event) => {
 				return json({ success: true, data: { products: products ?? [], count: (products ?? []).length } });
 			}
 
+			case 'get_contact_by_conversation': {
+				const { widgetId, conversationId } = params;
+				if (!widgetId || !conversationId) {
+					return json({ error: 'widgetId and conversationId required' }, { status: 400 });
+				}
+
+				// Verify widget belongs to workspace
+				const { data: widget } = await supabase
+					.from('widgets')
+					.select('id, workspace_id')
+					.eq('id', widgetId)
+					.eq('workspace_id', authInfo.workspaceId)
+					.single();
+				if (!widget) {
+					return json({ error: 'Widget not found or access denied' }, { status: 404 });
+				}
+
+				const { data, error } = await supabase
+					.from('contacts')
+					.select('id, name, email, phone, address, street_address, city, state, postcode, country, roof_size_sqm, conversation_id, widget_id, created_at')
+					.eq('conversation_id', conversationId)
+					.eq('widget_id', widgetId)
+					.maybeSingle();
+				if (error) {
+					console.error('get_contact_by_conversation:', error);
+					return json({ error: error.message }, { status: 500 });
+				}
+				if (!data) {
+					return json({ success: true, data: { contact: null } });
+				}
+				const emails = parseEmailsFromDb(data.email);
+				return json({
+					success: true,
+					data: {
+						contact: {
+							id: data.id,
+							name: data.name ?? null,
+							email: getPrimaryEmail(data.email) ?? null,
+							emails: emails.length > 0 ? emails : null,
+							phone: data.phone ?? null,
+							address: data.address ?? null,
+							streetAddress: data.street_address ?? null,
+							city: data.city ?? null,
+							state: data.state ?? null,
+							postcode: data.postcode ?? null,
+							country: data.country ?? null,
+							roofSizeSqm: data.roof_size_sqm != null ? Number(data.roof_size_sqm) : null,
+							conversationId: data.conversation_id,
+							widgetId: data.widget_id,
+							createdAt: data.created_at
+						}
+					}
+				});
+			}
+
+			case 'update_contact_by_conversation': {
+				const { widgetId, conversationId, name, email, emails, phone, address, street_address, city, state, postcode, country, roof_size_sqm } = params;
+				if (!widgetId || !conversationId) {
+					return json({ error: 'widgetId and conversationId required' }, { status: 400 });
+				}
+
+				// Verify widget belongs to workspace
+				const { data: widget } = await supabase
+					.from('widgets')
+					.select('id, workspace_id')
+					.eq('id', widgetId)
+					.eq('workspace_id', authInfo.workspaceId)
+					.single();
+				if (!widget) {
+					return json({ error: 'Widget not found or access denied' }, { status: 404 });
+				}
+
+				const updates: Record<string, string | number | string[]> = {};
+				if (typeof name === 'string') {
+					const v = name.trim();
+					if (v) updates.name = v;
+				}
+				if (Array.isArray(emails)) {
+					const arr = emailsToJsonb(emails);
+					if (arr.length > 0) updates.email = arr;
+				} else if (typeof email === 'string') {
+					const v = email.trim();
+					if (v) updates.email = emailsToJsonb(v);
+				}
+				if (typeof phone === 'string') {
+					const v = phone.trim();
+					if (v) updates.phone = v;
+				}
+				if (typeof address === 'string') {
+					const v = address.trim();
+					if (v) updates.address = v;
+				}
+				if (typeof street_address === 'string') {
+					const v = street_address.trim();
+					if (v) updates.street_address = v;
+				}
+				if (typeof city === 'string') {
+					const v = city.trim();
+					if (v) updates.city = v;
+				}
+				if (typeof state === 'string') {
+					const v = state.trim();
+					if (v) updates.state = v;
+				}
+				if (typeof postcode === 'string') {
+					const v = postcode.trim();
+					if (v) updates.postcode = v;
+				}
+				if (typeof country === 'string') {
+					const v = country.trim();
+					if (v) updates.country = v;
+				}
+				if (typeof roof_size_sqm === 'number' && roof_size_sqm >= 0) {
+					updates.roof_size_sqm = roof_size_sqm;
+				}
+				if (Object.keys(updates).length === 0) {
+					return json({ error: 'No fields to update (name, email, emails, phone, address, street_address, city, state, postcode, country, roof_size_sqm)' }, { status: 400 });
+				}
+
+				const { error } = await supabase
+					.from('contacts')
+					.update(updates)
+					.eq('conversation_id', conversationId)
+					.eq('widget_id', widgetId);
+				if (error) {
+					console.error('update_contact_by_conversation:', error);
+					return json({ error: error.message }, { status: 500 });
+				}
+				return json({ success: true, data: { message: 'Contact updated successfully' } });
+			}
+
+			case 'get_product_pricing': {
+				const { widgetId } = params;
+				if (!widgetId) {
+					return json({ error: 'widgetId required' }, { status: 400 });
+				}
+
+				// Verify widget belongs to workspace and get owner
+				const { data: widget, error: widgetErr } = await supabase
+					.from('widgets')
+					.select('id, created_by, workspace_id')
+					.eq('id', widgetId)
+					.eq('workspace_id', authInfo.workspaceId)
+					.single();
+				if (widgetErr || !widget) {
+					if (widgetErr?.code === 'PGRST116') return json({ error: 'Widget not found' }, { status: 404 });
+					return json({ error: 'Widget not found or access denied' }, { status: 404 });
+				}
+				const ownerId = (widget.created_by as string);
+				if (!ownerId) {
+					return json({ error: 'Widget has no owner' }, { status: 400 });
+				}
+
+				try {
+					const products = await getProductPricingForOwner(ownerId);
+					return json({
+						success: true,
+						data: {
+							products: products.map((p) => ({
+								id: p.id,
+								name: p.name,
+								sizeLitres: p.sizeLitres,
+								price: p.price,
+								currency: p.currency,
+								coverageSqm: p.coverageSqm,
+								imageUrl: p.imageUrl,
+								shopifyProductId: p.shopifyProductId,
+								shopifyVariantId: p.shopifyVariantId,
+								sortOrder: p.sortOrder
+							}))
+						}
+					});
+				} catch (e) {
+					const msg = e instanceof Error ? e.message : 'Failed to get product pricing';
+					console.error('get_product_pricing:', e);
+					return json({ error: msg }, { status: 500 });
+				}
+			}
+
+			case 'create_diy_checkout': {
+				const { widgetId, conversationId, roof_size_sqm, count_15l, count_10l, count_5l, discount_percent, email } = params;
+				if (!widgetId) {
+					return json({ error: 'widgetId required' }, { status: 400 });
+				}
+
+				// Verify widget belongs to workspace and get owner
+				const { data: widget, error: widgetErr } = await supabase
+					.from('widgets')
+					.select('id, created_by, workspace_id')
+					.eq('id', widgetId)
+					.eq('workspace_id', authInfo.workspaceId)
+					.single();
+				if (widgetErr || !widget) {
+					if (widgetErr?.code === 'PGRST116') return json({ error: 'Widget not found' }, { status: 404 });
+					return json({ error: 'Widget not found or access denied' }, { status: 404 });
+				}
+				const ownerId = (widget.created_by as string);
+				if (!ownerId) {
+					return json({ error: 'Widget has no owner' }, { status: 400 });
+				}
+
+				// Validate input
+				const roofSizeSqm = typeof roof_size_sqm === 'number' && roof_size_sqm >= 1 ? roof_size_sqm : undefined;
+				const count15l = typeof count_15l === 'number' && count_15l >= 0 ? count_15l : undefined;
+				const count10l = typeof count_10l === 'number' && count_10l >= 0 ? count_10l : undefined;
+				const count5l = typeof count_5l === 'number' && count_5l >= 0 ? count_5l : undefined;
+				const discountPercent = typeof discount_percent === 'number' && discount_percent >= 1 && discount_percent <= 20 ? discount_percent : undefined;
+				const contactEmail = typeof email === 'string' ? email.trim() || undefined : undefined;
+				const convId = typeof conversationId === 'string' ? conversationId.trim() : undefined;
+
+				if (roofSizeSqm == null && (count15l ?? 0) === 0 && (count10l ?? 0) === 0 && (count5l ?? 0) === 0) {
+					return json(
+						{ error: 'Provide roof_size_sqm or at least one of count_15l, count_10l, count_5l.' },
+						{ status: 400 }
+					);
+				}
+
+				// Get contact email from conversation if not provided
+				let finalEmail = contactEmail;
+				if (!finalEmail && convId) {
+					const { data: contact } = await supabase
+						.from('contacts')
+						.select('email')
+						.eq('conversation_id', convId)
+						.eq('widget_id', widgetId)
+						.maybeSingle();
+					if (contact?.email) {
+						finalEmail = getPrimaryEmail(contact.email) ?? undefined;
+					}
+				}
+
+				try {
+					const result = await createDiyCheckoutForOwner(supabase, ownerId, {
+						roof_size_sqm: roofSizeSqm,
+						count_15l: count15l,
+						count_10l: count10l,
+						count_5l: count5l,
+						discount_percent: discountPercent,
+						email: finalEmail
+					});
+
+					if (!result.ok) {
+						return json({ error: result.error }, { status: 400 });
+					}
+
+					return json({
+						success: true,
+						data: {
+							checkoutUrl: result.data.checkoutUrl,
+							lineItemsUI: result.data.lineItemsUI,
+							summary: result.data.summary
+						}
+					});
+				} catch (e) {
+					const msg = e instanceof Error ? e.message : 'Failed to create checkout';
+					console.error('create_diy_checkout:', e);
+					return json({ error: msg }, { status: 500 });
+				}
+			}
+
 			case 'list_tools': {
 				// Return list of available tools
 				return json({
@@ -1102,6 +1364,8 @@ export const POST: RequestHandler = async (event) => {
 							'get_conversation_messages',
 							'list_contacts',
 							'get_contact',
+							'get_contact_by_conversation',
+							'update_contact_by_conversation',
 							'send_email',
 							'list_email_templates',
 							'get_email_template',
@@ -1114,6 +1378,8 @@ export const POST: RequestHandler = async (event) => {
 							'get_quote_settings',
 							'update_quote_settings',
 							'upload_quote_image',
+							'get_product_pricing',
+							'create_diy_checkout',
 							'shopify_list_orders',
 							'shopify_search_orders',
 							'shopify_get_order',

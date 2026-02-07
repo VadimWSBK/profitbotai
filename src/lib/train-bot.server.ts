@@ -15,7 +15,7 @@ import { env } from '$env/dynamic/private';
 
 const EMBEDDING_MODEL = 'text-embedding-3-small';
 const GEMINI_EMBED_MODEL = 'gemini-embedding-001';
-const EMBED_DIMENSION = 768; // Supabase vector(768); matches n8n Gemini default
+const EMBED_DIMENSION = 3072; // Supabase vector(3072); matches n8n gemini-embedding-001 default (no index due to pgvector 2000-dim limit)
 const CHUNK_SIZE = 800;
 const CHUNK_OVERLAP = 100;
 
@@ -164,7 +164,7 @@ async function getEmbeddingsOpenAI(texts: string[], apiKey: string): Promise<num
 	return out;
 }
 
-/** Get embeddings via Gemini API (gemini-embedding-001, 768 dims, RETRIEVAL_DOCUMENT, normalized). */
+/** Get embeddings via Gemini API (gemini-embedding-001, 3072 dims default, RETRIEVAL_DOCUMENT, normalized). */
 async function getEmbeddingsGemini(texts: string[], apiKey: string): Promise<number[][]> {
 	const batchSize = 20;
 	const out: number[][] = [];

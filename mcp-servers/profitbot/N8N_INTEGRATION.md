@@ -2,14 +2,23 @@
 
 Yes! You can use the ProfitBot MCP server with N8N. Since the ProfitBot MCP server exposes an HTTP API endpoint, you can integrate it into your N8N workflows.
 
-## ⚠️ Important: Use HTTP Request Node, NOT MCP Client Node
+## ⚠️ Important: MCP Client vs HTTP Request Node
 
-**The ProfitBot `/api/mcp` endpoint is a REST API, NOT an MCP protocol server.** 
+**The ProfitBot `/api/mcp` endpoint is a REST API that uses POST requests with `{ "action": "...", ...params }` format.**
 
-- ❌ **Don't use** the "MCP Client" node - it expects MCP protocol messages and won't work
-- ✅ **Use** the "HTTP Request" node instead - it works perfectly with the ProfitBot API
+### Option A: HTTP Request Node (Recommended)
 
-The ProfitBot API uses a simple POST request format: `{ "action": "list_widgets", ...params }`, which is compatible with standard HTTP Request nodes.
+✅ **Use the "HTTP Request" node** - it works perfectly with the ProfitBot API and gives you full control.
+
+### Option B: MCP Client Node (If Supported)
+
+If your n8n version supports HTTP endpoints in the MCP Client node, you can try:
+- **Endpoint**: `https://app.profitbot.ai/api/mcp`
+- **Server Transport**: HTTP Streamable
+- **Authentication**: None (use header `X-MCP-API-Key` in the request)
+- **Tools to Include**: All
+
+However, **HTTP Request nodes are still recommended** because they're simpler, more reliable, and easier to debug.
 
 ## Option 1: Direct HTTP API Calls (Recommended)
 
@@ -61,7 +70,9 @@ The ProfitBot MCP API supports all the same actions as the MCP tools. Here are t
 - `send_message` - Send message in conversation
 - `get_conversation_messages` - Get conversation messages
 - `list_contacts` - List contacts
-- `get_contact` - Get contact details
+- `get_contact` - Get contact details (by contactId)
+- `get_contact_by_conversation` - Get contact by widgetId + conversationId (for chat interactions)
+- `update_contact_by_conversation` - Update contact by widgetId + conversationId (for chat interactions)
 
 #### Email
 - `send_email` - Send email to contact/conversation
@@ -77,6 +88,10 @@ The ProfitBot MCP API supports all the same actions as the MCP tools. Here are t
 - `get_quote_settings` - Get quote settings
 - `update_quote_settings` - Update quote settings
 - `upload_quote_image` - Upload image for quotes
+
+#### DIY Checkout & Product Pricing
+- `get_product_pricing` - Get product pricing for a widget (for DIY quotes)
+- `create_diy_checkout` - Create DIY checkout link with product buckets
 
 #### Shopify
 - `shopify_list_orders` - List recent orders
@@ -159,6 +174,64 @@ The ProfitBot MCP API supports all the same actions as the MCP tools. Here are t
      }
      ```
 
+### Example Workflow: Get Contact & Update Contact (for Chat Interactions)
+
+1. **Get Contact**:
+   ```json
+   {
+     "action": "get_contact_by_conversation",
+     "widgetId": "{{ $json.widgetId }}",
+     "conversationId": "{{ $json.conversationId }}"
+   }
+   ```
+
+2. **Update Contact**:
+   ```json
+   {
+     "action": "update_contact_by_conversation",
+     "widgetId": "{{ $json.widgetId }}",
+     "conversationId": "{{ $json.conversationId }}",
+     "name": "John Doe",
+     "email": "john@example.com",
+     "phone": "+1234567890",
+     "address": "123 Main St",
+     "roof_size_sqm": 200
+   }
+   ```
+
+### Example Workflow: Get Product Pricing & Create DIY Checkout
+
+1. **Get Product Pricing**:
+   ```json
+   {
+     "action": "get_product_pricing",
+     "widgetId": "{{ $json.widgetId }}"
+   }
+   ```
+
+2. **Create DIY Checkout**:
+   ```json
+   {
+     "action": "create_diy_checkout",
+     "widgetId": "{{ $json.widgetId }}",
+     "conversationId": "{{ $json.conversationId }}",
+     "roof_size_sqm": 200,
+     "discount_percent": 10
+   }
+   ```
+   
+   Or with explicit bucket counts:
+   ```json
+   {
+     "action": "create_diy_checkout",
+     "widgetId": "{{ $json.widgetId }}",
+     "count_15l": 5,
+     "count_10l": 2,
+     "count_5l": 1,
+     "discount_percent": 10
+   }
+   ```
+
 ### Using Environment Variables
 
 Store your MCP API key as an N8N credential or environment variable:
@@ -168,30 +241,34 @@ Store your MCP API key as an N8N credential or environment variable:
 3. Reference it in your HTTP Request node:
    - Header: `X-MCP-API-Key`: `{{ $env.MCP_API_KEY }}`
 
-## Option 2: MCP Client Node (Not Supported)
+## Option 2: MCP Client Node (Experimental)
 
-**The MCP Client node will NOT work with ProfitBot's current API.**
+**If your n8n version supports HTTP endpoints in the MCP Client node, you can try using it.**
 
-The ProfitBot `/api/mcp` endpoint is a REST API that expects POST requests with `{ action, ...params }` format. It is NOT an MCP protocol server that uses MCP protocol messages (like `list_tools`, `call_tool`, etc.).
+### Configuration
 
-### Why MCP Client Node Fails
+1. **Add MCP Client Node** to your workflow
+2. **Configure**:
+   - **Endpoint**: `https://app.profitbot.ai/api/mcp`
+   - **Server Transport**: HTTP Streamable
+   - **Authentication**: None
+   - **Tools to Include**: All (or select specific tools)
+3. **Add Header**: You'll need to pass `X-MCP-API-Key` header with your API key
 
-- The MCP Client node expects MCP protocol messages over SSE/HTTP streamable transport
-- ProfitBot's API uses standard REST POST requests with JSON bodies
-- The protocols are incompatible
+### Important Notes
 
-### Solution
+- **HTTP Request nodes are still recommended** - they're simpler, more reliable, and easier to debug
+- The ProfitBot API uses REST POST format `{ "action": "...", ...params }`, not MCP protocol messages
+- If the MCP Client node doesn't work, fall back to HTTP Request nodes (Option 1)
+- The MCP Client node may require additional configuration to pass the `X-MCP-API-Key` header
 
-**Always use HTTP Request nodes** as described in Option 1 above. This is the recommended and supported approach.
+### Why HTTP Request Nodes Are Better
 
-### Future Enhancement (Optional)
-
-If there's demand, we could create a proper MCP protocol server wrapper that:
-1. Exposes an HTTP MCP endpoint compatible with N8N's MCP Client node
-2. Translates MCP protocol messages to ProfitBot API calls
-3. Returns responses in MCP format
-
-However, HTTP Request nodes work perfectly and are simpler to use, so this enhancement may not be necessary.
+- ✅ Full control over request/response format
+- ✅ Easier to debug (see exact request/response)
+- ✅ Better error handling
+- ✅ Works with all n8n versions
+- ✅ No special configuration needed
 
 ## Best Practices
 
