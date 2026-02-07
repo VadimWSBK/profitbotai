@@ -3,9 +3,10 @@
 	import { fly, fade } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import { browser } from '$app/environment';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { getSessionId } from '$lib/widget-session';
 	import ChatWindow from './ChatWindow.svelte';
+	import { listenToParent, sendToParent, requestContext, type ShopifyContext } from '$lib/widget-postmessage';
 
 	let { config, widgetId } = $props<{ config: WidgetConfig; widgetId?: string }>();
 	let iconError = $state(false);
@@ -14,6 +15,8 @@
 	let prefersReducedMotion = $state(false);
 	let showTooltip = $state(true);
 	let tooltipTimeout: ReturnType<typeof setTimeout> | null = null;
+	let shopifyContext = $state<ShopifyContext | null>(null);
+	let cleanupPostMessage: (() => void) | null = null;
 
 	function dur(ms: number) { return prefersReducedMotion ? 0 : ms; }
 
@@ -21,6 +24,35 @@
 		const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
 		prefersReducedMotion = mq.matches;
 		mq.addEventListener('change', (e) => { prefersReducedMotion = e.matches; });
+		
+		// Set up postMessage communication with parent page
+		if (browser && widgetId && widgetId !== 'preview') {
+			const sessionId = getSessionId(widgetId, browser);
+			
+			// Notify parent that widget is ready
+			sendToParent({
+				type: 'profitbot-ready',
+				widgetId,
+				sessionId
+			});
+			
+			// Request context from parent (Shopify)
+			requestContext(widgetId, sessionId);
+			
+			// Listen for messages from parent
+			cleanupPostMessage = listenToParent((message) => {
+				if (message.type === 'shopify-context' || message.type === 'shopify-cart-update' || message.type === 'shopify-page-view' || message.type === 'shopify-product-view') {
+					shopifyContext = (message.data as ShopifyContext) || null;
+				}
+			});
+		}
+	});
+	
+	onDestroy(() => {
+		if (cleanupPostMessage) {
+			cleanupPostMessage();
+			cleanupPostMessage = null;
+		}
 	});
 
 	// Custom open transition: scale + translate + opacity
@@ -78,6 +110,28 @@
 	// Auto-open if configured
 	$effect(() => {
 		if (config.bubble.autoOpenBotWindow) open = true;
+	});
+	
+	// Notify parent when chat opens/closes
+	$effect(() => {
+		if (!browser || !widgetId || widgetId === 'preview') return;
+		
+		const sessionId = getSessionId(widgetId, browser);
+		
+		if (open) {
+			sendToParent({
+				type: 'profitbot-chat-opened',
+				widgetId,
+				sessionId,
+				data: shopifyContext ? { context: shopifyContext } : undefined
+			});
+		} else {
+			sendToParent({
+				type: 'profitbot-chat-closed',
+				widgetId,
+				sessionId
+			});
+		}
 	});
 
 	$effect(() => {
@@ -159,7 +213,7 @@
 			in:chatWindowIn
 			out:chatWindowOut
 		>
-			<ChatWindow config={config} widgetId={widgetId} onClose={() => (open = false)} />
+			<ChatWindow config={config} widgetId={widgetId} shopifyContext={shopifyContext} onClose={() => (open = false)} />
 		</div>
 	{/if}
 

@@ -6,8 +6,9 @@
 	import { cubicOut } from 'svelte/easing';
 	import { browser } from '$app/environment';
 	import { getSessionId } from '$lib/widget-session';
+	import { sendToParent, type ShopifyContext } from '$lib/widget-postmessage';
 
-	let { config, widgetId, onClose } = $props<{ config: WidgetConfig; widgetId?: string; onClose: () => void }>();
+	let { config, widgetId, shopifyContext, onClose } = $props<{ config: WidgetConfig; widgetId?: string; shopifyContext?: ShopifyContext | null; onClose: () => void }>();
 
 	// Reduced-motion support
 	let prefersReducedMotion = $state(false);
@@ -258,6 +259,19 @@
 		sendPulse = true;
 		setTimeout(() => { sendPulse = false; }, 200);
 		requestAnimationFrame(() => scrollToBottom(true));
+
+		// Notify parent page (Shopify) that a message was sent
+		if (browser && widgetId && widgetId !== 'preview' && sessionId && sessionId !== 'preview') {
+			sendToParent({
+				type: 'profitbot-message-sent',
+				widgetId,
+				sessionId,
+				data: {
+					message: trimmed,
+					context: shopifyContext || undefined
+				}
+			});
+		}
 
 		// Restart polling when user sends a message (expecting n8n response)
 		startPolling();

@@ -29,6 +29,33 @@ const EMBED_SCRIPT = String.raw`
   wrap.appendChild(iframe);
   iframe.style.pointerEvents = 'auto';
   document.body.appendChild(wrap);
+  
+  // Forward messages from parent page (Shopify) to iframe
+  // This allows Shopify to send context, cart updates, etc. to the widget
+  window.addEventListener('message', function(event) {
+    // Only forward messages intended for ProfitBot widget
+    if (event.data && typeof event.data === 'object' && 
+        (event.data.type && (event.data.type.startsWith('shopify-') || event.data.type.startsWith('profitbot-')))) {
+      // Forward to iframe
+      if (iframe.contentWindow) {
+        iframe.contentWindow.postMessage(event.data, '*');
+      }
+    }
+  });
+  
+  // Forward messages from iframe to parent page (Shopify)
+  // This allows widget to send events to Shopify
+  window.addEventListener('message', function(event) {
+    // Only forward messages from the iframe
+    if (event.source === iframe.contentWindow && 
+        event.data && typeof event.data === 'object' && 
+        event.data.type && event.data.type.startsWith('profitbot-')) {
+      // Forward to parent (Shopify)
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage(event.data, '*');
+      }
+    }
+  });
 })();
 `.replaceAll(/\n\s+/g, '\n').trim();
 
