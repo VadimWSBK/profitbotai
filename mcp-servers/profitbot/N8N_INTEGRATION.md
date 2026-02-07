@@ -1,6 +1,15 @@
 # Using ProfitBot MCP Server with N8N
 
-Yes! You can use the ProfitBot MCP server with N8N. Since the ProfitBot MCP server exposes an HTTP API endpoint, you can integrate it into your N8N workflows in two ways:
+Yes! You can use the ProfitBot MCP server with N8N. Since the ProfitBot MCP server exposes an HTTP API endpoint, you can integrate it into your N8N workflows.
+
+## ⚠️ Important: Use HTTP Request Node, NOT MCP Client Node
+
+**The ProfitBot `/api/mcp` endpoint is a REST API, NOT an MCP protocol server.** 
+
+- ❌ **Don't use** the "MCP Client" node - it expects MCP protocol messages and won't work
+- ✅ **Use** the "HTTP Request" node instead - it works perfectly with the ProfitBot API
+
+The ProfitBot API uses a simple POST request format: `{ "action": "list_widgets", ...params }`, which is compatible with standard HTTP Request nodes.
 
 ## Option 1: Direct HTTP API Calls (Recommended)
 
@@ -159,18 +168,30 @@ Store your MCP API key as an N8N credential or environment variable:
 3. Reference it in your HTTP Request node:
    - Header: `X-MCP-API-Key`: `{{ $env.MCP_API_KEY }}`
 
-## Option 2: MCP Client Node (If Available)
+## Option 2: MCP Client Node (Not Supported)
 
-If your N8N instance has the MCP Client node installed (from `n8n-nodes-mcp` package), you can connect to the ProfitBot MCP server. However, this requires the ProfitBot MCP server to expose an HTTP MCP endpoint, which it currently doesn't (it's stdio-based for OpenClaw).
+**The MCP Client node will NOT work with ProfitBot's current API.**
 
-### Future Enhancement
+The ProfitBot `/api/mcp` endpoint is a REST API that expects POST requests with `{ action, ...params }` format. It is NOT an MCP protocol server that uses MCP protocol messages (like `list_tools`, `call_tool`, etc.).
 
-To use N8N's MCP Client node, we would need to create an HTTP MCP server wrapper. This would:
-1. Expose an HTTP endpoint that follows the MCP protocol
-2. Translate MCP protocol messages to ProfitBot API calls
-3. Return responses in MCP format
+### Why MCP Client Node Fails
 
-If you'd like this feature, we can add it!
+- The MCP Client node expects MCP protocol messages over SSE/HTTP streamable transport
+- ProfitBot's API uses standard REST POST requests with JSON bodies
+- The protocols are incompatible
+
+### Solution
+
+**Always use HTTP Request nodes** as described in Option 1 above. This is the recommended and supported approach.
+
+### Future Enhancement (Optional)
+
+If there's demand, we could create a proper MCP protocol server wrapper that:
+1. Exposes an HTTP MCP endpoint compatible with N8N's MCP Client node
+2. Translates MCP protocol messages to ProfitBot API calls
+3. Returns responses in MCP format
+
+However, HTTP Request nodes work perfectly and are simpler to use, so this enhancement may not be necessary.
 
 ## Best Practices
 
@@ -181,17 +202,36 @@ If you'd like this feature, we can add it!
 
 ## Troubleshooting
 
+### "Error running node 'MCP Client'" or Connection Issues
+
+**If you're seeing errors with the MCP Client node:**
+
+- ❌ **Stop using the MCP Client node** - it won't work with ProfitBot's API
+- ✅ **Switch to HTTP Request node** - follow the setup instructions in Option 1 above
+- The ProfitBot API is a REST API, not an MCP protocol server
+
 ### 401 Unauthorized
-- Check that `X-MCP-API-Key` header is set correctly
-- Verify the API key is valid in ProfitBot dashboard
+- Check that `X-MCP-API-Key` header is set correctly in HTTP Request node
+- Verify the API key is valid in ProfitBot dashboard (Settings → MCP API Keys)
+- Make sure the header name is exactly `X-MCP-API-Key` (case-sensitive)
 
 ### 400 Bad Request
-- Check that the `action` field is correct
+- Check that the `action` field is correct in the request body
 - Verify required parameters are included (e.g., `widgetId` for `get_widget`)
+- Ensure the request body is valid JSON
 
 ### 500 Internal Error
 - Check N8N logs for detailed error messages
 - Verify all required parameters are provided
+- Check ProfitBot server logs if you have access
+
+### HTTP Request Node Not Working
+
+**Common issues:**
+1. **Wrong URL**: Make sure it's `https://app.profitbot.ai/api/mcp` (not `/api/mcp/tools`)
+2. **Missing header**: The `X-MCP-API-Key` header is required
+3. **Wrong method**: Must be `POST`, not `GET`
+4. **Invalid JSON**: Check that the body is valid JSON format
 
 ## Example: Complete Workflow
 
