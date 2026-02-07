@@ -22,27 +22,40 @@ const EMBED_SCRIPT = String.raw`
   var base = src.replace(/\/embed\/chat-widget\.js.*$/, '');
   if (!base) return;
 
-  var isMobile = window.innerWidth <= 768;
+  function initWidget() {
+    // Ensure document.body exists
+    if (!document.body) {
+      setTimeout(initWidget, 10);
+      return;
+    }
 
-  var iframe = document.createElement('iframe');
-  iframe.src = base + '/embed/widget?id=' + encodeURIComponent(widgetId);
-  iframe.title = 'Chat';
-  iframe.setAttribute('data-profitbot-embed', '1');
-  iframe.setAttribute('allowtransparency', 'true');
-  iframe.allow = 'clipboard-write';
+    var isMobile = window.innerWidth <= 768;
 
-  if (isMobile) {
-    // Mobile: start small (just the bubble), expand to fullscreen when chat opens
-    iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:100px;height:100px;border:none;z-index:2147483647;background:transparent;overflow:visible;pointer-events:auto;';
-  } else {
-    // Desktop: full-viewport transparent overlay — iframe needs pointer-events:auto so clicks can reach widget content
-    // The widget inside handles pointer-events internally to allow clicks only on button/chat window
-    iframe.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:none;z-index:2147483647;background:transparent;pointer-events:auto;overflow:visible;';
-  }
+    var iframe = document.createElement('iframe');
+    iframe.src = base + '/embed/widget?id=' + encodeURIComponent(widgetId);
+    iframe.title = 'Chat';
+    iframe.setAttribute('data-profitbot-embed', '1');
+    iframe.setAttribute('allowtransparency', 'true');
+    iframe.allow = 'clipboard-write';
 
-  document.body.appendChild(iframe);
+    if (isMobile) {
+      // Mobile: start small (just the bubble), expand to fullscreen when chat opens
+      iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:100px;height:100px;border:none;z-index:2147483647;background:transparent;overflow:visible;pointer-events:auto;';
+    } else {
+      // Desktop: only cover widget area (bottom-right), not full viewport
+      // This allows clicks to pass through to the host page everywhere else
+      // Start with enough space for bubble + potential chat window
+      iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:450px;height:700px;border:none;z-index:2147483647;background:transparent;pointer-events:auto;overflow:visible;';
+    }
 
-  // Listen for postMessage from the widget to resize on mobile
+    try {
+      document.body.appendChild(iframe);
+    } catch (e) {
+      console.error('[ProfitBot] Failed to append iframe:', e);
+      return;
+    }
+
+  // Listen for postMessage from the widget to resize
   window.addEventListener('message', function(e) {
     if (!e.data || e.data.source !== 'profitbot-widget') return;
     if (e.data.type === 'chat-opened') {
@@ -50,15 +63,21 @@ const EMBED_SCRIPT = String.raw`
         iframe.style.width = '100%';
         iframe.style.height = '100%';
         iframe.style.pointerEvents = 'auto';
+      } else {
+        // Desktop: expand iframe to accommodate chat window (keep it reasonable)
+        iframe.style.width = '450px';
+        iframe.style.height = '700px';
       }
-      // Desktop: iframe keeps pointer-events:auto (widget handles pointer-events internally)
     } else if (e.data.type === 'chat-closed') {
       if (isMobile) {
         iframe.style.width = '100px';
         iframe.style.height = '100px';
         iframe.style.pointerEvents = 'auto';
+      } else {
+        // Desktop: shrink back to just bubble area
+        iframe.style.width = '120px';
+        iframe.style.height = '120px';
       }
-      // Desktop: iframe keeps pointer-events:auto (widget handles pointer-events internally)
     }
   });
 
@@ -84,14 +103,26 @@ const EMBED_SCRIPT = String.raw`
     }
   });
 
-  // Re-check mobile state on resize
-  window.addEventListener('resize', function() {
-    isMobile = window.innerWidth <= 768;
-    if (!isMobile) {
-      // Desktop: iframe needs pointer-events:auto so clicks can reach widget content
-      iframe.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:none;z-index:2147483647;background:transparent;pointer-events:auto;overflow:visible;';
-    }
-  });
+    // Re-check mobile state on resize
+    window.addEventListener('resize', function() {
+      var wasMobile = isMobile;
+      isMobile = window.innerWidth <= 768;
+      if (!isMobile && wasMobile) {
+        // Switched to desktop: resize iframe to widget area only
+        iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:450px;height:700px;border:none;z-index:2147483647;background:transparent;pointer-events:auto;overflow:visible;';
+      } else if (isMobile && !wasMobile) {
+        // Switched to mobile: resize to small bubble area
+        iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:100px;height:100px;border:none;z-index:2147483647;background:transparent;overflow:visible;pointer-events:auto;';
+      }
+    });
+  }
+
+  // Initialize when DOM is ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initWidget);
+  } else {
+    initWidget();
+  }
 })();
 `.replaceAll(/\n\s+/g, '\n').trim();
 
