@@ -60,6 +60,7 @@
 	}
 
 	let sessionId = $state('');
+	let visitorName = $state<string | null>(null);
 	let inputText = $state('');
 	let messages = $state<Message[]>([]);
 	let showStarterPrompts = $state(true);
@@ -76,6 +77,14 @@
 	const win = $derived(config.window);
 	const bubble = $derived(config.bubble);
 	const botStyle = $derived(win.botMessageSettings);
+	const visitorFirstName = $derived(
+		visitorName?.trim() ? visitorName.trim().split(/\s+/)[0] ?? '' : ''
+	);
+	const welcomeMessage = $derived(
+		(win.welcomeMessage ?? '')
+			.replace(/\{first_name\}/gi, visitorFirstName || 'there')
+			.replace(/\{name\}/gi, visitorName?.trim() || 'there')
+	);
 	// Chat uses n8n only; no Vercel streaming or polling.
 	// Update scroll-to-bottom FAB visibility when messages or content change
 	$effect(() => {
@@ -212,6 +221,18 @@
 		fetchStoredMessages();
 		startPolling();
 		if (!willFetch) messagesLoading = false;
+		
+		// Fetch visitor name for welcome message personalization
+		if (widgetId && sessionId && sessionId !== 'preview' && browser) {
+			fetch(`/api/widgets/${widgetId}/visitor?session_id=${encodeURIComponent(sessionId)}`)
+				.then((r) => r.json())
+				.then((data: { name?: string | null }) => {
+					const n = data?.name;
+					visitorName = typeof n === 'string' && n.trim() ? n.trim() : null;
+				})
+				.catch(() => {});
+		}
+		
 		// Focus input when chat opens (industry standard: ready to type)
 		requestAnimationFrame(() => inputEl?.focus());
 		const onKeyDown = (e: KeyboardEvent) => {
@@ -545,6 +566,7 @@
 		background-color: {win.backgroundColor};
 		border-radius: {winRadius};
 		font-size: {win.fontSizePx}px;
+		box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
 	"
 	role="dialog"
 	aria-label="Chat"
@@ -617,7 +639,7 @@
 						border-radius: {win.messageBorderRadius}px;
 					"
 				>
-					{win.welcomeMessage}
+					{welcomeMessage}
 				</div>
 			</div>
 		{:else}

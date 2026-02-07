@@ -194,6 +194,8 @@
 		overflow: visible;
 		background: transparent !important;
 		background-color: transparent !important;
+		/* Add padding to make shadow visible */
+		padding: 20px;
 	}
 
 	.chat-window-container--desktop :global(.chat-window) {
@@ -248,6 +250,7 @@
 			max-height: 100dvh !important;
 			align-items: stretch !important;
 			justify-content: stretch !important;
+			padding: 0 !important;
 		}
 		.chat-window-container--desktop.is-open :global(.chat-window) {
 			flex: 1;
