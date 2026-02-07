@@ -60,7 +60,8 @@
 
 <style>
 	/* The embed page lives inside a transparent full-viewport iframe.
-	   Ensure html/body/wrapper don't add scrollbars or backgrounds. */
+	   Ensure html/body/wrapper don't add scrollbars or backgrounds.
+	   Set pointer-events: none on html/body so clicks pass through to host page. */
 	:global(html), :global(body) {
 		background: transparent !important;
 		background-color: transparent !important;
@@ -69,11 +70,13 @@
 		padding: 0;
 		width: 100%;
 		height: 100%;
+		pointer-events: none !important;
 	}
 	:global(#svelte-announcer),
 	:global([data-embed-page]) {
 		background: transparent !important;
 		background-color: transparent !important;
+		pointer-events: none !important;
 	}
 	.embed-widget-root {
 		width: 100%;
@@ -82,5 +85,10 @@
 		background: transparent !important;
 		background-color: transparent !important;
 		overflow: visible;
+		pointer-events: none !important;
+	}
+	/* Only the widget preview wrapper should restore pointer-events */
+	.embed-widget-root :global(.widget-preview-wrapper) {
+		pointer-events: none !important;
 	}
 </style>

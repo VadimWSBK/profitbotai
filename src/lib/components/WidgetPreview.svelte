@@ -299,27 +299,27 @@
 	/* Wrapper: fixed to bottom-right, pointer-events pass through to host page */
 	.widget-preview-wrapper {
 		position: fixed !important;
-		pointer-events: none;
+		pointer-events: none !important;
 		background: transparent !important;
 		background-color: transparent !important;
 	}
 	/* Only restore pointer-events on interactive elements (button, tooltip, chat window) */
-	.bubble-preview,
-	.tooltip-preview {
+	.widget-preview-wrapper .bubble-preview,
+	.widget-preview-wrapper .tooltip-preview {
 		pointer-events: auto !important;
 	}
-	.chat-backdrop {
+	.widget-preview-wrapper .chat-backdrop {
 		pointer-events: auto !important;
 	}
-	.chat-window-container {
+	.widget-preview-wrapper .chat-window-container {
 		pointer-events: none !important;
 	}
-	.chat-window-container * {
+	.widget-preview-wrapper .chat-window-container * {
 		pointer-events: auto !important;
 	}
 
 	/* Desktop: chat window positioned above the bubble icon */
-	.chat-window-container--desktop {
+	.widget-preview-wrapper .chat-window-container--desktop {
 		position: absolute !important;
 		max-height: calc(100vh - 120px);
 		overflow: visible;
@@ -330,34 +330,34 @@
 		margin-left: 20px;
 	}
 
-	.chat-window-container--desktop :global(.chat-window) {
+	.widget-preview-wrapper .chat-window-container--desktop :global(.chat-window) {
 		max-height: 600px;
 		overflow: hidden;
 	}
 
 	/* Mobile backdrop (hidden on desktop) */
-	.chat-backdrop {
+	.widget-preview-wrapper .chat-backdrop {
 		display: none;
-		pointer-events: auto;
+		pointer-events: auto !important;
 	}
 
 	/* Bubble button with prominent dropshadow */
-	.bubble-preview {
+	.widget-preview-wrapper .bubble-preview {
 		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25), 0 4px 8px rgba(0, 0, 0, 0.15);
 		pointer-events: auto !important;
 		cursor: pointer;
 	}
 
 	/* Bubble attention pulse — plays 3 times on load, then stops */
-	.bubble-attention {
+	.widget-preview-wrapper .bubble-attention {
 		animation: bubble-pulse 2s ease-in-out 3;
 		transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
 	}
-	.bubble-attention:hover {
+	.widget-preview-wrapper .bubble-attention:hover {
 		transform: scale(1.05);
 		box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3), 0 6px 12px rgba(0, 0, 0, 0.2);
 	}
-	.bubble-attention.bubble-open {
+	.widget-preview-wrapper .bubble-attention.bubble-open {
 		transform: scale(0.95);
 	}
 	@keyframes bubble-pulse {
@@ -370,7 +370,7 @@
 		.widget-preview-wrapper {
 			z-index: 2147483647 !important;
 		}
-		.chat-backdrop {
+		.widget-preview-wrapper .chat-backdrop {
 			display: block;
 			position: fixed;
 			inset: 0;
@@ -379,7 +379,7 @@
 			-webkit-backdrop-filter: blur(2px);
 			backdrop-filter: blur(2px);
 		}
-		.chat-window-container--desktop.is-open {
+		.widget-preview-wrapper .chat-window-container--desktop.is-open {
 			position: fixed !important;
 			inset: 0 !important;
 			width: 100% !important;
@@ -391,7 +391,7 @@
 			margin: 0 !important;
 			z-index: 1 !important;
 		}
-		.chat-window-container--desktop.is-open :global(.chat-window) {
+		.widget-preview-wrapper .chat-window-container--desktop.is-open :global(.chat-window) {
 			flex: 1;
 			width: 100% !important;
 			height: 100% !important;
@@ -402,25 +402,25 @@
 			border-radius: 0 !important;
 		}
 		/* Ensure bubble is always visible when chat is closed */
-		.bubble-preview {
+		.widget-preview-wrapper .bubble-preview {
 			position: relative !important;
 			z-index: 9999 !important;
 			display: flex !important;
 		}
 		/* Hide bubble when chat is open on mobile (chat window has close button) */
-		.bubble-preview.bubble-open {
+		.widget-preview-wrapper .bubble-preview.bubble-open {
 			display: none !important;
 		}
 	}
 
 	/* Reduced-motion support */
 	@media (prefers-reduced-motion: reduce) {
-		.bubble-attention {
+		.widget-preview-wrapper .bubble-attention {
 			animation: none;
 		}
-		.bubble-attention,
-		.bubble-attention:hover,
-		.bubble-attention.bubble-open {
+		.widget-preview-wrapper .bubble-attention,
+		.widget-preview-wrapper .bubble-attention:hover,
+		.widget-preview-wrapper .bubble-attention.bubble-open {
 			transition-duration: 0.01ms !important;
 		}
 	}
