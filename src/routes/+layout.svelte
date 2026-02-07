@@ -27,7 +27,7 @@
 </svelte:head>
 
 {#if isEmbed}
-	<div class="min-h-screen bg-transparent">
+	<div class="min-h-screen bg-transparent" style="background: transparent !important; background-color: transparent !important;">
 		{@render children()}
 	</div>
 {:else if isAuthPage}

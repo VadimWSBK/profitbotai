@@ -54,13 +54,18 @@
 	<title>{config.name}</title>
 	<style>
 		:global(html),
-		:global(body) {
+		:global(body),
+		:global(#svelte-announcer) {
+			background: transparent !important;
+			background-color: transparent !important;
+		}
+		:global(.embed-widget-root) {
 			background: transparent !important;
 			background-color: transparent !important;
 		}
 	</style>
 </svelte:head>
 
-<div class="embed-widget-root w-full bg-transparent overflow-visible" style="min-height: 0;">
+<div class="embed-widget-root w-full bg-transparent overflow-visible" style="min-height: 0; background: transparent !important; background-color: transparent !important;">
 	<WidgetPreview config={config} widgetId={data.widgetId} />
 </div>
