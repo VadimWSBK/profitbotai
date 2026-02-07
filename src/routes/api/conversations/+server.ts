@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSupabaseClient } from '$lib/supabase.server';
+import { getPrimaryEmail } from '$lib/contact-email-jsonb';
 
 /**
  * GET /api/conversations?widget_id= – list conversations for widgets the user owns.
@@ -46,7 +47,7 @@ export const GET: RequestHandler = async (event) => {
 		contactByConvId[convId] = {
 			id: (c as { id: string }).id,
 			name: (c as { name: string | null }).name ?? null,
-			email: (c as { email: string | null }).email ?? null
+			email: getPrimaryEmail((c as { email: unknown }).email) ?? null
 		};
 	}
 
