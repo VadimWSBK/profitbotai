@@ -84,18 +84,81 @@ export const POST: RequestHandler = async (event) => {
 	}
 	const mergedPhones = phonesToJsonb(Array.from(allPhones));
 
-	// Merge other fields: prefer non-null values, with priority to base contact
-	const mergedName = baseContact.name || otherContacts.find((c) => c.name)?.name || null;
-	const mergedAddress = baseContact.address || otherContacts.find((c) => c.address)?.address || null;
+	// Merge names: collect all unique non-empty names
+	const allNames = [...new Set(
+		contacts.map((c) => c.name?.trim()).filter(Boolean) as string[]
+	)];
+	// Primary name = base contact's name (or first available)
+	const mergedName = allNames.length > 0 ? allNames[0] : null;
+
+	// Merge addresses: keep base contact's address fields, and collect all OTHER
+	// unique addresses into the note so nothing is lost
 	const mergedStreetAddress = baseContact.street_address || otherContacts.find((c) => c.street_address)?.street_address || null;
 	const mergedCity = baseContact.city || otherContacts.find((c) => c.city)?.city || null;
 	const mergedState = baseContact.state || otherContacts.find((c) => c.state)?.state || null;
 	const mergedPostcode = baseContact.postcode || otherContacts.find((c) => c.postcode)?.postcode || null;
 	const mergedCountry = baseContact.country || otherContacts.find((c) => c.country)?.country || null;
+	const mergedAddress = baseContact.address || otherContacts.find((c) => c.address)?.address || null;
 
-	// Merge notes: combine with line breaks
-	const notes = contacts.map((c) => c.note).filter(Boolean) as string[];
-	const mergedNote = notes.length > 0 ? notes.join('\n\n') : null;
+	// Build a formatted address string from a contact's fields
+	function formatAddress(c: typeof baseContact): string {
+		const parts = [
+			c.street_address,
+			c.city,
+			c.state,
+			c.postcode,
+			c.country
+		].filter(Boolean);
+		if (parts.length > 0) return parts.join(', ');
+		if (c.address?.trim()) return c.address.trim();
+		return '';
+	}
+
+	// The primary address (what we're storing in the address fields)
+	const primaryAddr = formatAddress({
+		...baseContact,
+		street_address: mergedStreetAddress,
+		city: mergedCity,
+		state: mergedState,
+		postcode: mergedPostcode,
+		country: mergedCountry,
+		address: mergedAddress
+	});
+
+	// Collect additional addresses from other contacts that differ from the primary
+	const additionalAddresses: string[] = [];
+	for (const c of contacts) {
+		const addr = formatAddress(c);
+		if (addr && addr.toLowerCase() !== primaryAddr.toLowerCase()) {
+			additionalAddresses.push(addr);
+		}
+	}
+	// Deduplicate additional addresses
+	const uniqueAdditionalAddresses = [...new Set(additionalAddresses.map((a) => a.toLowerCase()))]
+		.map((lower) => additionalAddresses.find((a) => a.toLowerCase() === lower)!)
+		.filter(Boolean);
+
+	// Collect additional names (beyond the primary)
+	const additionalNames = allNames.slice(1);
+
+	// Merge notes: combine existing notes, plus append additional names/addresses
+	const noteParts: string[] = [];
+	// Existing notes
+	const existingNotes = contacts.map((c) => c.note?.trim()).filter(Boolean) as string[];
+	// Deduplicate notes
+	const uniqueNotes = [...new Set(existingNotes)];
+	if (uniqueNotes.length > 0) noteParts.push(...uniqueNotes);
+	// Additional names
+	if (additionalNames.length > 0) {
+		noteParts.push(`Also known as: ${additionalNames.join(', ')}`);
+	}
+	// Additional addresses
+	if (uniqueAdditionalAddresses.length > 0) {
+		for (const addr of uniqueAdditionalAddresses) {
+			noteParts.push(`Additional address: ${addr}`);
+		}
+	}
+	const mergedNote = noteParts.length > 0 ? noteParts.join('\n\n') : null;
 
 	// Merge tags: combine unique tags
 	const allTags = new Set<string>();
