@@ -1118,19 +1118,69 @@ export const POST: RequestHandler = async (event) => {
 					return json({ error: 'Widget not found or access denied' }, { status: 404 });
 				}
 
-				const { data, error } = await supabase
+				// Verify conversation exists and belongs to this widget
+				const { data: conv, error: convError } = await supabase
+					.from('widget_conversations')
+					.select('id, widget_id')
+					.eq('id', conversationId)
+					.eq('widget_id', widgetId)
+					.single();
+				if (convError || !conv) {
+					return json({ error: 'Conversation not found or does not belong to this widget' }, { status: 404 });
+				}
+
+				let data = null;
+				let error = null;
+				
+				// Try to get existing contact
+				const { data: existingContact, error: fetchError } = await supabase
 					.from('contacts')
 					.select('id, name, email, phone, address, street_address, city, state, postcode, country, roof_size_sqm, conversation_id, widget_id, created_at')
 					.eq('conversation_id', conversationId)
 					.eq('widget_id', widgetId)
 					.maybeSingle();
-				if (error) {
-					console.error('get_contact_by_conversation:', error);
-					return json({ error: error.message }, { status: 500 });
+				
+				if (fetchError) {
+					console.error('get_contact_by_conversation fetch error:', fetchError);
+					return json({ error: fetchError.message }, { status: 500 });
 				}
+
+				// If contact doesn't exist, create a placeholder contact
+				if (!existingContact) {
+					const { data: newContact, error: createError } = await supabase
+						.from('contacts')
+						.insert({
+							conversation_id: conversationId,
+							widget_id: widgetId
+						})
+						.select('id, name, email, phone, address, street_address, city, state, postcode, country, roof_size_sqm, conversation_id, widget_id, created_at')
+						.single();
+					
+					if (createError) {
+						console.error('get_contact_by_conversation create error:', createError);
+						// If creation fails (e.g., due to constraint), try fetching again
+						const { data: retryContact, error: retryError } = await supabase
+							.from('contacts')
+							.select('id, name, email, phone, address, street_address, city, state, postcode, country, roof_size_sqm, conversation_id, widget_id, created_at')
+							.eq('conversation_id', conversationId)
+							.eq('widget_id', widgetId)
+							.maybeSingle();
+						
+						if (retryError) {
+							return json({ error: retryError.message }, { status: 500 });
+						}
+						data = retryContact;
+					} else {
+						data = newContact;
+					}
+				} else {
+					data = existingContact;
+				}
+
 				if (!data) {
 					return json({ success: true, data: { contact: null } });
 				}
+				
 				const emails = parseEmailsFromDb(data.email);
 				return json({
 					success: true,
