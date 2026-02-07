@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSupabaseClient } from '$lib/supabase.server';
 import { getPrimaryEmail, parseEmailsFromDb, emailsToJsonb } from '$lib/contact-email-jsonb';
+import { getPrimaryPhone, parsePhonesFromDb, phonesToJsonb } from '$lib/contact-phone-jsonb';
 import { resolvePdfQuotesToSignedUrls } from '$lib/quote-pdf-urls.server';
 import { getTagAddedWorkflows, runTagAddedWorkflow } from '$lib/run-workflow.server';
 
@@ -84,6 +85,7 @@ export const GET: RequestHandler = async (event) => {
 		: [];
 
 	const emails = parseEmailsFromDb(r.email);
+	const phones = parsePhonesFromDb(r.phone);
 	const contact = {
 		id: r.id,
 		conversationId: r.conversation_id,
@@ -96,7 +98,8 @@ export const GET: RequestHandler = async (event) => {
 		name: r.name ?? null,
 		email: getPrimaryEmail(r.email) ?? null,
 		emails: emails.length > 0 ? emails : null,
-		phone: r.phone ?? null,
+		phone: getPrimaryPhone(r.phone) ?? null,
+		phones: phones.length > 0 ? phones : null,
 		address: r.address ?? null,
 		streetAddress: r.street_address ?? null,
 		city: r.city ?? null,
@@ -141,7 +144,13 @@ export const PATCH: RequestHandler = async (event) => {
 		const v = body.email.trim();
 		if (v) updates.email = emailsToJsonb(v);
 	}
-	if (typeof body.phone === 'string') updates.phone = body.phone.trim() || null;
+	if (Array.isArray(body.phones)) {
+		const arr = phonesToJsonb(body.phones as string[]);
+		if (arr.length > 0) updates.phone = arr;
+	} else if (typeof body.phone === 'string') {
+		const v = body.phone.trim();
+		if (v) updates.phone = phonesToJsonb(v);
+	}
 	if (typeof body.address === 'string') updates.address = body.address.trim() || null;
 	if (typeof body.streetAddress === 'string') updates.street_address = body.streetAddress.trim() || null;
 	if (typeof body.city === 'string') updates.city = body.city.trim() || null;

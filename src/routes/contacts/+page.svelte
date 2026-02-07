@@ -26,7 +26,9 @@
 		widgetName: string | null;
 		name: string | null;
 		email: string | null;
+		emails?: string[] | null;
 		phone: string | null;
+		phones?: string[] | null;
 		address: string | null;
 		streetAddress?: string | null;
 		city?: string | null;
@@ -65,6 +67,9 @@
 	let newTagInput = $state('');
 	let startConversationLoading = $state(false);
 	let startConversationError = $state<string | null>(null);
+	let selectedContactIds = $state<Set<string>>(new Set());
+	let mergingContacts = $state(false);
+	let mergeError = $state<string | null>(null);
 
 	const totalPages = $derived(Math.max(1, Math.ceil(totalCount / limit)));
 	const hasNextPage = $derived(currentPage < totalPages);
@@ -265,6 +270,47 @@
 		}
 	}
 
+	function toggleContactSelection(contactId: string) {
+		if (selectedContactIds.has(contactId)) {
+			selectedContactIds.delete(contactId);
+		} else {
+			selectedContactIds.add(contactId);
+		}
+		selectedContactIds = new Set(selectedContactIds);
+	}
+
+	function clearSelection() {
+		selectedContactIds = new Set();
+	}
+
+	async function mergeContacts() {
+		if (selectedContactIds.size < 2) {
+			mergeError = 'Please select at least 2 contacts to merge';
+			return;
+		}
+		mergingContacts = true;
+		mergeError = null;
+		try {
+			const res = await fetch('/api/contacts/merge', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ contactIds: Array.from(selectedContactIds) })
+			});
+			const json = await res.json().catch(() => ({}));
+			if (!res.ok) {
+				mergeError = (json.error as string) ?? 'Merge failed';
+				return;
+			}
+			// Clear selection and refresh
+			clearSelection();
+			selectedContact = null;
+			contactDetail = null;
+			await fetchContacts();
+		} finally {
+			mergingContacts = false;
+		}
+	}
+
 	// Reset to page 1 when filters change
 	let prevFilters = $state<{ w: string | null; q: string; shopify: boolean; tag: string | null }>({
 		w: null,
@@ -401,10 +447,46 @@
 					</div>
 				{/if}
 			</div>
-			<!-- Total count + pagination -->
-			<div class="px-3 py-2 border-b border-gray-200 shrink-0 flex items-center justify-between gap-2 flex-wrap">
-				<span class="text-sm font-medium text-gray-700">{rangeLabel}</span>
-				<div class="flex items-center gap-1">
+			<!-- Selection controls + Total count + pagination -->
+			<div class="px-3 py-2 border-b border-gray-200 shrink-0 space-y-2">
+				{#if selectedContactIds.size > 0}
+					<div class="flex items-center justify-between gap-2">
+						<span class="text-sm font-medium text-gray-700">
+							{selectedContactIds.size} contact{selectedContactIds.size === 1 ? '' : 's'} selected
+						</span>
+						<div class="flex items-center gap-2">
+							<button
+								type="button"
+								disabled={mergingContacts || selectedContactIds.size < 2}
+								onclick={mergeContacts}
+								class="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50 disabled:pointer-events-none transition-colors"
+							>
+								{#if mergingContacts}
+									<svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+										<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+										<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+									</svg>
+									Merging…
+								{:else}
+									Merge contacts
+								{/if}
+							</button>
+							<button
+								type="button"
+								onclick={clearSelection}
+								class="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+							>
+								Clear
+							</button>
+						</div>
+					</div>
+					{#if mergeError}
+						<p class="text-sm text-red-600">{mergeError}</p>
+					{/if}
+				{/if}
+				<div class="flex items-center justify-between gap-2 flex-wrap">
+					<span class="text-sm font-medium text-gray-700">{rangeLabel}</span>
+					<div class="flex items-center gap-1">
 					<button
 						type="button"
 						disabled={!hasPrevPage || loading}
@@ -428,6 +510,7 @@
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
 						</svg>
 					</button>
+					</div>
 				</div>
 			</div>
 			<div class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
@@ -439,14 +522,12 @@
 					</div>
 				{:else}
 					{#each contacts as c}
-						<button
-							type="button"
-							class="relative w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-white focus:bg-white focus:outline-none transition-colors {selectedContact?.id === c.id ? 'bg-white border-l-4 border-l-amber-500 shadow-sm' : ''}"
-							onclick={() => selectContact(c)}
+						<div
+							class="relative w-full border-b border-gray-100 hover:bg-white transition-colors {selectedContact?.id === c.id ? 'bg-white border-l-4 border-l-amber-500 shadow-sm' : ''}"
 						>
 							{#if c.hasShopifyOrders}
 								<span
-									class="absolute top-2 right-2 w-5 h-5 flex items-center justify-center rounded bg-[#96bf48] text-white shrink-0"
+									class="absolute top-2 right-2 w-5 h-5 flex items-center justify-center rounded bg-[#96bf48] text-white shrink-0 z-10"
 									title="Has Shopify order(s)"
 									aria-label="Has Shopify order(s)"
 								>
@@ -458,24 +539,41 @@
 									</svg>
 								</span>
 							{/if}
-							<div class="flex items-center gap-2 pr-6">
+							<div class="flex items-center gap-2 px-4 py-3">
+								<input
+									type="checkbox"
+									checked={selectedContactIds.has(c.id)}
+									onchange={() => toggleContactSelection(c.id)}
+									onclick={(e) => e.stopPropagation()}
+									class="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500 shrink-0"
+								/>
 								<div
-									class="w-9 h-9 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-sm font-semibold shrink-0"
+									class="flex-1 text-left cursor-pointer"
+									onclick={() => selectContact(c)}
+									role="button"
+									tabindex="0"
+									onkeydown={(e) => e.key === 'Enter' && selectContact(c)}
 								>
-									{(c.name ?? c.email ?? '?').charAt(0).toUpperCase()}
-								</div>
-								<div class="min-w-0 flex-1">
-									<div class="font-medium text-gray-800 truncate">{displayLabel(c)}</div>
-									{#if c.email && c.name}
-										<div class="text-xs text-gray-500 truncate">{c.email}</div>
-									{/if}
-									{#if c.widgetName}
-										<div class="text-xs text-gray-400 mt-0.5">{c.widgetName}</div>
-									{/if}
-									<div class="text-xs text-gray-400 mt-0.5">{formatDate(c.updatedAt)}</div>
+									<div class="flex items-center gap-2 pr-6">
+										<div
+											class="w-9 h-9 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-sm font-semibold shrink-0"
+										>
+											{(c.name ?? c.email ?? '?').charAt(0).toUpperCase()}
+										</div>
+										<div class="min-w-0 flex-1">
+											<div class="font-medium text-gray-800 truncate">{displayLabel(c)}</div>
+											{#if c.email && c.name}
+												<div class="text-xs text-gray-500 truncate">{c.email}</div>
+											{/if}
+											{#if c.widgetName}
+												<div class="text-xs text-gray-400 mt-0.5">{c.widgetName}</div>
+											{/if}
+											<div class="text-xs text-gray-400 mt-0.5">{formatDate(c.updatedAt)}</div>
+										</div>
+									</div>
 								</div>
 							</div>
-						</button>
+						</div>
 					{/each}
 				{/if}
 			</div>
@@ -701,7 +799,20 @@
 									<div>
 										<dt class="text-xs font-medium text-gray-500 uppercase">Email</dt>
 										<dd class="mt-0.5">
-											{#if contactDetail.email}
+											{#if contactDetail.emails && contactDetail.emails.length > 0}
+												<div class="space-y-1">
+													{#each contactDetail.emails as email}
+														<div>
+															<a
+																href={contactDetail.conversationId ? `/messages?conversation=${contactDetail.conversationId}` : `/messages?contact=${contactDetail.id}`}
+																class="text-amber-600 hover:text-amber-700 break-all"
+															>
+																{email}
+															</a>
+														</div>
+													{/each}
+												</div>
+											{:else if contactDetail.email}
 												<a
 													href={contactDetail.conversationId ? `/messages?conversation=${contactDetail.conversationId}` : `/messages?contact=${contactDetail.id}`}
 													class="text-amber-600 hover:text-amber-700"
@@ -716,7 +827,15 @@
 									<div>
 										<dt class="text-xs font-medium text-gray-500 uppercase">Phone</dt>
 										<dd class="mt-0.5">
-											{#if contactDetail.phone}
+											{#if contactDetail.phones && contactDetail.phones.length > 0}
+												<div class="space-y-1">
+													{#each contactDetail.phones as phone}
+														<div>
+															<a href="tel:{phone}" class="text-amber-600 hover:text-amber-700">{phone}</a>
+														</div>
+													{/each}
+												</div>
+											{:else if contactDetail.phone}
 												<a href="tel:{contactDetail.phone}" class="text-amber-600 hover:text-amber-700">{contactDetail.phone}</a>
 											{:else}
 												<span class="text-gray-500">—</span>

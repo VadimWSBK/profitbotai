@@ -8,7 +8,7 @@
 
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { Webhook } from 'svix';
+import { Resend } from 'resend';
 import { getSupabaseAdmin } from '$lib/supabase.server';
 import { updateContactEmailStatus, storeContactEmail } from '$lib/contact-email.server';
 import { getResendConfigForUser, getReceivedEmail } from '$lib/resend.server';
@@ -36,12 +36,16 @@ export const POST: RequestHandler = async (event) => {
 	const timestamp = event.request.headers.get('svix-timestamp');
 	const signature = event.request.headers.get('svix-signature');
 
-	if (!WEBHOOK_SECRET) {
+	// Trim the secret in case there's whitespace
+	const secret = WEBHOOK_SECRET.trim();
+
+	if (!secret) {
 		console.error('[webhooks/resend] RESEND_WEBHOOK_SECRET not configured');
 		return json({ error: 'Webhook not configured' }, { status: 500 });
 	}
 
 	if (!id || !timestamp || !signature) {
+		console.error('[webhooks/resend] Missing headers:', { id: !!id, timestamp: !!timestamp, signature: !!signature });
 		return json({ error: 'Missing webhook headers' }, { status: 400 });
 	}
 
@@ -56,16 +60,30 @@ export const POST: RequestHandler = async (event) => {
 		};
 	};
 	try {
-		// Use Svix directly for webhook verification (Resend uses Svix under the hood)
-		const wh = new Webhook(WEBHOOK_SECRET);
-		const verified = wh.verify(rawBody, {
-			'svix-id': id,
-			'svix-timestamp': timestamp,
-			'svix-signature': signature
+		// Use Resend SDK's webhook verification (recommended by Resend)
+		const resend = new Resend();
+		const verified = resend.webhooks.verify({
+			payload: rawBody,
+			headers: {
+				id: id,
+				timestamp: timestamp,
+				signature: signature
+			},
+			webhookSecret: secret
 		}) as typeof payload;
 		payload = verified;
 	} catch (e) {
 		console.error('[webhooks/resend] Verify failed:', e);
+		console.error('[webhooks/resend] Debug info:', {
+			hasSecret: !!secret,
+			secretPrefix: secret.substring(0, 5),
+			secretLength: secret.length,
+			bodyLength: rawBody.length,
+			hasId: !!id,
+			hasTimestamp: !!timestamp,
+			hasSignature: !!signature,
+			errorMessage: e instanceof Error ? e.message : String(e)
+		});
 		return json({ error: 'Invalid webhook signature' }, { status: 400 });
 	}
 

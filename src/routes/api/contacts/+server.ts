@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { getSupabaseClient } from '$lib/supabase.server';
 import { resolvePdfQuotesToSignedUrls } from '$lib/quote-pdf-urls.server';
 import { getPrimaryEmail } from '$lib/contact-email-jsonb';
+import { getPrimaryPhone } from '$lib/contact-phone-jsonb';
 
 /**
  * GET /api/contacts?widget_id=&q=&limit=&page=&has_shopify_order=&tag=
@@ -106,7 +107,7 @@ export const GET: RequestHandler = async (event) => {
 					})(),
 					name: r.name ?? null,
 					email: getPrimaryEmail(r.email) ?? null,
-					phone: r.phone ?? null,
+					phone: getPrimaryPhone(r.phone) ?? null,
 					address: r.address ?? null,
 					roofSizeSqm: r.roof_size_sqm == null ? null : Number(r.roof_size_sqm),
 					pdfQuotes: await resolvePdfQuotesToSignedUrls(r.pdf_quotes),
