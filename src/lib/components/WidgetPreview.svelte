@@ -17,28 +17,40 @@
 	let tooltipTimeout: ReturnType<typeof setTimeout> | null = null;
 	let shopifyContext = $state<ShopifyContext | null>(null);
 	let cleanupPostMessage: (() => void) | null = null;
+	let isEmbedded = $state(false);
 
 	function dur(ms: number) { return prefersReducedMotion ? 0 : ms; }
+
+	/** Notify the parent page (Shopify etc.) about chat open/close so it can resize the iframe */
+	function notifyParent(type: 'chat-opened' | 'chat-closed') {
+		try {
+			if (window.parent && window.parent !== window) {
+				window.parent.postMessage({ source: 'profitbot-widget', type }, '*');
+			}
+		} catch { /* cross-origin — safe to ignore */ }
+	}
 
 	onMount(() => {
 		const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
 		prefersReducedMotion = mq.matches;
 		mq.addEventListener('change', (e) => { prefersReducedMotion = e.matches; });
-		
+		// Detect if we're inside an iframe (embedded on external site)
+		try { isEmbedded = window.self !== window.top; } catch { isEmbedded = true; }
+
 		// Set up postMessage communication with parent page
 		if (browser && widgetId && widgetId !== 'preview') {
 			const sessionId = getSessionId(widgetId, browser);
-			
+
 			// Notify parent that widget is ready
 			sendToParent({
 				type: 'profitbot-ready',
 				widgetId,
 				sessionId
 			});
-			
+
 			// Request context from parent (Shopify)
 			requestContext(widgetId, sessionId);
-			
+
 			// Listen for messages from parent
 			cleanupPostMessage = listenToParent((message) => {
 				if (message.type === 'shopify-context' || message.type === 'shopify-cart-update' || message.type === 'shopify-page-view' || message.type === 'shopify-product-view') {
@@ -47,7 +59,7 @@
 			});
 		}
 	});
-	
+
 	onDestroy(() => {
 		if (cleanupPostMessage) {
 			cleanupPostMessage();
@@ -111,13 +123,13 @@
 	$effect(() => {
 		if (config.bubble.autoOpenBotWindow) open = true;
 	});
-	
-	// Notify parent when chat opens/closes
+
+	// Notify parent when chat opens/closes (Shopify context events)
 	$effect(() => {
 		if (!browser || !widgetId || widgetId === 'preview') return;
-		
+
 		const sessionId = getSessionId(widgetId, browser);
-		
+
 		if (open) {
 			sendToParent({
 				type: 'profitbot-chat-opened',
@@ -134,6 +146,12 @@
 		}
 	});
 
+	// Notify parent iframe when chat opens/closes (for mobile resize)
+	$effect(() => {
+		if (!isEmbedded) return;
+		notifyParent(open ? 'chat-opened' : 'chat-closed');
+	});
+
 	$effect(() => {
 		void config.bubble.customIconUrl;
 		iconError = false;
@@ -141,7 +159,6 @@
 
 	// Auto-hide tooltip logic
 	$effect(() => {
-		// Reset tooltip visibility when chat opens/closes or config changes
 		if (open) {
 			showTooltip = false;
 			if (tooltipTimeout) {
@@ -151,7 +168,6 @@
 			return;
 		}
 
-		// Only show tooltip if displayTooltip is enabled and chat is closed
 		if (!tooltip.displayTooltip) {
 			showTooltip = false;
 			if (tooltipTimeout) {
@@ -161,10 +177,8 @@
 			return;
 		}
 
-		// Show tooltip initially
 		showTooltip = true;
 
-		// Set up auto-hide if enabled
 		if (tooltip.autoHideTooltip && tooltip.autoHideDelaySeconds > 0) {
 			if (tooltipTimeout) {
 				clearTimeout(tooltipTimeout);
@@ -209,7 +223,7 @@
 		<div
 			class="chat-window-container absolute flex flex-col items-end gap-2 chat-window-container--desktop"
 			class:is-open={open}
-			style="right: {bubble.rightPositionPx}px; bottom: {bubble.bubbleSizePx + 12}px; z-index: 1;"
+			style="right: 0; bottom: {bubble.bubbleSizePx + 12}px; z-index: 1;"
 			in:chatWindowIn
 			out:chatWindowOut
 		>
@@ -279,24 +293,27 @@
 </div>
 
 <style>
-	/* Ensure wrapper provides positioning context */
+	/* Wrapper: fixed to bottom-right, pointer-events pass through to host page */
 	.widget-preview-wrapper {
 		position: fixed !important;
+		pointer-events: none;
 		background: transparent !important;
 		background-color: transparent !important;
 	}
+	/* All interactive children need pointer-events restored */
+	.widget-preview-wrapper :global(*) {
+		pointer-events: auto;
+	}
 
-	/* Desktop: position above icon (default) */
+	/* Desktop: chat window positioned above the bubble icon */
 	.chat-window-container--desktop {
 		position: absolute !important;
-		/* Ensure chat window doesn't overflow viewport - account for bubble position and safe areas */
 		max-height: calc(100vh - 120px);
 		overflow: visible;
 		background: transparent !important;
 		background-color: transparent !important;
 		/* Add padding to make shadow visible on all sides */
 		padding: 20px;
-		/* Add left margin to prevent shadow from being cut off */
 		margin-left: 20px;
 	}
 
@@ -307,10 +324,8 @@
 
 	/* Mobile backdrop (hidden on desktop) */
 	.chat-backdrop {
-		display: none !important;
-		visibility: hidden !important;
-		opacity: 0 !important;
-		pointer-events: none !important;
+		display: none;
+		pointer-events: auto;
 	}
 
 	/* Bubble button with prominent dropshadow */
@@ -335,7 +350,7 @@
 		50% { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25), 0 4px 8px rgba(0, 0, 0, 0.15), 0 0 0 8px rgba(0, 0, 0, 0); }
 	}
 
-	/* Mobile: full-screen chat (industry standard for chat widgets) */
+	/* Mobile: full-screen chat overlay */
 	@media (max-width: 768px) {
 		.widget-preview-wrapper {
 			z-index: 2147483647 !important;
@@ -352,13 +367,8 @@
 		.chat-window-container--desktop.is-open {
 			position: fixed !important;
 			inset: 0 !important;
-			right: 0 !important;
-			bottom: 0 !important;
-			left: 0 !important;
-			top: 0 !important;
-			width: 100vw !important;
-			height: 100vh !important;
-			height: 100dvh !important;
+			width: 100% !important;
+			height: 100% !important;
 			max-height: 100dvh !important;
 			align-items: stretch !important;
 			justify-content: stretch !important;
@@ -368,12 +378,13 @@
 		}
 		.chat-window-container--desktop.is-open :global(.chat-window) {
 			flex: 1;
-			min-width: 0;
-			min-height: 0;
 			width: 100% !important;
 			height: 100% !important;
 			max-width: 100% !important;
-			max-height: 100% !important;
+			max-height: 100dvh !important;
+			min-width: 0;
+			min-height: 0;
+			border-radius: 0 !important;
 		}
 		/* Ensure bubble is always visible when chat is closed */
 		.bubble-preview {

@@ -52,23 +52,35 @@
 
 <svelte:head>
 	<title>{config.name}</title>
-	<style>
-		:global(html),
-		:global(body),
-		:global(#svelte-announcer),
-		:global([data-embed-page]) {
-			background: transparent !important;
-			background-color: transparent !important;
-		}
-		:global(.embed-widget-root),
-		:global(.widget-preview-wrapper),
-		:global(.chat-window-container) {
-			background: transparent !important;
-			background-color: transparent !important;
-		}
-	</style>
 </svelte:head>
 
-<div class="embed-widget-root w-full bg-transparent overflow-visible" data-embed-page="1" style="min-height: 0; background: transparent !important; background-color: transparent !important;">
+<div class="embed-widget-root" data-embed-page="1">
 	<WidgetPreview config={config} widgetId={data.widgetId} />
 </div>
+
+<style>
+	/* The embed page lives inside a transparent full-viewport iframe.
+	   Ensure html/body/wrapper don't add scrollbars or backgrounds. */
+	:global(html), :global(body) {
+		background: transparent !important;
+		background-color: transparent !important;
+		overflow: hidden !important;
+		margin: 0;
+		padding: 0;
+		width: 100%;
+		height: 100%;
+	}
+	:global(#svelte-announcer),
+	:global([data-embed-page]) {
+		background: transparent !important;
+		background-color: transparent !important;
+	}
+	.embed-widget-root {
+		width: 100%;
+		height: 100%;
+		min-height: 0;
+		background: transparent !important;
+		background-color: transparent !important;
+		overflow: visible;
+	}
+</style>
