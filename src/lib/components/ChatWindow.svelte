@@ -2,10 +2,20 @@
 	import type { WidgetConfig } from '$lib/widget-config';
 	import { formatMessage } from '$lib/chat-message-format';
 	import { onMount, onDestroy } from 'svelte';
+	import { fly, fade } from 'svelte/transition';
+	import { cubicOut } from 'svelte/easing';
 	import { browser } from '$app/environment';
 	import { getSessionId } from '$lib/widget-session';
 
 	let { config, widgetId, onClose } = $props<{ config: WidgetConfig; widgetId?: string; onClose: () => void }>();
+
+	// Reduced-motion support
+	let prefersReducedMotion = $state(false);
+	function dur(ms: number) { return prefersReducedMotion ? 0 : ms; }
+
+	// Stable message identity counter (prevents re-animation on poll sync)
+	let localIdCounter = 0;
+	function nextLocalId() { return ++localIdCounter; }
 
 	type CheckoutPreview = {
 		lineItemsUI: Array<{
@@ -26,9 +36,10 @@
 		};
 		checkoutUrl: string;
 	};
-	type Message = { id?: string; role: 'user' | 'bot'; content: string; avatarUrl?: string; checkoutPreview?: CheckoutPreview; createdAt?: string };
+	type Message = { id?: string; _localId: number; role: 'user' | 'bot'; content: string; avatarUrl?: string; checkoutPreview?: CheckoutPreview; createdAt?: string };
 	function mapMessage(m: { id?: string; role: string; content: string; avatarUrl?: string; checkoutPreview?: CheckoutPreview; createdAt?: string }): Message {
 		return {
+			_localId: nextLocalId(),
 			role: (m.role === 'user' ? 'user' : 'bot') as 'user' | 'bot',
 			content: m.content,
 			avatarUrl: m.avatarUrl,
@@ -59,6 +70,7 @@
 	let contentEl: HTMLDivElement;
 	let inputEl: HTMLInputElement;
 	let showScrollToBottom = $state(false);
+	let sendPulse = $state(false);
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 	const win = $derived(config.window);
@@ -71,10 +83,16 @@
 		requestAnimationFrame(updateScrollToBottomVisibility);
 	});
 
+	// Streaming state
+	let isStreaming = $state(false);
+	let streamingMessageId = $state<number | null>(null);
+
 	function addBotMessage(content: string, checkoutPreview?: CheckoutPreview) {
-		messages = [...messages, { role: 'bot', content, checkoutPreview }];
+		const id = nextLocalId();
+		messages = [...messages, { _localId: id, role: 'bot', content, checkoutPreview }];
 		showStarterPrompts = false;
 		requestAnimationFrame(() => scrollToBottom());
+		return id;
 	}
 
 	const SCROLL_NEAR_BOTTOM_PX = 120;
@@ -89,7 +107,7 @@
 	function scrollToBottom(force = false) {
 		if (!contentEl) return;
 		if (force || isNearBottom()) {
-			contentEl.scrollTop = contentEl.scrollHeight;
+			contentEl.scrollTo({ top: contentEl.scrollHeight, behavior: isStreaming ? 'auto' : 'smooth' });
 			showScrollToBottom = false;
 		}
 	}
@@ -129,8 +147,8 @@
 			} else if (list.length > messages.length) {
 				// New messages found - update and sync (merge to preserve any unsaved local messages)
 				const mappedList = list.map(mapMessage);
-				const existingIds = new Set(messages.filter(m => m.id).map(m => m.id!));
-				const newMessages = mappedList.filter(m => m.id && !existingIds.has(m.id));
+				const existingIds = new Set(messages.filter((m: Message) => m.id).map((m: Message) => m.id!));
+				const newMessages = mappedList.filter((m: Message) => m.id && !existingIds.has(m.id));
 				if (newMessages.length > 0) {
 					// Append only new messages
 					messages = [...messages, ...newMessages];
@@ -182,6 +200,12 @@
 	}
 
 	onMount(() => {
+		// Reduced-motion preference
+		const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+		prefersReducedMotion = mq.matches;
+		const onMotionChange = (e: MediaQueryListEvent) => { prefersReducedMotion = e.matches; };
+		mq.addEventListener('change', onMotionChange);
+
 		sessionId = getSessionId(widgetId, browser);
 		const willFetch = !!(widgetId && sessionId && sessionId !== 'preview');
 		if (willFetch) messagesLoading = true;
@@ -199,6 +223,7 @@
 		window.addEventListener('keydown', onKeyDown);
 		onDestroy(() => {
 			window.removeEventListener('keydown', onKeyDown);
+			mq.removeEventListener('change', onMotionChange);
 			stopPolling();
 		});
 	});
@@ -206,9 +231,11 @@
 	async function sendMessage(text: string) {
 		const trimmed = text.trim();
 		if (!trimmed) return;
-		messages = [...messages, { role: 'user', content: trimmed }];
+		messages = [...messages, { _localId: nextLocalId(), role: 'user', content: trimmed }];
 		inputText = '';
 		showStarterPrompts = false;
+		sendPulse = true;
+		setTimeout(() => { sendPulse = false; }, 200);
 		requestAnimationFrame(() => scrollToBottom(true));
 
 		// Restart polling when user sends a message (expecting n8n response)
@@ -277,20 +304,54 @@
 				const contentType = res.headers.get('content-type') ?? '';
 				// n8n can return streaming (SSE or text) or JSON
 				if (res.ok && res.body && !contentType.includes('application/json')) {
-					// Consume n8n stream: SSE (data: ...) or plain text chunks
+					// Consume n8n stream with smooth buffer for ChatGPT-like text appearance
 					n8nStreamHandled = true;
-					addBotMessage('');
+					const msgId = addBotMessage('');
 					const streamIndex = messages.length - 1;
+					isStreaming = true;
+					streamingMessageId = msgId;
+
 					const reader = res.body.getReader();
 					const decoder = new TextDecoder();
-					let buffer = '';
+					let netBuffer = '';
+					// Stream buffer: decouple network chunks from render for smooth appearance
+					const charQueue: string[] = [];
+					let streamDone = false;
+					let drainRafId: number | null = null;
+					let lastScrollTime = 0;
+
+					function drainQueue() {
+						if (charQueue.length === 0) {
+							if (streamDone) {
+								drainRafId = null;
+								return;
+							}
+							drainRafId = requestAnimationFrame(drainQueue);
+							return;
+						}
+						// Release 2-4 chars per frame for smooth appearance (~120-240 chars/sec at 60fps)
+						const charsPerFrame = charQueue.length > 30 ? 4 : charQueue.length > 10 ? 3 : 2;
+						const batch = charQueue.splice(0, charsPerFrame).join('');
+						messages = messages.map((m, i) =>
+							i === streamIndex ? { ...m, content: m.content + batch } : m
+						);
+						// Throttle scroll to every 50ms during streaming
+						const now = Date.now();
+						if (now - lastScrollTime > 50) {
+							lastScrollTime = now;
+							scrollToBottom();
+						}
+						drainRafId = requestAnimationFrame(drainQueue);
+					}
+					drainRafId = requestAnimationFrame(drainQueue);
+
 					while (true) {
 						const { done, value } = await reader.read();
 						if (done) break;
-						buffer += decoder.decode(value, { stream: true });
+						netBuffer += decoder.decode(value, { stream: true });
 						// SSE: emit on newline and take "data: " lines
-						const lines = buffer.split('\n');
-						buffer = lines.pop() ?? '';
+						const lines = netBuffer.split('\n');
+						netBuffer = lines.pop() ?? '';
 						for (const line of lines) {
 							if (line.startsWith('data: ')) {
 								const payload = line.slice(6).trim();
@@ -299,29 +360,33 @@
 									const parsed = JSON.parse(payload) as { text?: string; content?: string; delta?: string };
 									const chunk = parsed.text ?? parsed.content ?? parsed.delta ?? '';
 									if (chunk && typeof chunk === 'string') {
-										messages = messages.map((m, i) =>
-											i === streamIndex ? { ...m, content: m.content + chunk } : m
-										);
-										requestAnimationFrame(() => scrollToBottom());
+										for (const ch of chunk) charQueue.push(ch);
 									}
 								} catch {
-									// treat as plain text
 									if (payload) {
-										messages = messages.map((m, i) =>
-											i === streamIndex ? { ...m, content: m.content + payload } : m
-										);
-										requestAnimationFrame(() => scrollToBottom());
+										for (const ch of payload) charQueue.push(ch);
 									}
 								}
 							}
 						}
 					}
-					// Flush remaining buffer as plain text
-					if (buffer.trim()) {
-						messages = messages.map((m, i) =>
-							i === streamIndex ? { ...m, content: m.content + buffer } : m
-						);
+					// Flush remaining net buffer
+					if (netBuffer.trim()) {
+						for (const ch of netBuffer) charQueue.push(ch);
 					}
+					// Wait for drain to finish
+					streamDone = true;
+					await new Promise<void>((resolve) => {
+						function waitDrain() {
+							if (charQueue.length === 0) { resolve(); return; }
+							requestAnimationFrame(waitDrain);
+						}
+						waitDrain();
+					});
+					if (drainRafId) cancelAnimationFrame(drainRafId);
+					isStreaming = false;
+					streamingMessageId = null;
+					scrollToBottom();
 					// If stream yielded nothing, show error
 					if (messages[streamIndex]?.content === '') {
 						messages = messages.map((m, i) =>
@@ -536,7 +601,7 @@
 			</div>
 		{:else if messages.length === 0}
 			<!-- Welcome message -->
-			<div class="flex gap-2 items-start">
+			<div class="flex gap-2 items-start" in:fly={{ x: -12, duration: dur(300), easing: cubicOut }}>
 				{#if botStyle.showAvatar && botStyle.avatarUrl}
 					<img src={botStyle.avatarUrl} alt="Bot" class="w-10 h-10 rounded-full object-contain shrink-0" style="border-radius: {win.avatarBorderRadius}px;" />
 				{:else if botStyle.showAvatar}
@@ -556,9 +621,9 @@
 				</div>
 			</div>
 		{:else}
-			{#each messages as msg, i (i)}
+			{#each messages as msg, i (msg._localId)}
 				{#if msg.role === 'bot'}
-					<div class="flex gap-2 items-start">
+					<div class="flex gap-2 items-start" in:fly={{ x: -12, duration: dur(280), easing: cubicOut }}>
 						{#if msg.avatarUrl}
 							<img src={msg.avatarUrl} alt="Agent" class="shrink-0 object-contain rounded-full" style="width: {win.avatarSize}px; height: {win.avatarSize}px; border-radius: {win.avatarBorderRadius}px;" />
 						{:else if botStyle.showAvatar && botStyle.avatarUrl}
@@ -618,33 +683,33 @@
 										<a href={msg.checkoutPreview.checkoutUrl} target="_blank" rel="noopener noreferrer" class="chat-cta-button">GO TO CHECKOUT</a>
 									</div>
 								{:else}
-									{@html formatMessage(msg.content)}
+									{@html formatMessage(msg.content)}{#if isStreaming && streamingMessageId === msg._localId}<span class="streaming-cursor">&#9612;</span>{/if}
 								{/if}
 							</div>
-							{#if botStyle.showCopyToClipboardIcon}
-								<button type="button" class="shrink-0 opacity-70 hover:opacity-100" onclick={() => navigator.clipboard.writeText(msg.content)} title="Copy">
+							{#if botStyle.showCopyToClipboardIcon && !(isStreaming && streamingMessageId === msg._localId)}
+								<button type="button" class="shrink-0 opacity-70 hover:opacity-100 transition-opacity" onclick={() => navigator.clipboard.writeText(msg.content)} title="Copy">
 									<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
 								</button>
 							{/if}
 						</div>
 					</div>
 				{:else}
-					<div class="flex justify-end min-w-0 max-w-full">
-				<div
-					class="px-3 py-2 max-w-[85%] min-w-0 rounded-lg break-words"
-					style="
-						background-color: {bubble.backgroundColor};
-						color: {bubble.colorOfInternalIcons};
-						border-radius: {win.messageBorderRadius}px;
-					"
-				>
-					{msg.content}
-				</div>
+					<div class="flex justify-end min-w-0 max-w-full" in:fly={{ x: 12, duration: dur(280), easing: cubicOut }}>
+						<div
+							class="px-3 py-2 max-w-[85%] min-w-0 rounded-lg break-words"
+							style="
+								background-color: {bubble.backgroundColor};
+								color: {bubble.colorOfInternalIcons};
+								border-radius: {win.messageBorderRadius}px;
+							"
+						>
+							{msg.content}
+						</div>
 					</div>
 				{/if}
 			{/each}
-			{#if loading || agentTyping}
-				<div class="flex gap-2 items-start">
+			{#if (loading && !isStreaming) || agentTyping}
+				<div class="flex gap-2 items-start" in:fly={{ y: 8, duration: dur(200), easing: cubicOut }} out:fade={{ duration: dur(150) }}>
 					{#if (loading ? botStyle.showAvatar : true)}
 						{#if botStyle.showAvatar && botStyle.avatarUrl}
 							<img src={botStyle.avatarUrl} alt="" class="shrink-0 object-contain" style="width: {win.avatarSize}px; height: {win.avatarSize}px; border-radius: {win.avatarBorderRadius}px;" />
@@ -657,7 +722,7 @@
 						{/if}
 					{/if}
 					<div
-						class="px-4 py-3 rounded-lg flex gap-1 items-center"
+						class="typing-bubble px-4 py-3 rounded-lg flex gap-1 items-center"
 						style="background-color: {botStyle.backgroundColor}; color: {botStyle.textColor}; border-radius: {win.messageBorderRadius}px;"
 					>
 						<span class="typing-dot"></span>
@@ -674,6 +739,8 @@
 				onclick={() => scrollToBottom(true)}
 				title="Scroll to bottom"
 				aria-label="Scroll to latest messages"
+				in:fly={{ y: 8, duration: dur(200), easing: cubicOut }}
+				out:fade={{ duration: dur(150) }}
 			>
 				<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>
 			</button>
@@ -685,16 +752,17 @@
 			class="shrink-0 px-3 pt-2 pb-1 flex flex-wrap gap-1.5 border-t"
 			style="background-color: {win.backgroundColor}; border-color: {win.sectionBorderColor};"
 		>
-			{#each win.starterPrompts.filter((p: string) => p.trim()) as prompt}
+			{#each win.starterPrompts.filter((p: string) => p.trim()) as prompt, idx}
 				<button
 					type="button"
-					class="px-2 py-1 rounded-md border text-left transition-colors hover:opacity-90 text-xs"
+					class="px-2 py-1 rounded-md border text-left transition-all hover:opacity-90 hover:scale-[1.02] text-xs"
 					style="
 						font-size: {Math.max(11, win.starterPromptFontSizePx - 3)}px;
 						background-color: {win.starterPromptBackgroundColor};
 						color: {win.starterPromptTextColor};
 						border-color: {win.starterPromptBorderColor};
 					"
+					in:fly={{ y: 8, duration: dur(250), delay: dur(idx * 60), easing: cubicOut }}
 					onclick={() => handleStarterPrompt(prompt)}
 				>
 					{prompt}
@@ -726,12 +794,13 @@
 		/>
 		<button
 			type="submit"
-			class="shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-opacity disabled:opacity-50"
+			class="shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all disabled:opacity-50 send-button"
+			class:send-pulse={sendPulse}
 			style="background-color: {win.sendButtonBackgroundColor}; color: {win.sendButtonIconColor};"
 			disabled={loading}
 			title="Send"
 		>
-			<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0V11"/></svg>
+			<svg class="w-5 h-5 transition-transform" class:rotate-12={loading} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0V11"/></svg>
 		</button>
 	</form>
 
@@ -770,6 +839,10 @@
 		}
 	}
 
+	/* Typing indicator */
+	.typing-bubble {
+		animation: typing-pulse 2s ease-in-out infinite;
+	}
 	.typing-dot {
 		width: 6px;
 		height: 6px;
@@ -784,6 +857,49 @@
 	@keyframes typing-bounce {
 		0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
 		40% { transform: scale(1); opacity: 1; }
+	}
+	@keyframes typing-pulse {
+		0%, 100% { transform: scale(1); }
+		50% { transform: scale(1.02); }
+	}
+
+	/* Streaming cursor */
+	:global(.streaming-cursor) {
+		display: inline;
+		animation: cursor-blink 530ms steps(1) infinite;
+		font-weight: 100;
+		margin-left: 1px;
+	}
+	@keyframes cursor-blink {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0; }
+	}
+
+	/* Send button pulse */
+	.send-button {
+		transition: transform 0.15s ease-out, opacity 0.15s;
+	}
+	.send-button.send-pulse {
+		transform: scale(0.88);
+	}
+	.send-button:active {
+		transform: scale(0.92);
+	}
+	.rotate-12 {
+		transform: rotate(12deg);
+	}
+
+	/* Reduced-motion support */
+	@media (prefers-reduced-motion: reduce) {
+		.typing-dot,
+		.typing-bubble,
+		:global(.streaming-cursor) {
+			animation-duration: 0.01ms !important;
+			animation-iteration-count: 1 !important;
+		}
+		.send-button {
+			transition-duration: 0.01ms !important;
+		}
 	}
 	.chat-window .overflow-y-auto::-webkit-scrollbar {
 		width: 6px;

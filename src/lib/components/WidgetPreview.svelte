@@ -1,8 +1,9 @@
 <script lang="ts">
 	import type { WidgetConfig } from '$lib/widget-config';
-	import { fly } from 'svelte/transition';
+	import { fly, fade } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import { browser } from '$app/environment';
+	import { onMount } from 'svelte';
 	import { getSessionId } from '$lib/widget-session';
 	import ChatWindow from './ChatWindow.svelte';
 
@@ -10,6 +11,41 @@
 	let iconError = $state(false);
 	let open = $state(false);
 	let visitorName = $state<string | null>(null);
+	let prefersReducedMotion = $state(false);
+
+	function dur(ms: number) { return prefersReducedMotion ? 0 : ms; }
+
+	onMount(() => {
+		const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+		prefersReducedMotion = mq.matches;
+		mq.addEventListener('change', (e) => { prefersReducedMotion = e.matches; });
+	});
+
+	// Custom open transition: scale + translate + opacity
+	function chatWindowIn(node: Element) {
+		const d = dur(250);
+		return {
+			duration: d,
+			easing: cubicOut,
+			css: (t: number) => `
+				opacity: ${t};
+				transform: translateY(${(1 - t) * 12}px) scale(${0.95 + t * 0.05});
+				transform-origin: bottom right;
+			`
+		};
+	}
+	function chatWindowOut(node: Element) {
+		const d = dur(180);
+		return {
+			duration: d,
+			easing: cubicOut,
+			css: (t: number) => `
+				opacity: ${t};
+				transform: translateY(${(1 - t) * 8}px) scale(${0.96 + t * 0.04});
+				transform-origin: bottom right;
+			`
+		};
+	}
 
 	const bubble = $derived(config.bubble);
 	const tooltip = $derived(config.tooltip);
@@ -62,12 +98,20 @@
 	style="right: {bubble.rightPositionPx}px; bottom: {bubble.bottomPositionPx}px; position: fixed;"
 >
 	{#if open}
+		<!-- Mobile backdrop overlay -->
+		<div
+			class="chat-backdrop"
+			onclick={() => (open = false)}
+			in:fade={{ duration: dur(200) }}
+			out:fade={{ duration: dur(150) }}
+			role="presentation"
+		></div>
 		<div
 			class="chat-window-container absolute flex flex-col items-end gap-2 chat-window-container--desktop"
 			class:is-open={open}
 			style="right: 0; bottom: {bubble.bubbleSizePx + 12}px; z-index: 1;"
-			in:fly={{ y: 12, duration: 200, easing: cubicOut }}
-			out:fly={{ y: 8, duration: 150, easing: cubicOut }}
+			in:chatWindowIn
+			out:chatWindowOut
 		>
 			<ChatWindow config={config} widgetId={widgetId} onClose={() => (open = false)} />
 		</div>
@@ -88,13 +132,16 @@
 				tabindex="0"
 				onclick={() => (open = true)}
 				onkeydown={(e) => e.key === 'Enter' && (open = true)}
+				in:fly={{ y: 4, duration: dur(200), easing: cubicOut }}
+				out:fade={{ duration: dur(120) }}
 			>
 				{tooltipMessage}
 			</div>
 		{/if}
 		<button
 		type="button"
-		class="bubble-preview flex items-center justify-center flex-shrink-0 cursor-pointer hover:opacity-90 transition-opacity border-0 rounded-none relative z-20"
+		class="bubble-preview bubble-attention flex items-center justify-center flex-shrink-0 cursor-pointer hover:opacity-90 transition-all border-0 rounded-none relative z-20"
+		class:bubble-open={open}
 		style="
 			width: {bubble.bubbleSizePx}px;
 			height: {bubble.bubbleSizePx}px;
@@ -150,8 +197,38 @@
 		overflow: hidden;
 	}
 
+	/* Mobile backdrop (hidden on desktop) */
+	.chat-backdrop {
+		display: none;
+	}
+
+	/* Bubble attention pulse — plays 3 times on load, then stops */
+	.bubble-attention {
+		animation: bubble-pulse 2s ease-in-out 3;
+		transition: transform 0.2s ease-out;
+	}
+	.bubble-attention:hover {
+		transform: scale(1.05);
+	}
+	.bubble-attention.bubble-open {
+		transform: scale(0.95);
+	}
+	@keyframes bubble-pulse {
+		0%, 100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.15); }
+		50% { box-shadow: 0 0 0 8px rgba(0, 0, 0, 0); }
+	}
+
 	/* Mobile: full-screen chat (industry standard for chat widgets) */
 	@media (max-width: 768px) {
+		.chat-backdrop {
+			display: block;
+			position: fixed;
+			inset: 0;
+			background: rgba(0, 0, 0, 0.3);
+			z-index: 0;
+			-webkit-backdrop-filter: blur(2px);
+			backdrop-filter: blur(2px);
+		}
 		.chat-window-container--desktop.is-open {
 			position: fixed !important;
 			inset: 0 !important;
@@ -169,6 +246,18 @@
 			flex: 1;
 			min-width: 0;
 			min-height: 0;
+		}
+	}
+
+	/* Reduced-motion support */
+	@media (prefers-reduced-motion: reduce) {
+		.bubble-attention {
+			animation: none;
+		}
+		.bubble-attention,
+		.bubble-attention:hover,
+		.bubble-attention.bubble-open {
+			transition-duration: 0.01ms !important;
 		}
 	}
 </style>
