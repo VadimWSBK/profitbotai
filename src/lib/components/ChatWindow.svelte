@@ -1123,6 +1123,8 @@
 	/* Data-driven checkout preview (line items + summary + button) */
 	:global(.checkout-preview-block) {
 		margin-top: 0.75em;
+		background: transparent !important;
+		background-color: transparent !important;
 	}
 	:global(.checkout-preview-block .line-item) {
 		display: flex;
@@ -1184,6 +1186,8 @@
 		margin-top: 1em;
 		padding-top: 0.75em;
 		border-top: 1px solid rgba(255, 255, 255, 0.2);
+		background: transparent !important;
+		background-color: transparent !important;
 	}
 	:global(.checkout-summary .summary-row) {
 		display: flex;

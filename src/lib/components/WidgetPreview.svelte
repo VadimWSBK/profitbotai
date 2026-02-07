@@ -203,7 +203,10 @@
 
 	/* Mobile backdrop (hidden on desktop) */
 	.chat-backdrop {
-		display: none;
+		display: none !important;
+		visibility: hidden !important;
+		opacity: 0 !important;
+		pointer-events: none !important;
 	}
 
 	/* Bubble attention pulse — plays 3 times on load, then stops */

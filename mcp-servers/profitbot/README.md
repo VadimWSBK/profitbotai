@@ -72,6 +72,13 @@ npx tsx mcp-servers/profitbot/index.ts
 
 You should see: `ProfitBot MCP server running on stdio (workspace: <workspace-id>)`
 
+## Integration Options
+
+The ProfitBot MCP server can be used with:
+
+1. **OpenClaw** - Via stdio MCP protocol (see below)
+2. **N8N** - Via HTTP API calls (see [N8N_INTEGRATION.md](./N8N_INTEGRATION.md))
+
 ## Connecting to OpenClaw
 
 ### MCP Configuration
@@ -312,6 +319,20 @@ To extend the MCP server:
 3. Add corresponding tool definitions in `setupToolHandlers`
 4. Add tool handlers in the `CallToolRequestSchema` handler
 5. Update this README with new tool documentation
+
+## N8N Integration
+
+You can also use the ProfitBot MCP server with N8N workflows! See the detailed guide:
+
+- **[N8N_INTEGRATION.md](./N8N_INTEGRATION.md)** - Complete guide for using ProfitBot MCP with N8N
+- **[N8N_QUICK_REFERENCE.md](./N8N_QUICK_REFERENCE.md)** - Quick reference for common actions
+
+The ProfitBot MCP server exposes an HTTP API endpoint (`/api/mcp`) that N8N can call directly using HTTP Request nodes. This allows you to:
+- List widgets, leads, conversations, and contacts
+- Send messages and emails
+- Generate quotes
+- Manage Shopify orders and customers
+- And much more!
 
 ## License
 
