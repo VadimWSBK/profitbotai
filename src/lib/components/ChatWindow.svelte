@@ -40,11 +40,13 @@
 	type Message = { id?: string; _localId: number; role: 'user' | 'bot'; content: string; avatarUrl?: string; checkoutPreview?: CheckoutPreview; createdAt?: string };
 	function mapMessage(m: { id?: string; role: string; content: string; avatarUrl?: string; checkoutPreview?: CheckoutPreview; createdAt?: string }): Message {
 		return {
+			id: m.id,
 			_localId: nextLocalId(),
 			role: (m.role === 'user' ? 'user' : 'bot') as 'user' | 'bot',
 			content: m.content,
 			avatarUrl: m.avatarUrl,
-			checkoutPreview: m.checkoutPreview
+			checkoutPreview: m.checkoutPreview,
+			createdAt: m.createdAt
 		};
 	}
 	function stripCheckoutBlock(content: string): string {
@@ -97,9 +99,50 @@
 	let isStreaming = $state(false);
 	let streamingMessageId = $state<number | null>(null);
 
+	function formatTimestamp(createdAt?: string): string {
+		if (!createdAt) return '';
+		try {
+			const date = new Date(createdAt);
+			if (isNaN(date.getTime())) return '';
+			
+			const now = new Date();
+			const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+			const messageDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+			const diffDays = Math.floor((today.getTime() - messageDate.getTime()) / (1000 * 60 * 60 * 24));
+			
+			const timeStr = date.toLocaleTimeString('en-US', { 
+				hour: 'numeric', 
+				minute: '2-digit',
+				hour12: true 
+			});
+			
+			if (diffDays === 0) {
+				// Today - just show time
+				return timeStr;
+			} else if (diffDays === 1) {
+				// Yesterday
+				return `Yesterday ${timeStr}`;
+			} else if (diffDays < 7) {
+				// This week - show day name
+				return `${date.toLocaleDateString('en-US', { weekday: 'short' })} ${timeStr}`;
+			} else {
+				// Older - show date and time
+				return date.toLocaleDateString('en-US', { 
+					month: 'short', 
+					day: 'numeric',
+					hour: 'numeric',
+					minute: '2-digit',
+					hour12: true
+				});
+			}
+		} catch {
+			return '';
+		}
+	}
+
 	function addBotMessage(content: string, checkoutPreview?: CheckoutPreview) {
 		const id = nextLocalId();
-		messages = [...messages, { _localId: id, role: 'bot', content, checkoutPreview }];
+		messages = [...messages, { _localId: id, role: 'bot', content, checkoutPreview, createdAt: new Date().toISOString() }];
 		showStarterPrompts = false;
 		requestAnimationFrame(() => scrollToBottom());
 		return id;
@@ -147,8 +190,8 @@
 			
 			// On refresh or initial load, always load all messages from database
 			if (forceRefresh || messages.length === 0) {
+				messages = list.map(mapMessage);
 				if (list.length > 0) {
-					messages = list.map(mapMessage);
 					showStarterPrompts = false;
 					requestAnimationFrame(() => scrollToBottom(true));
 				} else {
@@ -183,10 +226,13 @@
 				stopPolling();
 			}
 			lastMessageCount = list.length;
-		} catch {
-			// ignore
+		} catch (err) {
+			console.error('Error fetching stored messages:', err);
 		} finally {
 			messagesLoading = false;
+			if (forceRefresh) {
+				isRefreshing = false;
+			}
 		}
 	}
 
@@ -253,7 +299,7 @@
 	async function sendMessage(text: string) {
 		const trimmed = text.trim();
 		if (!trimmed) return;
-		messages = [...messages, { _localId: nextLocalId(), role: 'user', content: trimmed }];
+		messages = [...messages, { _localId: nextLocalId(), role: 'user', content: trimmed, createdAt: new Date().toISOString() }];
 		inputText = '';
 		showStarterPrompts = false;
 		sendPulse = true;
@@ -669,77 +715,91 @@
 								<svg class="w-5 h-5 text-gray-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2a2 2 0 012 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 017 7h1v1h-3v2h4v2h-6v-4H9v-1a5 5 0 01-5-5H4V4.73C3.4 4.39 3 3.74 3 3a2 2 0 012-2h7z"/></svg>
 							</div>
 						{/if}
-						<div
-							class="px-3 py-2 max-w-[85%] min-w-0 rounded-lg flex items-start gap-2 overflow-hidden"
-							style="
-								background-color: {botStyle.backgroundColor};
-								color: {botStyle.textColor};
-								border-radius: {win.messageBorderRadius}px;
-							"
-						>
-							<div class="flex-1 min-w-0 overflow-x-auto overflow-y-visible max-w-full break-words">
-								{#if msg.checkoutPreview}
-									{#if stripCheckoutBlock(msg.content).trim()}
-										<div class="chat-message-intro">{@html formatMessage(stripCheckoutBlock(msg.content))}</div>
-									{/if}
-									<div class="checkout-preview-block">
-										{#each msg.checkoutPreview.lineItemsUI as item}
-											<div class="line-item">
-												<div class="image-wrap">
-													{#if item.imageUrl}
-														<img src={item.imageUrl} alt={item.title} />
-													{/if}
-													<span class="qty-badge">{item.quantity}</span>
-												</div>
-												<div class="details">
-													<div class="title">{item.title}</div>
-													<div class="price-grid">
-														<div class="label">Unit Price</div>
-														<div class="label">Total</div>
-														<div class="value">${item.unitPrice}</div>
-														<div class="value">${item.lineTotal}</div>
+						<div class="flex flex-col max-w-[85%] min-w-0">
+							<div
+								class="px-3 py-2 rounded-lg flex items-start gap-2 overflow-hidden"
+								style="
+									background-color: {botStyle.backgroundColor};
+									color: {botStyle.textColor};
+									border-radius: {win.messageBorderRadius}px;
+								"
+							>
+								<div class="flex-1 min-w-0 overflow-x-auto overflow-y-visible max-w-full break-words">
+									{#if msg.checkoutPreview}
+										{#if stripCheckoutBlock(msg.content).trim()}
+											<div class="chat-message-intro">{@html formatMessage(stripCheckoutBlock(msg.content))}</div>
+										{/if}
+										<div class="checkout-preview-block">
+											{#each msg.checkoutPreview.lineItemsUI as item}
+												<div class="line-item">
+													<div class="image-wrap">
+														{#if item.imageUrl}
+															<img src={item.imageUrl} alt={item.title} />
+														{/if}
+														<span class="qty-badge">{item.quantity}</span>
+													</div>
+													<div class="details">
+														<div class="title">{item.title}</div>
+														<div class="price-grid">
+															<div class="label">Unit Price</div>
+															<div class="label">Total</div>
+															<div class="value">${item.unitPrice}</div>
+															<div class="value">${item.lineTotal}</div>
+														</div>
 													</div>
 												</div>
+											{/each}
+											<div class="checkout-summary">
+												<div class="summary-row"><span class="summary-label">Items</span><span class="summary-value">{msg.checkoutPreview.summary.totalItems}</span></div>
+												{#if msg.checkoutPreview.summary.discountPercent != null}
+													<div class="summary-row"><span class="summary-label">Discount</span><span class="summary-value">{msg.checkoutPreview.summary.discountPercent}% OFF</span></div>
+												{/if}
+												<div class="summary-row"><span class="summary-label">Shipping</span><span class="summary-value">FREE</span></div>
+												<div class="summary-divider"></div>
+												<div class="summary-row"><span class="summary-label">Subtotal</span><span class="summary-value">${msg.checkoutPreview.summary.subtotal} {msg.checkoutPreview.summary.currency}</span></div>
+												{#if msg.checkoutPreview.summary.discountAmount != null}
+													<div class="summary-row"><span class="summary-label">Savings</span><span class="summary-value">-${msg.checkoutPreview.summary.discountAmount}</span></div>
+												{/if}
+												<div class="summary-row summary-total"><span class="summary-label">Total</span><span class="summary-value">${msg.checkoutPreview.summary.total} {msg.checkoutPreview.summary.currency}</span></div>
+												<div class="summary-footer">GST included</div>
 											</div>
-										{/each}
-										<div class="checkout-summary">
-											<div class="summary-row"><span class="summary-label">Items</span><span class="summary-value">{msg.checkoutPreview.summary.totalItems}</span></div>
-											{#if msg.checkoutPreview.summary.discountPercent != null}
-												<div class="summary-row"><span class="summary-label">Discount</span><span class="summary-value">{msg.checkoutPreview.summary.discountPercent}% OFF</span></div>
-											{/if}
-											<div class="summary-row"><span class="summary-label">Shipping</span><span class="summary-value">FREE</span></div>
-											<div class="summary-divider"></div>
-											<div class="summary-row"><span class="summary-label">Subtotal</span><span class="summary-value">${msg.checkoutPreview.summary.subtotal} {msg.checkoutPreview.summary.currency}</span></div>
-											{#if msg.checkoutPreview.summary.discountAmount != null}
-												<div class="summary-row"><span class="summary-label">Savings</span><span class="summary-value">-${msg.checkoutPreview.summary.discountAmount}</span></div>
-											{/if}
-											<div class="summary-row summary-total"><span class="summary-label">Total</span><span class="summary-value">${msg.checkoutPreview.summary.total} {msg.checkoutPreview.summary.currency}</span></div>
-											<div class="summary-footer">GST included</div>
+											<a href={msg.checkoutPreview.checkoutUrl} target="_blank" rel="noopener noreferrer" class="chat-cta-button">GO TO CHECKOUT</a>
 										</div>
-										<a href={msg.checkoutPreview.checkoutUrl} target="_blank" rel="noopener noreferrer" class="chat-cta-button">GO TO CHECKOUT</a>
-									</div>
-								{:else}
-									{@html formatMessage(msg.content)}{#if isStreaming && streamingMessageId === msg._localId}<span class="streaming-cursor">&#9612;</span>{/if}
+									{:else}
+										{@html formatMessage(msg.content)}{#if isStreaming && streamingMessageId === msg._localId}<span class="streaming-cursor">&#9612;</span>{/if}
+									{/if}
+								</div>
+								{#if botStyle.showCopyToClipboardIcon && !(isStreaming && streamingMessageId === msg._localId)}
+									<button type="button" class="shrink-0 opacity-70 hover:opacity-100 transition-opacity" onclick={() => navigator.clipboard.writeText(msg.content)} title="Copy">
+										<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+									</button>
 								{/if}
 							</div>
-							{#if botStyle.showCopyToClipboardIcon && !(isStreaming && streamingMessageId === msg._localId)}
-								<button type="button" class="shrink-0 opacity-70 hover:opacity-100 transition-opacity" onclick={() => navigator.clipboard.writeText(msg.content)} title="Copy">
-									<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-								</button>
+							{#if msg.createdAt}
+								<div class="text-xs opacity-60 mt-1 px-1" style="color: {botStyle.textColor};">
+									{formatTimestamp(msg.createdAt)}
+								</div>
 							{/if}
 						</div>
 					</div>
 				{:else}
 					<div class="flex justify-end min-w-0 max-w-full" in:fly={{ x: 12, duration: dur(280), easing: cubicOut }}>
-						<div
-							class="px-3 py-2 max-w-[85%] min-w-0 rounded-lg break-words"
-							style="
-								background-color: {bubble.backgroundColor};
-								color: {bubble.colorOfInternalIcons};
-								border-radius: {win.messageBorderRadius}px;
-							"
-						>
-							{msg.content}
+						<div class="flex flex-col items-end max-w-[85%] min-w-0">
+							<div
+								class="px-3 py-2 rounded-lg break-words"
+								style="
+									background-color: {bubble.backgroundColor};
+									color: {bubble.colorOfInternalIcons};
+									border-radius: {win.messageBorderRadius}px;
+								"
+							>
+								{msg.content}
+							</div>
+							{#if msg.createdAt}
+								<div class="text-xs opacity-60 mt-1 px-1" style="color: {bubble.colorOfInternalIcons};">
+									{formatTimestamp(msg.createdAt)}
+								</div>
+							{/if}
 						</div>
 					</div>
 				{/if}
@@ -1269,5 +1329,12 @@
 	}
 	:global(.chat-message-intro) {
 		margin-bottom: 0.5em;
+	}
+	
+	/* Message timestamps */
+	.chat-window .text-xs {
+		font-size: 0.7rem;
+		line-height: 1.2;
+		user-select: none;
 	}
 </style>

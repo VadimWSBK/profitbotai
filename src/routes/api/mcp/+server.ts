@@ -1343,6 +1343,55 @@ export const POST: RequestHandler = async (event) => {
 				}
 			}
 
+			case 'create_discount': {
+				const { widgetId, discount_percent } = params;
+				if (!widgetId) {
+					return json({ error: 'widgetId required' }, { status: 400 });
+				}
+
+				// Verify widget belongs to workspace
+				const { data: widget, error: widgetErr } = await supabase
+					.from('widgets')
+					.select('id, workspace_id')
+					.eq('id', widgetId)
+					.eq('workspace_id', authInfo.workspaceId)
+					.single();
+				if (widgetErr || !widget) {
+					if (widgetErr?.code === 'PGRST116') return json({ error: 'Widget not found' }, { status: 404 });
+					return json({ error: 'Widget not found or access denied' }, { status: 404 });
+				}
+
+				const ALLOWED_PERCENTS = [10, 15] as const;
+				const CODE_BY_PERCENT: Record<number, string> = { 10: 'CHAT10', 15: 'CHAT15' };
+
+				const raw = typeof discount_percent === 'number' ? discount_percent : undefined;
+				const discountPercent = raw != null && ALLOWED_PERCENTS.includes(raw as (typeof ALLOWED_PERCENTS)[number])
+					? (raw as (typeof ALLOWED_PERCENTS)[number])
+					: null;
+
+				if (discountPercent === null) {
+					return json(
+						{ error: 'discount_percent is required and must be 10 or 15.' },
+						{ status: 400 }
+					);
+				}
+
+				const code = CODE_BY_PERCENT[discountPercent];
+				const message =
+					discountPercent === 10
+						? 'A 10% discount has been applied. When you ask for your checkout link, the discount will be included automatically.'
+						: 'A 15% discount has been applied. When you ask for your checkout link, the discount will be included automatically.';
+
+				return json({
+					success: true,
+					data: {
+						discountPercent,
+						code,
+						message
+					}
+				});
+			}
+
 			case 'list_tools': {
 				// Return list of available tools
 				return json({
@@ -1380,6 +1429,7 @@ export const POST: RequestHandler = async (event) => {
 							'upload_quote_image',
 							'get_product_pricing',
 							'create_diy_checkout',
+							'create_discount',
 							'shopify_list_orders',
 							'shopify_search_orders',
 							'shopify_get_order',

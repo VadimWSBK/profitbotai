@@ -161,6 +161,9 @@ export async function createDiyCheckoutForOwner(
 	const total = Math.round((subtotal - discountAmount) * 100) / 100;
 
 	const noteParts = lineItems.map((li) => `${li.quantity}× ${li.title}`).join(', ');
+	
+	// Try creating draft order with variant_id first, but if it fails due to unavailable variant,
+	// retry without variant_id (Shopify will create a custom line item)
 	const result = await createDraftOrder(config, {
 		email: email?.trim() || undefined,
 		line_items: lineItems.map((li) => ({
@@ -174,6 +177,69 @@ export async function createDiyCheckoutForOwner(
 		currency,
 		applied_discount: appliedDiscount
 	});
+
+	// If variant is unavailable, retry without variant_id (custom line items)
+	if (!result.ok && result.error?.includes('no longer available')) {
+		const retryResult = await createDraftOrder(config, {
+			email: email?.trim() || undefined,
+			line_items: lineItems.map((li) => ({
+				title: li.title,
+				quantity: li.quantity,
+				price: li.price
+				// Omit variant_id - Shopify will create custom line items
+			})),
+			note: `DIY quote: ${litres}L total (${noteParts})`,
+			tags: 'diy,chat',
+			currency,
+			applied_discount: appliedDiscount
+		});
+		if (!retryResult.ok) {
+			return { ok: false, error: retryResult.error ?? 'Failed to create checkout link. Product may be unavailable in Shopify.' };
+		}
+		// Use retry result - it has the same structure as result
+		if (!retryResult.checkoutUrl) return { ok: false, error: 'Checkout link was not returned by Shopify.' };
+		
+		const fmt = (n: number) => n.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+		const totalItems = lineItems.reduce((sum, li) => sum + li.quantity, 0);
+
+		const lineItemsUI = lineItems.map((li) => {
+			const unitPrice = Number(li.price);
+			const quantity = li.quantity;
+			const lineTotal = unitPrice * quantity;
+			const variantMatch = /\d+\s*L\b/i.exec(li.title);
+			const variant = variantMatch ? variantMatch[0].trim() : null;
+			return {
+				imageUrl: li.imageUrl ?? null,
+				title: li.title,
+				variant,
+				quantity,
+				unitPrice: fmt(unitPrice),
+				lineTotal: fmt(lineTotal)
+			};
+		});
+
+		const summary = {
+			totalItems,
+			subtotal: fmt(subtotal),
+			total: fmt(total),
+			currency,
+			...(appliedDiscount
+				? {
+						discountPercent: Number(appliedDiscount.value),
+						discountAmount: fmt(discountAmount)
+					}
+				: {})
+		};
+
+		return {
+			ok: true,
+			data: {
+				checkoutUrl: retryResult.checkoutUrl,
+				lineItemsUI,
+				summary
+			}
+		};
+	}
 
 	if (!result.ok) return { ok: false, error: result.error ?? 'Failed to create checkout link' };
 	if (!result.checkoutUrl) return { ok: false, error: 'Checkout link was not returned by Shopify.' };
