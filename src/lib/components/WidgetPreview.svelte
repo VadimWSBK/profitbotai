@@ -303,14 +303,15 @@
 		background: transparent !important;
 		background-color: transparent !important;
 	}
-	/* Explicitly restore pointer-events on interactive elements */
-	.widget-preview-wrapper > * {
+	/* Only restore pointer-events on interactive elements (button, tooltip, chat window) */
+	.widget-preview-wrapper > div {
 		pointer-events: auto;
 	}
 	.bubble-preview,
 	.tooltip-preview,
 	.chat-backdrop,
-	.chat-window-container {
+	.chat-window-container,
+	.chat-window-container * {
 		pointer-events: auto !important;
 	}
 

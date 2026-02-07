@@ -35,8 +35,9 @@ const EMBED_SCRIPT = String.raw`
     // Mobile: start small (just the bubble), expand to fullscreen when chat opens
     iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:100px;height:100px;border:none;z-index:2147483647;background:transparent;overflow:visible;pointer-events:auto;';
   } else {
-    // Desktop: full-viewport transparent overlay — pointer-events pass through
-    iframe.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:none;z-index:2147483647;background:transparent;pointer-events:none;overflow:visible;';
+    // Desktop: full-viewport transparent overlay — iframe needs pointer-events:auto so button is clickable
+    // The widget inside handles pointer-events internally to allow clicks only on button/chat window
+    iframe.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:none;z-index:2147483647;background:transparent;pointer-events:auto;overflow:visible;';
   }
 
   document.body.appendChild(iframe);
@@ -50,12 +51,14 @@ const EMBED_SCRIPT = String.raw`
         iframe.style.height = '100%';
         iframe.style.pointerEvents = 'auto';
       }
+      // Desktop: iframe already has pointer-events:auto, no change needed
     } else if (e.data.type === 'chat-closed') {
       if (isMobile) {
         iframe.style.width = '100px';
         iframe.style.height = '100px';
         iframe.style.pointerEvents = 'auto';
       }
+      // Desktop: iframe keeps pointer-events:auto (widget handles pointer-events internally)
     }
   });
 
@@ -85,7 +88,8 @@ const EMBED_SCRIPT = String.raw`
   window.addEventListener('resize', function() {
     isMobile = window.innerWidth <= 768;
     if (!isMobile) {
-      iframe.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:none;z-index:2147483647;background:transparent;pointer-events:none;overflow:visible;';
+      // Desktop: iframe needs pointer-events:auto so button is clickable
+      iframe.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:none;z-index:2147483647;background:transparent;pointer-events:auto;overflow:visible;';
     }
   });
 })();
