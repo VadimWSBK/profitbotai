@@ -159,8 +159,8 @@ export const POST: RequestHandler = async (event) => {
 		.from('contacts')
 		.update({
 			name: mergedName,
-			email: mergedEmails.length > 0 ? mergedEmails : null,
-			phone: mergedPhones.length > 0 ? mergedPhones : null,
+			email: mergedEmails.length > 0 ? mergedEmails : [],
+			phone: mergedPhones.length > 0 ? mergedPhones : [],
 			address: mergedAddress,
 			street_address: mergedStreetAddress,
 			city: mergedCity,
@@ -168,7 +168,7 @@ export const POST: RequestHandler = async (event) => {
 			postcode: mergedPostcode,
 			country: mergedCountry,
 			note: mergedNote,
-			tags: mergedTags.length > 0 ? mergedTags : null,
+			tags: mergedTags.length > 0 ? mergedTags : [],
 			pdf_quotes: allPdfQuotes.length > 0 ? allPdfQuotes : [],
 			shopify_orders: allShopifyOrders.length > 0 ? allShopifyOrders : [],
 			created_at: mergedCreatedAt,
