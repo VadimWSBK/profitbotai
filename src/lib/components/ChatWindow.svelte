@@ -49,17 +49,39 @@
 			createdAt: m.createdAt
 		};
 	}
-	function stripCheckoutBlock(content: string): string {
-		const start = content.search(/\*\*[🧾\s]*Your [Cc]heckout [Pp]review\*\*/i);
-		if (start < 0) return content;
-		const before = content.slice(0, start).replace(/\n+$/, '');
-		const afterStart = content.slice(start);
+	function stripCheckoutBlock(content: string, checkoutUrl?: string): string {
+		if (!content) return content;
+		
+		// Remove the checkout URL if provided (to avoid showing it as a raw link)
+		let cleaned = content;
+		if (checkoutUrl) {
+			// Escape special regex characters in the URL
+			const escapedUrl = checkoutUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+			const urlPattern = new RegExp(escapedUrl, 'gi');
+			cleaned = cleaned.replace(urlPattern, '').trim();
+		}
+		
+		const start = cleaned.search(/\*\*[🧾\s]*Your [Cc]heckout [Pp]review\*\*/i);
+		if (start < 0) {
+			// Also check for raw checkout URLs (Shopify cart URLs or invoice URLs)
+			const checkoutUrlPattern = /(https?:\/\/[^\s<>"']*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"']*)/gi;
+			cleaned = cleaned.replace(checkoutUrlPattern, '').trim();
+			return cleaned;
+		}
+		const before = cleaned.slice(0, start).replace(/\n+$/, '');
+		const afterStart = cleaned.slice(start);
+		// Match markdown links like [GO TO CHECKOUT](url) or [Buy now](url)
 		const linkMatch = afterStart.match(/\[GO TO CHECKOUT\]\s*\([^)]+\)/i) ?? afterStart.match(/\[Buy now[^\]]*\]\s*\([^)]+\)/i);
 		if (linkMatch) {
 			const rest = afterStart.slice(linkMatch.index! + linkMatch[0].length).replace(/^\s*\n?/, '');
-			return (before + (rest ? '\n\n' + rest : '')).trim();
+			// Also remove any raw URLs that might be in the rest
+			const checkoutUrlPattern = /(https?:\/\/[^\s<>"']*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"']*)/gi;
+			const cleanedRest = rest.replace(checkoutUrlPattern, '').trim();
+			return (before + (cleanedRest ? '\n\n' + cleanedRest : '')).trim();
 		}
-		return before.trim() || content;
+		// Remove any raw checkout URLs from the before part too
+		const checkoutUrlPattern = /(https?:\/\/[^\s<>"']*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"']*)/gi;
+		return before.replace(checkoutUrlPattern, '').trim() || cleaned;
 	}
 
 	let sessionId = $state('');
@@ -726,8 +748,8 @@
 							>
 								<div class="flex-1 min-w-0 overflow-x-auto overflow-y-visible max-w-full break-words">
 									{#if msg.checkoutPreview}
-										{#if stripCheckoutBlock(msg.content).trim()}
-											<div class="chat-message-intro">{@html formatMessage(stripCheckoutBlock(msg.content))}</div>
+										{#if stripCheckoutBlock(msg.content, msg.checkoutPreview.checkoutUrl).trim()}
+											<div class="chat-message-intro">{@html formatMessage(stripCheckoutBlock(msg.content, msg.checkoutPreview.checkoutUrl))}</div>
 										{/if}
 										<div class="checkout-preview-block">
 											{#each msg.checkoutPreview.lineItemsUI as item}

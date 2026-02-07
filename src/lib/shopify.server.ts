@@ -315,11 +315,45 @@ export async function createDraftOrder(
 	if (!res.ok) return { ok: false, error: res.error ?? 'Failed to create draft order' };
 	const draft = res.data?.draft_order;
 	if (!draft?.id) return { ok: false, error: 'Draft order not returned' };
+	
+	// Build a proper checkout URL with variant IDs if available
+	// Shopify cart URL format: https://{shop}.myshopify.com/cart/{variant_id}:{quantity},{variant_id}:{quantity}
+	let checkoutUrl: string | undefined;
+	const itemsWithVariants = input.line_items.filter((item) => item.variant_id != null && item.variant_id > 0);
+	if (itemsWithVariants.length > 0) {
+		// Build cart URL with variant IDs
+		const cartItems = itemsWithVariants.map((item) => `${item.variant_id}:${item.quantity}`).join(',');
+		// Extract shop name from shopDomain (normalizedShopDomain removes protocol and trailing slashes)
+		// It could be "myshop.myshopify.com" or just "myshop" or a custom domain
+		let shopName = config.shopDomain;
+		// Remove protocol if present
+		shopName = shopName.replace(/^https?:\/\//, '');
+		// Remove .myshopify.com if present to get just the shop name
+		shopName = shopName.replace(/\.myshopify\.com.*$/, '');
+		// Remove any path
+		shopName = shopName.split('/')[0];
+		// Build the cart URL
+		checkoutUrl = `https://${shopName}.myshopify.com/cart/${cartItems}`;
+		
+		// Add discount code if applicable
+		if (input.applied_discount && input.applied_discount.value) {
+			const discountPercent = Number.parseFloat(input.applied_discount.value);
+			// Map discount percent to discount code (e.g., 10% -> CHAT10, 15% -> CHAT15)
+			const discountCode = discountPercent === 10 ? 'CHAT10' : discountPercent === 15 ? 'CHAT15' : null;
+			if (discountCode) {
+				checkoutUrl += `?discount=${encodeURIComponent(discountCode)}`;
+			}
+		}
+	} else {
+		// Fall back to invoice URL if no variant IDs available
+		checkoutUrl = draft.invoice_url ?? undefined;
+	}
+	
 	return {
 		ok: true,
 		draftOrderId: draft.id,
 		name: draft.name,
-		checkoutUrl: draft.invoice_url ?? undefined
+		checkoutUrl
 	};
 }
 
