@@ -21,7 +21,7 @@ const EMBED_SCRIPT = String.raw`
   // Modern chat widget: compact height for floating chat window
   // Height accommodates chat window (600px default) + bubble icon (~80px) + gap (~20px) = ~700px max
   // Using max-height to ensure it doesn't exceed viewport on smaller screens
-  iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:440px;height:700px;max-width:100vw;max-height:85vh;border:none;z-index:2147483647;overflow:hidden;';
+  iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:440px;height:700px;max-width:100vw;max-height:85vh;border:none;z-index:2147483647;overflow:hidden;background:transparent;';
   var wrap = document.createElement('div');
   wrap.setAttribute('data-profitbot-container', '1');
   wrap.style.cssText = 'position:fixed;bottom:0;right:0;z-index:2147483647;pointer-events:none;overflow:visible;';

@@ -52,6 +52,13 @@
 
 <svelte:head>
 	<title>{config.name}</title>
+	<style>
+		:global(html),
+		:global(body) {
+			background: transparent !important;
+			background-color: transparent !important;
+		}
+	</style>
 </svelte:head>
 
 <div class="embed-widget-root w-full bg-transparent overflow-visible" style="min-height: 0;">
