@@ -35,7 +35,7 @@ const EMBED_SCRIPT = String.raw`
     // Mobile: start small (just the bubble), expand to fullscreen when chat opens
     iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:100px;height:100px;border:none;z-index:2147483647;background:transparent;overflow:visible;pointer-events:auto;';
   } else {
-    // Desktop: full-viewport transparent overlay — iframe needs pointer-events:auto so button is clickable
+    // Desktop: full-viewport transparent overlay — iframe needs pointer-events:auto so clicks can reach widget content
     // The widget inside handles pointer-events internally to allow clicks only on button/chat window
     iframe.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:none;z-index:2147483647;background:transparent;pointer-events:auto;overflow:visible;';
   }
@@ -51,7 +51,7 @@ const EMBED_SCRIPT = String.raw`
         iframe.style.height = '100%';
         iframe.style.pointerEvents = 'auto';
       }
-      // Desktop: iframe already has pointer-events:auto, no change needed
+      // Desktop: iframe keeps pointer-events:auto (widget handles pointer-events internally)
     } else if (e.data.type === 'chat-closed') {
       if (isMobile) {
         iframe.style.width = '100px';
@@ -88,7 +88,7 @@ const EMBED_SCRIPT = String.raw`
   window.addEventListener('resize', function() {
     isMobile = window.innerWidth <= 768;
     if (!isMobile) {
-      // Desktop: iframe needs pointer-events:auto so button is clickable
+      // Desktop: iframe needs pointer-events:auto so clicks can reach widget content
       iframe.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:none;z-index:2147483647;background:transparent;pointer-events:auto;overflow:visible;';
     }
   });

@@ -316,24 +316,41 @@ export async function createDraftOrder(
 	const draft = res.data?.draft_order;
 	if (!draft?.id) return { ok: false, error: 'Draft order not returned' };
 	
-	// Build a proper checkout URL with variant IDs if available
-	// Shopify cart URL format: https://{shop}.myshopify.com/cart/{variant_id}:{quantity},{variant_id}:{quantity}
+	// Build a proper checkout/cart permalink URL with variant IDs if available
+	// Shopify cart permalink format: https://{shop}.myshopify.com/cart/{variant_id}:{quantity},{variant_id}:{quantity}
+	// This creates a direct checkout link, not an invoice link
 	let checkoutUrl: string | undefined;
 	const itemsWithVariants = input.line_items.filter((item) => item.variant_id != null && item.variant_id > 0);
+	
 	if (itemsWithVariants.length > 0) {
-		// Build cart URL with variant IDs
+		// Build cart permalink URL with variant IDs (this goes directly to checkout)
 		const cartItems = itemsWithVariants.map((item) => `${item.variant_id}:${item.quantity}`).join(',');
-		// Extract shop name from shopDomain (normalizedShopDomain removes protocol and trailing slashes)
-		// It could be "myshop.myshopify.com" or just "myshop" or a custom domain
-		let shopName = config.shopDomain;
+		
+		// Extract shop domain - handle both myshopify.com and custom domains
+		let shopDomain = config.shopDomain.trim();
 		// Remove protocol if present
-		shopName = shopName.replace(/^https?:\/\//, '');
-		// Remove .myshopify.com if present to get just the shop name
-		shopName = shopName.replace(/\.myshopify\.com.*$/, '');
-		// Remove any path
-		shopName = shopName.split('/')[0];
-		// Build the cart URL
-		checkoutUrl = `https://${shopName}.myshopify.com/cart/${cartItems}`;
+		shopDomain = shopDomain.replace(/^https?:\/\//, '');
+		// Remove trailing slashes and paths
+		shopDomain = shopDomain.split('/')[0];
+		
+		// Determine if it's a myshopify.com domain or custom domain
+		let baseUrl: string;
+		if (shopDomain.includes('.myshopify.com')) {
+			// Already a myshopify.com domain, use as-is
+			baseUrl = `https://${shopDomain}`;
+		} else if (shopDomain.includes('.')) {
+			// Custom domain - we need to find the myshopify.com domain
+			// For custom domains, we'll try to extract the shop name
+			// If shopDomain is like "shop.example.com", we can't easily get the myshopify.com domain
+			// So we'll use the custom domain and hope Shopify redirects correctly
+			baseUrl = `https://${shopDomain}`;
+		} else {
+			// Just the shop name (e.g., "myshop")
+			baseUrl = `https://${shopDomain}.myshopify.com`;
+		}
+		
+		// Build the cart permalink URL (this goes directly to checkout)
+		checkoutUrl = `${baseUrl}/cart/${cartItems}`;
 		
 		// Add discount code if applicable
 		if (input.applied_discount && input.applied_discount.value) {
@@ -345,7 +362,8 @@ export async function createDraftOrder(
 			}
 		}
 	} else {
-		// Fall back to invoice URL if no variant IDs available
+		// No variant IDs available - fall back to invoice URL as last resort
+		// This should rarely happen if products are configured correctly
 		checkoutUrl = draft.invoice_url ?? undefined;
 	}
 	

@@ -1063,6 +1063,10 @@
 												<div class="chat-message-intro">{@html formatAssistantMessage(stripCheckoutBlock(msg.content), msg.channel === 'email')}</div>
 											{/if}
 											<div class="checkout-preview-block checkout-preview-block--messages">
+												<div class="checkout-header">
+													<h3 class="checkout-title">Your checkout preview</h3>
+													<span class="checkout-product-label">Product</span>
+												</div>
 												{#each msg.checkoutPreview.lineItemsUI as item}
 													<div class="line-item">
 														<div class="image-wrap">
@@ -1072,23 +1076,29 @@
 															<span class="qty-badge">{item.quantity}</span>
 														</div>
 														<div class="details">
-															<div class="title">{item.title}</div>
-															<div class="price-grid">
-																<div class="label">Unit Price</div>
-																<div class="label">Total</div>
-																<div class="value">${item.unitPrice}</div>
-																<div class="value">${item.lineTotal}</div>
+															<div class="product-name">{item.title}</div>
+															{#if item.variant}
+																<div class="product-variant">{item.variant}</div>
+															{/if}
+															<div class="price-row">
+																<div class="price-col">
+																	<div class="price-label">Unit Price</div>
+																	<div class="price-value">${item.unitPrice}</div>
+																</div>
+																<div class="price-col">
+																	<div class="price-label">Total</div>
+																	<div class="price-value">${item.lineTotal}</div>
+																</div>
 															</div>
 														</div>
 													</div>
 												{/each}
 												<div class="checkout-summary">
-													<div class="summary-row"><span class="summary-label">Items</span><span class="summary-value">{msg.checkoutPreview.summary.totalItems}</span></div>
+													<div class="summary-row"><span class="summary-label">Total Items</span><span class="summary-value">{msg.checkoutPreview.summary.totalItems} items</span></div>
+													<div class="summary-row"><span class="summary-label">Shipping</span><span class="summary-value">FREE</span></div>
 													{#if msg.checkoutPreview.summary.discountPercent != null}
 														<div class="summary-row"><span class="summary-label">Discount</span><span class="summary-value">{msg.checkoutPreview.summary.discountPercent}% OFF</span></div>
 													{/if}
-													<div class="summary-row"><span class="summary-label">Shipping</span><span class="summary-value">FREE</span></div>
-													<div class="summary-divider"></div>
 													<div class="summary-row"><span class="summary-label">Subtotal</span><span class="summary-value">${msg.checkoutPreview.summary.subtotal} {msg.checkoutPreview.summary.currency}</span></div>
 													{#if msg.checkoutPreview.summary.discountAmount != null}
 														<div class="summary-row"><span class="summary-label">Savings</span><span class="summary-value">-${msg.checkoutPreview.summary.discountAmount}</span></div>

@@ -164,6 +164,8 @@ export async function createDiyCheckoutForOwner(
 	
 	// Try creating draft order with variant_id first, but if it fails due to unavailable variant,
 	// retry without variant_id (Shopify will create a custom line item)
+	// IMPORTANT: We always try to use variant IDs to generate proper checkout/cart permalinks, not invoice links
+	const itemsWithVariants = lineItems.filter((li) => li.variantId != null && li.variantId > 0);
 	const result = await createDraftOrder(config, {
 		email: email?.trim() || undefined,
 		line_items: lineItems.map((li) => ({
@@ -179,6 +181,7 @@ export async function createDiyCheckoutForOwner(
 	});
 
 	// If variant is unavailable, retry without variant_id (custom line items)
+	// Note: This will result in an invoice link, not a checkout link, since we can't build a cart permalink without variant IDs
 	if (!result.ok && result.error?.includes('no longer available')) {
 		const retryResult = await createDraftOrder(config, {
 			email: email?.trim() || undefined,
@@ -197,7 +200,13 @@ export async function createDiyCheckoutForOwner(
 			return { ok: false, error: retryResult.error ?? 'Failed to create checkout link. Product may be unavailable in Shopify.' };
 		}
 		// Use retry result - it has the same structure as result
+		// Note: Without variant IDs, this will be an invoice link, not a checkout link
 		if (!retryResult.checkoutUrl) return { ok: false, error: 'Checkout link was not returned by Shopify.' };
+		
+		// Warn if we're falling back to invoice link due to missing variant IDs
+		if (itemsWithVariants.length === 0) {
+			console.warn('[DIY Checkout] No variant IDs configured in product pricing. Using invoice link instead of checkout link. Configure shopifyVariantId in product pricing to get proper checkout links.');
+		}
 		
 		const fmt = (n: number) => n.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 		const totalItems = lineItems.reduce((sum, li) => sum + li.quantity, 0);

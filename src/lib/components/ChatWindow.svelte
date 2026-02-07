@@ -752,6 +752,10 @@
 											<div class="chat-message-intro">{@html formatMessage(stripCheckoutBlock(msg.content, msg.checkoutPreview.checkoutUrl))}</div>
 										{/if}
 										<div class="checkout-preview-block">
+											<div class="checkout-header">
+												<h3 class="checkout-title">Your checkout preview</h3>
+												<span class="checkout-product-label">Product</span>
+											</div>
 											{#each msg.checkoutPreview.lineItemsUI as item}
 												<div class="line-item">
 													<div class="image-wrap">
@@ -761,23 +765,29 @@
 														<span class="qty-badge">{item.quantity}</span>
 													</div>
 													<div class="details">
-														<div class="title">{item.title}</div>
-														<div class="price-grid">
-															<div class="label">Unit Price</div>
-															<div class="label">Total</div>
-															<div class="value">${item.unitPrice}</div>
-															<div class="value">${item.lineTotal}</div>
+														<div class="product-name">{item.title}</div>
+														{#if item.variant}
+															<div class="product-variant">{item.variant}</div>
+														{/if}
+														<div class="price-row">
+															<div class="price-col">
+																<div class="price-label">Unit Price</div>
+																<div class="price-value">${item.unitPrice}</div>
+															</div>
+															<div class="price-col">
+																<div class="price-label">Total</div>
+																<div class="price-value">${item.lineTotal}</div>
+															</div>
 														</div>
 													</div>
 												</div>
 											{/each}
 											<div class="checkout-summary">
-												<div class="summary-row"><span class="summary-label">Items</span><span class="summary-value">{msg.checkoutPreview.summary.totalItems}</span></div>
+												<div class="summary-row"><span class="summary-label">Total Items</span><span class="summary-value">{msg.checkoutPreview.summary.totalItems} items</span></div>
+												<div class="summary-row"><span class="summary-label">Shipping</span><span class="summary-value">FREE</span></div>
 												{#if msg.checkoutPreview.summary.discountPercent != null}
 													<div class="summary-row"><span class="summary-label">Discount</span><span class="summary-value">{msg.checkoutPreview.summary.discountPercent}% OFF</span></div>
 												{/if}
-												<div class="summary-row"><span class="summary-label">Shipping</span><span class="summary-value">FREE</span></div>
-												<div class="summary-divider"></div>
 												<div class="summary-row"><span class="summary-label">Subtotal</span><span class="summary-value">${msg.checkoutPreview.summary.subtotal} {msg.checkoutPreview.summary.currency}</span></div>
 												{#if msg.checkoutPreview.summary.discountAmount != null}
 													<div class="summary-row"><span class="summary-label">Savings</span><span class="summary-value">-${msg.checkoutPreview.summary.discountAmount}</span></div>
@@ -1244,19 +1254,39 @@
 		background: transparent !important;
 		background-color: transparent !important;
 	}
+	:global(.checkout-preview-block .checkout-header) {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 1.25em;
+		padding-bottom: 0.75em;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+	}
+	:global(.checkout-preview-block .checkout-title) {
+		font-size: 18px;
+		font-weight: 700;
+		margin: 0;
+		color: rgba(34, 197, 94, 1);
+		line-height: 1.2;
+	}
+	:global(.checkout-preview-block .checkout-product-label) {
+		font-size: 14px;
+		font-weight: 500;
+		opacity: 0.75;
+	}
 	:global(.checkout-preview-block .line-item) {
 		display: flex;
 		gap: 16px;
 		align-items: flex-start;
-		margin-bottom: 1em;
+		margin-bottom: 1.75em;
 	}
 	:global(.checkout-preview-block .line-item:last-of-type) {
-		margin-bottom: 0.5em;
+		margin-bottom: 1em;
 	}
 	:global(.checkout-preview-block .image-wrap) {
 		position: relative;
-		width: 72px;
-		height: 72px;
+		width: 80px;
+		height: 80px;
 		border-radius: 8px;
 		background: rgba(255, 255, 255, 0.1);
 		overflow: hidden;
@@ -1269,36 +1299,59 @@
 	}
 	:global(.checkout-preview-block .line-item .qty-badge) {
 		position: absolute;
-		top: -6px;
-		right: -6px;
-		background: #1f2937;
+		top: -8px;
+		right: -8px;
+		background: #374151;
 		color: #fff;
-		font-size: 12px;
-		font-weight: 600;
-		padding: 4px 8px;
-		border-radius: 999px;
+		font-size: 13px;
+		font-weight: 700;
+		padding: 6px 10px;
+		border-radius: 6px;
+		min-width: 28px;
+		text-align: center;
+		box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+		z-index: 1;
 	}
 	:global(.checkout-preview-block .details) {
 		flex: 1;
 		min-width: 0;
+		padding-top: 2px;
 	}
-	:global(.checkout-preview-block .details .title) {
-		font-weight: 600;
+	:global(.checkout-preview-block .details .product-name) {
+		font-weight: 700;
 		font-size: 16px;
-		margin-bottom: 8px;
+		margin-bottom: 4px;
+		color: rgba(34, 197, 94, 1);
+		line-height: 1.3;
 	}
-	:global(.checkout-preview-block .price-grid) {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 4px 24px;
-	}
-	:global(.checkout-preview-block .price-grid .label) {
-		font-size: 12px;
+	:global(.checkout-preview-block .details .product-variant) {
+		font-size: 14px;
 		opacity: 0.85;
+		margin-bottom: 10px;
+		line-height: 1.4;
 	}
-	:global(.checkout-preview-block .price-grid .value) {
+	:global(.checkout-preview-block .price-row) {
+		display: flex;
+		gap: 40px;
+		margin-top: 6px;
+	}
+	:global(.checkout-preview-block .price-col) {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		min-width: 80px;
+	}
+	:global(.checkout-preview-block .price-label) {
+		font-size: 12px;
+		opacity: 0.7;
+		font-weight: 500;
+		line-height: 1.3;
+	}
+	:global(.checkout-preview-block .price-value) {
 		font-size: 16px;
-		font-weight: 600;
+		font-weight: 700;
+		color: inherit;
+		line-height: 1.3;
 	}
 	:global(.checkout-summary) {
 		margin-top: 1em;
