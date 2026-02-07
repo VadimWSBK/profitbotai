@@ -12,13 +12,25 @@
 	let open = $state(false);
 	let visitorName = $state<string | null>(null);
 	let prefersReducedMotion = $state(false);
+	let isEmbedded = $state(false);
 
 	function dur(ms: number) { return prefersReducedMotion ? 0 : ms; }
+
+	/** Notify the parent page (Shopify etc.) about chat open/close so it can resize the iframe */
+	function notifyParent(type: 'chat-opened' | 'chat-closed') {
+		try {
+			if (window.parent && window.parent !== window) {
+				window.parent.postMessage({ source: 'profitbot-widget', type }, '*');
+			}
+		} catch { /* cross-origin — safe to ignore */ }
+	}
 
 	onMount(() => {
 		const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
 		prefersReducedMotion = mq.matches;
 		mq.addEventListener('change', (e) => { prefersReducedMotion = e.matches; });
+		// Detect if we're inside an iframe (embedded on external site)
+		try { isEmbedded = window.self !== window.top; } catch { isEmbedded = true; }
 	});
 
 	// Custom open transition: scale + translate + opacity
@@ -76,6 +88,12 @@
 	// Auto-open if configured
 	$effect(() => {
 		if (config.bubble.autoOpenBotWindow) open = true;
+	});
+
+	// Notify parent iframe when chat opens/closes (for mobile resize)
+	$effect(() => {
+		if (!isEmbedded) return;
+		notifyParent(open ? 'chat-opened' : 'chat-closed');
 	});
 
 	$effect(() => {
@@ -179,15 +197,19 @@
 </div>
 
 <style>
-	/* Ensure wrapper provides positioning context */
+	/* Wrapper: fixed to bottom-right, pointer-events auto so clicks reach bubble/chat */
 	.widget-preview-wrapper {
 		position: fixed !important;
+		pointer-events: none;
+	}
+	/* All interactive children need pointer-events restored */
+	.widget-preview-wrapper :global(*) {
+		pointer-events: auto;
 	}
 
-	/* Desktop: position above icon (default) */
+	/* Desktop: chat window positioned above the bubble icon */
 	.chat-window-container--desktop {
 		position: absolute !important;
-		/* Ensure chat window doesn't overflow viewport - account for bubble position and safe areas */
 		max-height: calc(100vh - 120px);
 		overflow: visible;
 	}
@@ -200,6 +222,7 @@
 	/* Mobile backdrop (hidden on desktop) */
 	.chat-backdrop {
 		display: none;
+		pointer-events: auto;
 	}
 
 	/* Bubble attention pulse — plays 3 times on load, then stops */
@@ -218,7 +241,7 @@
 		50% { box-shadow: 0 0 0 8px rgba(0, 0, 0, 0); }
 	}
 
-	/* Mobile: full-screen chat (industry standard for chat widgets) */
+	/* Mobile: full-screen chat overlay */
 	@media (max-width: 768px) {
 		.chat-backdrop {
 			display: block;
@@ -232,10 +255,6 @@
 		.chat-window-container--desktop.is-open {
 			position: fixed !important;
 			inset: 0 !important;
-			right: 0 !important;
-			bottom: 0 !important;
-			left: 0 !important;
-			top: 0 !important;
 			width: 100% !important;
 			height: 100% !important;
 			max-height: 100dvh !important;
@@ -244,8 +263,13 @@
 		}
 		.chat-window-container--desktop.is-open :global(.chat-window) {
 			flex: 1;
+			width: 100% !important;
+			height: 100% !important;
+			max-width: 100% !important;
+			max-height: 100dvh !important;
 			min-width: 0;
 			min-height: 0;
+			border-radius: 0 !important;
 		}
 	}
 

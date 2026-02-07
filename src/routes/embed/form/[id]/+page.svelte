@@ -26,6 +26,7 @@
 	let pdfUrl = $state<string | null>(null);
 	let slideDirection = $state<'forward' | 'backward'>('forward');
 	let mounted = $state(false);
+	let contactSaved = $state(false);
 
 	// Reduced-motion support
 	let prefersReducedMotion = $state(false);
@@ -51,6 +52,38 @@
 		if (error) error = '';
 	}
 
+	/**
+	 * Save the contact (name, email, phone) in the background as soon as
+	 * the user advances past the step that contains the email field.
+	 * This ensures we capture essential contact data even if the user
+	 * abandons a later step. The final submit() will upsert again with
+	 * full address data and trigger the workflow.
+	 */
+	function saveContactEarly() {
+		if (contactSaved) return;
+		const email = (values.email ?? '').trim().toLowerCase();
+		if (!email) return;
+		contactSaved = true;
+		// Fire-and-forget – don't block the user
+		fetch(`/api/forms/${formId}/save-contact`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: values.name ?? '',
+				email,
+				phone: values.phone ?? ''
+			})
+		}).catch(() => {
+			// Silently ignore – the final submit will create the contact anyway
+			contactSaved = false;
+		});
+	}
+
+	/** Check whether a step contains a field with the given key */
+	function stepHasField(stepIndex: number, key: string): boolean {
+		return steps[stepIndex]?.fields.some((f: Field) => f.key === key) ?? false;
+	}
+
 	function next() {
 		const step = steps[currentStep];
 		if (!step) return;
@@ -65,6 +98,10 @@
 		if (isLastStep) {
 			submit();
 		} else {
+			// Save contact early when leaving the step that contains the email field
+			if (stepHasField(currentStep, 'email')) {
+				saveContactEarly();
+			}
 			currentStep += 1;
 		}
 	}
@@ -114,6 +151,7 @@
 		error = '';
 		showSuccess = false;
 		pdfUrl = null;
+		contactSaved = false;
 	}
 </script>
 

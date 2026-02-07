@@ -54,6 +54,26 @@
 	<title>{config.name}</title>
 </svelte:head>
 
-<div class="embed-widget-root w-full bg-transparent overflow-visible" style="min-height: 0;">
+<div class="embed-widget-root">
 	<WidgetPreview config={config} widgetId={data.widgetId} />
 </div>
+
+<style>
+	/* The embed page lives inside a transparent full-viewport iframe.
+	   Ensure html/body/wrapper don't add scrollbars or backgrounds. */
+	:global(html), :global(body) {
+		background: transparent !important;
+		overflow: hidden !important;
+		margin: 0;
+		padding: 0;
+		width: 100%;
+		height: 100%;
+	}
+	.embed-widget-root {
+		width: 100%;
+		height: 100%;
+		min-height: 0;
+		background: transparent;
+		overflow: visible;
+	}
+</style>
