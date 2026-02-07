@@ -87,8 +87,16 @@
 		overflow: visible;
 		pointer-events: none !important;
 	}
-	/* Only the widget preview wrapper should restore pointer-events */
+	/* Widget wrapper handles its own pointer-events - don't override it */
 	.embed-widget-root :global(.widget-preview-wrapper) {
 		pointer-events: none !important;
+	}
+	/* Ensure interactive elements inside widget are clickable */
+	.embed-widget-root :global(.widget-preview-wrapper .bubble-preview),
+	.embed-widget-root :global(.widget-preview-wrapper .tooltip-preview),
+	.embed-widget-root :global(.widget-preview-wrapper .chat-backdrop),
+	.embed-widget-root :global(.widget-preview-wrapper .chat-window-container .chat-window),
+	.embed-widget-root :global(.widget-preview-wrapper .chat-window-container *) {
+		pointer-events: auto !important;
 	}
 </style>

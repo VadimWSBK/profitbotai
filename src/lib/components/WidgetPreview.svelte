@@ -311,10 +311,12 @@
 	.widget-preview-wrapper .chat-backdrop {
 		pointer-events: auto !important;
 	}
+	/* Chat window container: enable pointer events so clicks reach the chat window */
 	.widget-preview-wrapper .chat-window-container {
-		pointer-events: none !important;
+		pointer-events: auto !important;
 	}
-	.widget-preview-wrapper .chat-window-container * {
+	/* Chat window itself must be interactive */
+	.widget-preview-wrapper .chat-window-container :global(.chat-window) {
 		pointer-events: auto !important;
 	}
 
