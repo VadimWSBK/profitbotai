@@ -75,6 +75,18 @@ export const POST: RequestHandler = async (event) => {
 	const body = await event.request.json().catch(() => ({}));
 	const { action, ...params } = body;
 
+	// Allow conversationId and widgetId to be passed via headers (for n8n workflows)
+	// This allows the workflow to inject these from the trigger without the AI needing to pass them
+	const headerConversationId = event.request.headers.get('X-Conversation-Id');
+	const headerWidgetId = event.request.headers.get('X-Widget-Id');
+	
+	// Merge header values into params if not already present
+	const enrichedParams = {
+		...params,
+		...(headerConversationId && !params.conversationId ? { conversationId: headerConversationId } : {}),
+		...(headerWidgetId && !params.widgetId ? { widgetId: headerWidgetId } : {})
+	};
+
 	const supabaseUrl = env.SUPABASE_URL!;
 	const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY!;
 	const supabase = createClient(supabaseUrl, serviceRoleKey);
@@ -446,7 +458,7 @@ export const POST: RequestHandler = async (event) => {
 			}
 
 			case 'send_email': {
-				const { conversationId, contactId, subject, body } = params;
+				const { conversationId, contactId, subject, body } = enrichedParams;
 				if (!subject || !body) {
 					return json({ error: 'subject and body required' }, { status: 400 });
 				}
@@ -1102,7 +1114,7 @@ export const POST: RequestHandler = async (event) => {
 			}
 
 			case 'get_contact_by_conversation': {
-				const { widgetId, conversationId } = params;
+				const { widgetId, conversationId } = enrichedParams;
 				if (!widgetId || !conversationId) {
 					return json({ error: 'widgetId and conversationId required' }, { status: 400 });
 				}
@@ -1207,7 +1219,7 @@ export const POST: RequestHandler = async (event) => {
 			}
 
 			case 'update_contact_by_conversation': {
-				const { widgetId, conversationId, name, email, emails, phone, address, street_address, city, state, postcode, country, roof_size_sqm } = params;
+				const { widgetId, conversationId, name, email, emails, phone, address, street_address, city, state, postcode, country, roof_size_sqm } = enrichedParams;
 				if (!widgetId || !conversationId) {
 					return json({ error: 'widgetId and conversationId required' }, { status: 400 });
 				}
@@ -1283,7 +1295,7 @@ export const POST: RequestHandler = async (event) => {
 			}
 
 			case 'get_product_pricing': {
-				const { widgetId, conversationId } = params;
+				const { widgetId, conversationId } = enrichedParams;
 				let resolvedWidgetId = typeof widgetId === 'string' ? widgetId.trim() : null;
 
 				// If widgetId not provided, try to resolve from conversationId
@@ -1348,7 +1360,7 @@ export const POST: RequestHandler = async (event) => {
 			}
 
 			case 'create_diy_checkout': {
-				const { widgetId, conversationId, roof_size_sqm, count_15l, count_10l, count_5l, discount_percent, email } = params;
+				const { widgetId, conversationId, roof_size_sqm, count_15l, count_10l, count_5l, discount_percent, email } = enrichedParams;
 				let resolvedWidgetId = typeof widgetId === 'string' ? widgetId.trim() : null;
 				const convId = typeof conversationId === 'string' ? conversationId.trim() : undefined;
 
@@ -1446,7 +1458,7 @@ export const POST: RequestHandler = async (event) => {
 			}
 
 			case 'create_discount': {
-				const { widgetId, discount_percent } = params;
+				const { widgetId, discount_percent } = enrichedParams;
 				if (!widgetId) {
 					return json({ error: 'widgetId required' }, { status: 400 });
 				}
