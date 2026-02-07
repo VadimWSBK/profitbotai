@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+/* Ensure embed pages are fully transparent */
+html:has([data-embed-page]),
+body:has([data-embed-page]),
+html[data-embed-page],
+body[data-embed-page] {
+	background: transparent !important;
+	background-color: transparent !important;
+}
+
 /* When main app layout (sidebar + content) is shown, constrain body to viewport so only main content scrolls */
 body:has(.app-layout) {
 	height: 100vh;

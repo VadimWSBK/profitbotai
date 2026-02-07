@@ -182,6 +182,8 @@
 	/* Ensure wrapper provides positioning context */
 	.widget-preview-wrapper {
 		position: fixed !important;
+		background: transparent !important;
+		background-color: transparent !important;
 	}
 
 	/* Desktop: position above icon (default) */
@@ -190,6 +192,8 @@
 		/* Ensure chat window doesn't overflow viewport - account for bubble position and safe areas */
 		max-height: calc(100vh - 120px);
 		overflow: visible;
+		background: transparent !important;
+		background-color: transparent !important;
 	}
 
 	.chat-window-container--desktop :global(.chat-window) {

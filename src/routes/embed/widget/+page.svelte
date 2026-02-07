@@ -55,17 +55,20 @@
 	<style>
 		:global(html),
 		:global(body),
-		:global(#svelte-announcer) {
+		:global(#svelte-announcer),
+		:global([data-embed-page]) {
 			background: transparent !important;
 			background-color: transparent !important;
 		}
-		:global(.embed-widget-root) {
+		:global(.embed-widget-root),
+		:global(.widget-preview-wrapper),
+		:global(.chat-window-container) {
 			background: transparent !important;
 			background-color: transparent !important;
 		}
 	</style>
 </svelte:head>
 
-<div class="embed-widget-root w-full bg-transparent overflow-visible" style="min-height: 0; background: transparent !important; background-color: transparent !important;">
+<div class="embed-widget-root w-full bg-transparent overflow-visible" data-embed-page="1" style="min-height: 0; background: transparent !important; background-color: transparent !important;">
 	<WidgetPreview config={config} widgetId={data.widgetId} />
 </div>
