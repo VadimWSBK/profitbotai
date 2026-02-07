@@ -85,13 +85,17 @@ The ProfitBot MCP API supports all the same actions as the MCP tools. Here are t
 
 #### Quotes
 - `generate_quote` - Generate PDF quote
+  - Requires: `widgetId` OR `conversationId` (if conversationId is provided, widgetId will be resolved automatically)
+  - Also requires: `conversationId` OR `email`
 - `get_quote_settings` - Get quote settings
 - `update_quote_settings` - Update quote settings
 - `upload_quote_image` - Upload image for quotes
 
 #### DIY Checkout & Product Pricing
 - `get_product_pricing` - Get product pricing for a widget (for DIY quotes)
+  - Requires: `widgetId` OR `conversationId` (if conversationId is provided, widgetId will be resolved automatically)
 - `create_diy_checkout` - Create DIY checkout link with product buckets
+  - Requires: `widgetId` OR `conversationId` (if conversationId is provided, widgetId will be resolved automatically)
 
 #### Shopify
 - `shopify_list_orders` - List recent orders
@@ -153,7 +157,7 @@ The ProfitBot MCP API supports all the same actions as the MCP tools. Here are t
 
 ### Example Workflow: Generate Quote
 
-1. **HTTP Request Node**:
+1. **HTTP Request Node** (using widgetId):
    - Method: `POST`
    - URL: `https://app.profitbot.ai/api/mcp`
    - Headers: (same as above)
@@ -173,6 +177,22 @@ The ProfitBot MCP API supports all the same actions as the MCP tools. Here are t
        ]
      }
      ```
+   
+   Or using conversationId only (widgetId will be resolved automatically):
+   ```json
+   {
+     "action": "generate_quote",
+     "conversationId": "{{ $json.conversationId }}",
+     "lineItems": [
+       {
+         "desc": "Roof sealing",
+         "price": 50,
+         "fixed": false,
+         "total": 5000
+       }
+     ]
+   }
+   ```
 
 ### Example Workflow: Get Contact & Update Contact (for Chat Interactions)
 
@@ -201,15 +221,23 @@ The ProfitBot MCP API supports all the same actions as the MCP tools. Here are t
 
 ### Example Workflow: Get Product Pricing & Create DIY Checkout
 
-1. **Get Product Pricing**:
+1. **Get Product Pricing** (using widgetId):
    ```json
    {
      "action": "get_product_pricing",
      "widgetId": "{{ $json.widgetId }}"
    }
    ```
+   
+   Or using conversationId (widgetId will be resolved automatically):
+   ```json
+   {
+     "action": "get_product_pricing",
+     "conversationId": "{{ $json.conversationId }}"
+   }
+   ```
 
-2. **Create DIY Checkout**:
+2. **Create DIY Checkout** (using widgetId):
    ```json
    {
      "action": "create_diy_checkout",
@@ -220,11 +248,21 @@ The ProfitBot MCP API supports all the same actions as the MCP tools. Here are t
    }
    ```
    
+   Or using conversationId only (widgetId will be resolved automatically):
+   ```json
+   {
+     "action": "create_diy_checkout",
+     "conversationId": "{{ $json.conversationId }}",
+     "roof_size_sqm": 200,
+     "discount_percent": 10
+   }
+   ```
+   
    Or with explicit bucket counts:
    ```json
    {
      "action": "create_diy_checkout",
-     "widgetId": "{{ $json.widgetId }}",
+     "conversationId": "{{ $json.conversationId }}",
      "count_15l": 5,
      "count_10l": 2,
      "count_5l": 1,

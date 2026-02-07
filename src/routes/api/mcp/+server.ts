@@ -714,10 +714,28 @@ export const POST: RequestHandler = async (event) => {
 
 			case 'generate_quote': {
 				const { widgetId, conversationId, email, customer, project, lineItems, images } = params;
-				if (!widgetId) {
-					return json({ error: 'widgetId required' }, { status: 400 });
+				let resolvedWidgetId = typeof widgetId === 'string' ? widgetId.trim() : null;
+				const convId = typeof conversationId === 'string' ? conversationId.trim() : undefined;
+
+				// If widgetId not provided, try to resolve from conversationId
+				if (!resolvedWidgetId && convId) {
+					const { data: conv, error: convErr } = await supabase
+						.from('widget_conversations')
+						.select('widget_id, widgets!inner(workspace_id)')
+						.eq('id', convId)
+						.eq('widgets.workspace_id', authInfo.workspaceId)
+						.single();
+					if (convErr || !conv) {
+						if (convErr?.code === 'PGRST116') return json({ error: 'Conversation not found' }, { status: 404 });
+						return json({ error: 'Conversation not found or access denied' }, { status: 404 });
+					}
+					resolvedWidgetId = (conv.widget_id as string) ?? null;
 				}
-				if (!conversationId && !email) {
+
+				if (!resolvedWidgetId) {
+					return json({ error: 'widgetId or conversationId required' }, { status: 400 });
+				}
+				if (!convId && !email) {
 					return json({ error: 'conversationId or email required' }, { status: 400 });
 				}
 
@@ -725,7 +743,7 @@ export const POST: RequestHandler = async (event) => {
 				const { data: widget, error: widgetErr } = await supabase
 					.from('widgets')
 					.select('id, created_by, workspace_id')
-					.eq('id', widgetId)
+					.eq('id', resolvedWidgetId)
 					.eq('workspace_id', authInfo.workspaceId)
 					.single();
 				if (widgetErr || !widget) {
@@ -763,12 +781,12 @@ export const POST: RequestHandler = async (event) => {
 				// Load contact if conversationId provided
 				let customerData = customer ?? {};
 				let projectData = project ?? {};
-				if (conversationId) {
+				if (convId) {
 					const { data: contact } = await supabase
 						.from('contacts')
 						.select('name, email, phone, address')
-						.eq('conversation_id', conversationId)
-						.eq('widget_id', widgetId)
+						.eq('conversation_id', convId)
+						.eq('widget_id', resolvedWidgetId)
 						.maybeSingle();
 					if (contact) {
 						customerData = { name: contact.name ?? '', email: contact.email ?? '', phone: contact.phone ?? '' };
@@ -810,14 +828,14 @@ export const POST: RequestHandler = async (event) => {
 					.replace(/\s+/g, '_')
 					.replace(/[^a-zA-Z0-9_-]/g, '');
 				const ts = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
-				const fileName = conversationId
-					? `${conversationId}/quote_${customerName}_${ts}.pdf`
+				const fileName = convId
+					? `${convId}/quote_${customerName}_${ts}.pdf`
 					: `email_${String(email).replace(/[@.]/g, '_') ?? 'unknown'}_${ts}.pdf`;
 
 				const metadata: Record<string, string> = {
-					widget_id: widgetId
+					widget_id: resolvedWidgetId
 				};
-				if (conversationId) metadata.conversation_id = conversationId;
+				if (convId) metadata.conversation_id = convId;
 				if (email) metadata.email = String(email);
 
 				const { error: uploadErr } = await supabase.storage.from(BUCKET).upload(fileName, pdfBuffer, {
@@ -1215,16 +1233,33 @@ export const POST: RequestHandler = async (event) => {
 			}
 
 			case 'get_product_pricing': {
-				const { widgetId } = params;
-				if (!widgetId) {
-					return json({ error: 'widgetId required' }, { status: 400 });
+				const { widgetId, conversationId } = params;
+				let resolvedWidgetId = typeof widgetId === 'string' ? widgetId.trim() : null;
+
+				// If widgetId not provided, try to resolve from conversationId
+				if (!resolvedWidgetId && conversationId) {
+					const { data: conv, error: convErr } = await supabase
+						.from('widget_conversations')
+						.select('widget_id, widgets!inner(workspace_id)')
+						.eq('id', conversationId)
+						.eq('widgets.workspace_id', authInfo.workspaceId)
+						.single();
+					if (convErr || !conv) {
+						if (convErr?.code === 'PGRST116') return json({ error: 'Conversation not found' }, { status: 404 });
+						return json({ error: 'Conversation not found or access denied' }, { status: 404 });
+					}
+					resolvedWidgetId = (conv.widget_id as string) ?? null;
+				}
+
+				if (!resolvedWidgetId) {
+					return json({ error: 'widgetId or conversationId required' }, { status: 400 });
 				}
 
 				// Verify widget belongs to workspace and get owner
 				const { data: widget, error: widgetErr } = await supabase
 					.from('widgets')
 					.select('id, created_by, workspace_id')
-					.eq('id', widgetId)
+					.eq('id', resolvedWidgetId)
 					.eq('workspace_id', authInfo.workspaceId)
 					.single();
 				if (widgetErr || !widget) {
@@ -1264,15 +1299,33 @@ export const POST: RequestHandler = async (event) => {
 
 			case 'create_diy_checkout': {
 				const { widgetId, conversationId, roof_size_sqm, count_15l, count_10l, count_5l, discount_percent, email } = params;
-				if (!widgetId) {
-					return json({ error: 'widgetId required' }, { status: 400 });
+				let resolvedWidgetId = typeof widgetId === 'string' ? widgetId.trim() : null;
+				const convId = typeof conversationId === 'string' ? conversationId.trim() : undefined;
+
+				// If widgetId not provided, try to resolve from conversationId
+				if (!resolvedWidgetId && convId) {
+					const { data: conv, error: convErr } = await supabase
+						.from('widget_conversations')
+						.select('widget_id, widgets!inner(workspace_id)')
+						.eq('id', convId)
+						.eq('widgets.workspace_id', authInfo.workspaceId)
+						.single();
+					if (convErr || !conv) {
+						if (convErr?.code === 'PGRST116') return json({ error: 'Conversation not found' }, { status: 404 });
+						return json({ error: 'Conversation not found or access denied' }, { status: 404 });
+					}
+					resolvedWidgetId = (conv.widget_id as string) ?? null;
+				}
+
+				if (!resolvedWidgetId) {
+					return json({ error: 'widgetId or conversationId required' }, { status: 400 });
 				}
 
 				// Verify widget belongs to workspace and get owner
 				const { data: widget, error: widgetErr } = await supabase
 					.from('widgets')
 					.select('id, created_by, workspace_id')
-					.eq('id', widgetId)
+					.eq('id', resolvedWidgetId)
 					.eq('workspace_id', authInfo.workspaceId)
 					.single();
 				if (widgetErr || !widget) {
@@ -1291,7 +1344,6 @@ export const POST: RequestHandler = async (event) => {
 				const count5l = typeof count_5l === 'number' && count_5l >= 0 ? count_5l : undefined;
 				const discountPercent = typeof discount_percent === 'number' && discount_percent >= 1 && discount_percent <= 20 ? discount_percent : undefined;
 				const contactEmail = typeof email === 'string' ? email.trim() || undefined : undefined;
-				const convId = typeof conversationId === 'string' ? conversationId.trim() : undefined;
 
 				if (roofSizeSqm == null && (count15l ?? 0) === 0 && (count10l ?? 0) === 0 && (count5l ?? 0) === 0) {
 					return json(
@@ -1307,7 +1359,7 @@ export const POST: RequestHandler = async (event) => {
 						.from('contacts')
 						.select('email')
 						.eq('conversation_id', convId)
-						.eq('widget_id', widgetId)
+						.eq('widget_id', resolvedWidgetId)
 						.maybeSingle();
 					if (contact?.email) {
 						finalEmail = getPrimaryEmail(contact.email) ?? undefined;
