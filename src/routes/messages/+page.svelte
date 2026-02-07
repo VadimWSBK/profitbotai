@@ -22,6 +22,17 @@
 		contactName?: string | null;
 		contactEmail?: string | null;
 	};
+	type ContactGroup = {
+		key: string;
+		contactId: string | null;
+		contactName: string | null;
+		contactEmail: string | null;
+		widgetName: string;
+		conversations: Conversation[];
+		totalUnread: number;
+		latestUpdatedAt: string;
+	};
+
 	type CheckoutPreview = {
 		lineItemsUI: Array<{ imageUrl: string | null; title: string; variant: string | null; quantity: number; unitPrice: string; lineTotal: string }>;
 		summary: { totalItems: number; subtotal: string; total: string; currency: string; discountPercent?: number; discountAmount?: string };
@@ -95,6 +106,83 @@
 	let realtimeChannel: RealtimeChannel | null = null;
 
 	const MESSAGES_PAGE_SIZE = 20;
+
+	let expandedGroups = $state<Set<string>>(new Set());
+
+	// Group conversations by contact
+	const contactGroups = $derived.by(() => {
+		const groupMap = new Map<string, ContactGroup>();
+		for (const conv of conversations) {
+			// Build a grouping key: prefer contactId, fall back to contactName+widgetId
+			let key: string;
+			if (conv.contactId) {
+				key = `contact:${conv.contactId}`;
+			} else if (conv.contactName?.trim()) {
+				key = `name:${conv.contactName.trim().toLowerCase()}:${conv.widgetId}`;
+			} else {
+				// No contact info — each conversation is its own group
+				key = `conv:${conv.id}`;
+			}
+
+			if (!groupMap.has(key)) {
+				groupMap.set(key, {
+					key,
+					contactId: conv.contactId ?? null,
+					contactName: conv.contactName ?? null,
+					contactEmail: conv.contactEmail ?? null,
+					widgetName: conv.widgetName,
+					conversations: [],
+					totalUnread: 0,
+					latestUpdatedAt: conv.updatedAt
+				});
+			}
+			const group = groupMap.get(key)!;
+			group.conversations.push(conv);
+			group.totalUnread += conv.unreadCount;
+			// Keep the latest contact info (name/email) from the most recent conversation
+			if (conv.updatedAt > group.latestUpdatedAt) {
+				group.latestUpdatedAt = conv.updatedAt;
+				if (conv.contactName) group.contactName = conv.contactName;
+				if (conv.contactEmail) group.contactEmail = conv.contactEmail;
+				if (conv.contactId) group.contactId = conv.contactId;
+			}
+		}
+
+		// Sort groups by latest updated, sort conversations within each group
+		const groups = Array.from(groupMap.values());
+		groups.sort((a, b) => new Date(b.latestUpdatedAt).getTime() - new Date(a.latestUpdatedAt).getTime());
+		for (const g of groups) {
+			g.conversations.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+		}
+		return groups;
+	});
+
+	function toggleGroup(key: string) {
+		if (expandedGroups.has(key)) {
+			expandedGroups.delete(key);
+		} else {
+			expandedGroups.add(key);
+		}
+		expandedGroups = new Set(expandedGroups);
+	}
+
+	function displayGroupLabel(group: ContactGroup): string {
+		if (group.contactName?.trim()) return group.contactName.trim();
+		if (group.contactEmail?.trim()) return group.contactEmail.trim();
+		if (group.conversations.length === 1) {
+			return group.conversations[0].widgetName ?? 'Unknown contact';
+		}
+		return group.widgetName ?? 'Unknown contact';
+	}
+
+	function groupInitial(group: ContactGroup): string {
+		return displayGroupLabel(group).charAt(0).toUpperCase() || '?';
+	}
+
+	function groupContactUrl(group: ContactGroup): string {
+		if (group.contactId) return `/contacts?contact=${encodeURIComponent(group.contactId)}`;
+		return '/contacts';
+	}
 
 	const widgetFilterLabel = $derived(
 		selectedWidgetId ? widgets.find((w) => w.id === selectedWidgetId)?.name ?? 'All widgets' : 'All widgets'
@@ -443,9 +531,31 @@
 	// Deep-link: select conversation from URL ?conversation=id (e.g. from Contacts page)
 	$effect(() => {
 		const convId = $page.url.searchParams.get('conversation');
+		const contactIdParam = $page.url.searchParams.get('contact');
 		if (convId && conversations.length > 0 && (!selectedConversation || selectedConversation.id !== convId)) {
 			const conv = conversations.find((c) => c.id === convId);
-			if (conv) selectConversation(conv);
+			if (conv) {
+				// Auto-expand the group containing this conversation
+				const group = contactGroups.find((g) => g.conversations.some((c) => c.id === convId));
+				if (group && group.conversations.length > 1) {
+					expandedGroups.add(group.key);
+					expandedGroups = new Set(expandedGroups);
+				}
+				selectConversation(conv);
+			}
+		}
+		// Deep-link by contact: expand that contact's group and select latest conversation
+		if (contactIdParam && conversations.length > 0 && !convId) {
+			const group = contactGroups.find((g) => g.contactId === contactIdParam);
+			if (group) {
+				if (group.conversations.length > 1) {
+					expandedGroups.add(group.key);
+					expandedGroups = new Set(expandedGroups);
+				}
+				if (!selectedConversation || !group.conversations.some((c) => c.id === selectedConversation!.id)) {
+					selectConversation(group.conversations[0]);
+				}
+			}
 		}
 	});
 
@@ -672,10 +782,10 @@
 	</div>
 
 	<div class="flex flex-1 min-h-0 gap-4 rounded-xl border border-gray-200 bg-white overflow-hidden">
-		<!-- Conversation list -->
+		<!-- Conversation list (grouped by contact) -->
 		<aside class="w-72 flex flex-col border-r border-gray-200 shrink-0 overflow-hidden">
 			<div class="p-3 border-b border-gray-100 text-sm text-gray-500">
-				{conversations.length} conversation{conversations.length !== 1 ? 's' : ''}
+				{contactGroups.length} contact{contactGroups.length !== 1 ? 's' : ''} · {conversations.length} session{conversations.length !== 1 ? 's' : ''}
 			</div>
 			<div class="flex-1 overflow-y-auto">
 				{#if loading}
@@ -683,51 +793,134 @@
 				{:else if conversations.length === 0}
 					<div class="p-4 text-center text-gray-500 text-sm">No conversations yet.</div>
 				{:else}
-					{#each conversations as conv}
-						<div
-							role="button"
-							tabindex="0"
-							class="w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 focus:bg-gray-50 focus:outline-none cursor-pointer {selectedConversation?.id === conv.id ? 'bg-amber-50 border-l-4 border-l-amber-500' : ''}"
-							onclick={() => selectConversation(conv)}
-							onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && selectConversation(conv)}
-						>
-							<div class="flex items-center gap-2">
-								<a
-									href={contactUrl(conv)}
-									onclick={(e) => e.stopPropagation()}
-									class="shrink-0 w-9 h-9 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-sm font-semibold hover:bg-amber-200 transition-colors no-underline"
-									title="Open contact"
-								>
-									{contactInitial(conv)}
-								</a>
-								<div class="min-w-0 flex-1">
-									<div class="flex items-center justify-between gap-2">
-										<a
-											href={contactUrl(conv)}
-											onclick={(e) => e.stopPropagation()}
-											class="font-medium text-gray-800 truncate hover:text-amber-600 transition-colors no-underline"
-											title="Open contact"
-										>
-											{displayContactLabel(conv)}
-										</a>
-										{#if conv.unreadCount > 0}
-											<span class="shrink-0 rounded-full bg-amber-500 text-white text-xs font-medium min-w-5 h-5 flex items-center justify-center px-1.5">
-												{conv.unreadCount}
+					{#each contactGroups as group}
+						{@const isSingle = group.conversations.length === 1}
+						{@const isExpanded = expandedGroups.has(group.key)}
+						{@const hasSelectedConv = group.conversations.some((c) => c.id === selectedConversation?.id)}
+
+						{#if isSingle}
+							<!-- Single conversation: render directly (like before) -->
+							{@const conv = group.conversations[0]}
+							<div
+								role="button"
+								tabindex="0"
+								class="w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 focus:bg-gray-50 focus:outline-none cursor-pointer {selectedConversation?.id === conv.id ? 'bg-amber-50 border-l-4 border-l-amber-500' : ''}"
+								onclick={() => selectConversation(conv)}
+								onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && selectConversation(conv)}
+							>
+								<div class="flex items-center gap-2">
+									<a
+										href={groupContactUrl(group)}
+										onclick={(e) => e.stopPropagation()}
+										class="shrink-0 w-9 h-9 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-sm font-semibold hover:bg-amber-200 transition-colors no-underline"
+										title="Open contact"
+									>
+										{groupInitial(group)}
+									</a>
+									<div class="min-w-0 flex-1">
+										<div class="flex items-center justify-between gap-2">
+											<a
+												href={groupContactUrl(group)}
+												onclick={(e) => e.stopPropagation()}
+												class="font-medium text-gray-800 truncate hover:text-amber-600 transition-colors no-underline"
+												title="Open contact"
+											>
+												{displayGroupLabel(group)}
+											</a>
+											{#if conv.unreadCount > 0}
+												<span class="shrink-0 rounded-full bg-amber-500 text-white text-xs font-medium min-w-5 h-5 flex items-center justify-center px-1.5">
+													{conv.unreadCount}
+												</span>
+											{/if}
+										</div>
+										<div class="text-xs text-gray-500 mt-0.5">
+											{conv.widgetName} · Session: {conv.sessionId.slice(0, 12)}…
+										</div>
+										<div class="flex items-center gap-2 mt-1">
+											<span class="text-xs {conv.isAiActive ? 'text-green-600' : 'text-amber-600'}">
+												{conv.isAiActive ? 'AI active' : 'Human takeover'}
 											</span>
-										{/if}
-									</div>
-									<div class="text-xs text-gray-500 mt-0.5">
-										{conv.widgetName} · Session: {conv.sessionId.slice(0, 12)}…
-									</div>
-									<div class="flex items-center gap-2 mt-1">
-										<span class="text-xs {conv.isAiActive ? 'text-green-600' : 'text-amber-600'}">
-											{conv.isAiActive ? 'AI active' : 'Human takeover'}
-										</span>
-										<span class="text-xs text-gray-400">{formatDate(conv.updatedAt)}</span>
+											<span class="text-xs text-gray-400">{formatDate(conv.updatedAt)}</span>
+										</div>
 									</div>
 								</div>
 							</div>
-						</div>
+						{:else}
+							<!-- Multi-conversation group: collapsible header -->
+							<div
+								role="button"
+								tabindex="0"
+								class="w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 focus:bg-gray-50 focus:outline-none cursor-pointer {hasSelectedConv && !isExpanded ? 'bg-amber-50 border-l-4 border-l-amber-500' : ''}"
+								onclick={() => toggleGroup(group.key)}
+								onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && toggleGroup(group.key)}
+							>
+								<div class="flex items-center gap-2">
+									<a
+										href={groupContactUrl(group)}
+										onclick={(e) => e.stopPropagation()}
+										class="shrink-0 w-9 h-9 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-sm font-semibold hover:bg-amber-200 transition-colors no-underline"
+										title="Open contact"
+									>
+										{groupInitial(group)}
+									</a>
+									<div class="min-w-0 flex-1">
+										<div class="flex items-center justify-between gap-2">
+											<a
+												href={groupContactUrl(group)}
+												onclick={(e) => e.stopPropagation()}
+												class="font-medium text-gray-800 truncate hover:text-amber-600 transition-colors no-underline"
+												title="Open contact"
+											>
+												{displayGroupLabel(group)}
+											</a>
+											<div class="flex items-center gap-1.5 shrink-0">
+												{#if group.totalUnread > 0}
+													<span class="rounded-full bg-amber-500 text-white text-xs font-medium min-w-5 h-5 flex items-center justify-center px-1.5">
+														{group.totalUnread}
+													</span>
+												{/if}
+												<svg class="w-3.5 h-3.5 text-gray-400 transition-transform {isExpanded ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+													<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+												</svg>
+											</div>
+										</div>
+										<div class="flex items-center gap-2 mt-0.5">
+											<span class="text-xs text-gray-500">{group.conversations.length} sessions</span>
+											<span class="text-xs text-gray-400">{formatDate(group.latestUpdatedAt)}</span>
+										</div>
+									</div>
+								</div>
+							</div>
+							<!-- Expanded session list -->
+							{#if isExpanded}
+								{#each group.conversations as conv}
+									<div
+										role="button"
+										tabindex="0"
+										class="w-full text-left pl-10 pr-4 py-2 border-b border-gray-50 hover:bg-gray-50 focus:bg-gray-50 focus:outline-none cursor-pointer bg-gray-50/50 {selectedConversation?.id === conv.id ? 'bg-amber-50 border-l-4 border-l-amber-500' : ''}"
+										onclick={() => selectConversation(conv)}
+										onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && selectConversation(conv)}
+									>
+										<div class="flex items-center justify-between gap-2">
+											<span class="text-xs text-gray-600 truncate font-mono">
+												{conv.sessionId.slice(0, 20)}…
+											</span>
+											{#if conv.unreadCount > 0}
+												<span class="shrink-0 rounded-full bg-amber-500 text-white text-xs font-medium min-w-4 h-4 flex items-center justify-center px-1">
+													{conv.unreadCount}
+												</span>
+											{/if}
+										</div>
+										<div class="flex items-center gap-2 mt-0.5">
+											<span class="text-xs {conv.isAiActive ? 'text-green-600' : 'text-amber-600'}">
+												{conv.isAiActive ? 'AI active' : 'Human takeover'}
+											</span>
+											<span class="text-xs text-gray-400">{formatDate(conv.updatedAt)}</span>
+										</div>
+									</div>
+								{/each}
+							{/if}
+						{/if}
 					{/each}
 				{/if}
 			</div>
