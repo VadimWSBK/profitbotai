@@ -12,6 +12,8 @@
 	let open = $state(false);
 	let visitorName = $state<string | null>(null);
 	let prefersReducedMotion = $state(false);
+	let showTooltip = $state(true);
+	let tooltipTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	function dur(ms: number) { return prefersReducedMotion ? 0 : ms; }
 
@@ -83,6 +85,50 @@
 		iconError = false;
 	});
 
+	// Auto-hide tooltip logic
+	$effect(() => {
+		// Reset tooltip visibility when chat opens/closes or config changes
+		if (open) {
+			showTooltip = false;
+			if (tooltipTimeout) {
+				clearTimeout(tooltipTimeout);
+				tooltipTimeout = null;
+			}
+			return;
+		}
+
+		// Only show tooltip if displayTooltip is enabled and chat is closed
+		if (!tooltip.displayTooltip) {
+			showTooltip = false;
+			if (tooltipTimeout) {
+				clearTimeout(tooltipTimeout);
+				tooltipTimeout = null;
+			}
+			return;
+		}
+
+		// Show tooltip initially
+		showTooltip = true;
+
+		// Set up auto-hide if enabled
+		if (tooltip.autoHideTooltip && tooltip.autoHideDelaySeconds > 0) {
+			if (tooltipTimeout) {
+				clearTimeout(tooltipTimeout);
+			}
+			tooltipTimeout = setTimeout(() => {
+				showTooltip = false;
+				tooltipTimeout = null;
+			}, tooltip.autoHideDelaySeconds * 1000);
+		}
+
+		return () => {
+			if (tooltipTimeout) {
+				clearTimeout(tooltipTimeout);
+				tooltipTimeout = null;
+			}
+		};
+	});
+
 	const bubbleRadius = $derived(
 		bubble.borderRadiusStyle === 'circle'
 			? '50%'
@@ -109,7 +155,7 @@
 		<div
 			class="chat-window-container absolute flex flex-col items-end gap-2 chat-window-container--desktop"
 			class:is-open={open}
-			style="right: 0; bottom: {bubble.bubbleSizePx + 12}px; z-index: 1;"
+			style="right: {bubble.rightPositionPx}px; bottom: {bubble.bubbleSizePx + 12}px; z-index: 1;"
 			in:chatWindowIn
 			out:chatWindowOut
 		>
@@ -119,7 +165,7 @@
 
 	<!-- Tooltip left, bubble right -->
 	<div class="flex flex-row items-end gap-2 relative z-10">
-		{#if tooltip.displayTooltip && !open}
+		{#if tooltip.displayTooltip && !open && showTooltip}
 			<div
 				class="tooltip-preview px-3 py-2 shadow-lg max-w-[220px] whitespace-normal cursor-pointer order-first"
 				style="
@@ -133,7 +179,7 @@
 				onclick={() => (open = true)}
 				onkeydown={(e) => e.key === 'Enter' && (open = true)}
 				in:fly={{ y: 4, duration: dur(200), easing: cubicOut }}
-				out:fade={{ duration: dur(120) }}
+				out:fade={{ duration: dur(300), easing: cubicOut }}
 			>
 				{tooltipMessage}
 			</div>
@@ -194,8 +240,10 @@
 		overflow: visible;
 		background: transparent !important;
 		background-color: transparent !important;
-		/* Add padding to make shadow visible */
+		/* Add padding to make shadow visible on all sides */
 		padding: 20px;
+		/* Add left margin to prevent shadow from being cut off */
+		margin-left: 20px;
 	}
 
 	.chat-window-container--desktop :global(.chat-window) {
@@ -211,24 +259,33 @@
 		pointer-events: none !important;
 	}
 
+	/* Bubble button with prominent dropshadow */
+	.bubble-preview {
+		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25), 0 4px 8px rgba(0, 0, 0, 0.15);
+	}
+
 	/* Bubble attention pulse — plays 3 times on load, then stops */
 	.bubble-attention {
 		animation: bubble-pulse 2s ease-in-out 3;
-		transition: transform 0.2s ease-out;
+		transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
 	}
 	.bubble-attention:hover {
 		transform: scale(1.05);
+		box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3), 0 6px 12px rgba(0, 0, 0, 0.2);
 	}
 	.bubble-attention.bubble-open {
 		transform: scale(0.95);
 	}
 	@keyframes bubble-pulse {
-		0%, 100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.15); }
-		50% { box-shadow: 0 0 0 8px rgba(0, 0, 0, 0); }
+		0%, 100% { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25), 0 4px 8px rgba(0, 0, 0, 0.15), 0 0 0 0 rgba(0, 0, 0, 0.15); }
+		50% { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25), 0 4px 8px rgba(0, 0, 0, 0.15), 0 0 0 8px rgba(0, 0, 0, 0); }
 	}
 
 	/* Mobile: full-screen chat (industry standard for chat widgets) */
 	@media (max-width: 768px) {
+		.widget-preview-wrapper {
+			z-index: 2147483647 !important;
+		}
 		.chat-backdrop {
 			display: block;
 			position: fixed;
@@ -245,17 +302,34 @@
 			bottom: 0 !important;
 			left: 0 !important;
 			top: 0 !important;
-			width: 100% !important;
-			height: 100% !important;
+			width: 100vw !important;
+			height: 100vh !important;
+			height: 100dvh !important;
 			max-height: 100dvh !important;
 			align-items: stretch !important;
 			justify-content: stretch !important;
 			padding: 0 !important;
+			margin: 0 !important;
+			z-index: 1 !important;
 		}
 		.chat-window-container--desktop.is-open :global(.chat-window) {
 			flex: 1;
 			min-width: 0;
 			min-height: 0;
+			width: 100% !important;
+			height: 100% !important;
+			max-width: 100% !important;
+			max-height: 100% !important;
+		}
+		/* Ensure bubble is always visible when chat is closed */
+		.bubble-preview {
+			position: relative !important;
+			z-index: 9999 !important;
+			display: flex !important;
+		}
+		/* Hide bubble when chat is open on mobile (chat window has close button) */
+		.bubble-preview.bubble-open {
+			display: none !important;
 		}
 	}
 

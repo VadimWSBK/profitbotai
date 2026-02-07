@@ -224,6 +224,17 @@
 						<input type="checkbox" bind:checked={config.tooltip.hideTooltipOnMobile} class="rounded border-gray-300 text-amber-600 focus:ring-amber-500" />
 						<span class="text-sm font-medium text-gray-700">Hide Tooltip on Mobile Devices ⓘ</span>
 					</label>
+					<label class="flex items-center gap-2">
+						<input type="checkbox" bind:checked={config.tooltip.autoHideTooltip} class="rounded border-gray-300 text-amber-600 focus:ring-amber-500" />
+						<span class="text-sm font-medium text-gray-700">Auto-hide Tooltip ⓘ</span>
+					</label>
+					{#if config.tooltip.autoHideTooltip}
+						<label class="block">
+							<span class="text-sm font-medium text-gray-700 mb-1">Auto-hide Delay (seconds) ⓘ</span>
+							<input type="number" min="1" max="30" bind:value={config.tooltip.autoHideDelaySeconds} class="w-full max-w-[120px] px-3 py-2 border border-gray-300 rounded-lg" />
+							<p class="mt-1 text-xs text-gray-500">Tooltip will smoothly fade out after this many seconds.</p>
+						</label>
+					{/if}
 					<label class="block">
 						<span class="text-sm font-medium text-gray-700 mb-1">Message ⓘ</span>
 						<input type="text" bind:value={config.tooltip.message} class="w-full px-3 py-2 border border-gray-300 rounded-lg" placeholder={'Hi {first_name} 👋 Let\'s Chat.'} />

@@ -22,6 +22,8 @@ export interface BubbleConfig {
 export interface TooltipConfig {
 	displayTooltip: boolean;
 	hideTooltipOnMobile: boolean;
+	autoHideTooltip: boolean;
+	autoHideDelaySeconds: number;
 	message: string;
 	backgroundColor: string;
 	textColor: string;
@@ -153,6 +155,8 @@ export const defaultBubbleConfig: BubbleConfig = {
 export const defaultTooltipConfig: TooltipConfig = {
 	displayTooltip: true,
 	hideTooltipOnMobile: false,
+	autoHideTooltip: false,
+	autoHideDelaySeconds: 3,
 	message: 'Hi {first_name} 👋 Let\'s Chat.',
 	backgroundColor: '#fff9f6',
 	textColor: '#1c1c1c',
