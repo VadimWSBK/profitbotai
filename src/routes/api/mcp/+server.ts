@@ -77,8 +77,13 @@ export const POST: RequestHandler = async (event) => {
 
 	// Allow conversationId and widgetId to be passed via headers (for n8n workflows)
 	// This allows the workflow to inject these from the trigger without the AI needing to pass them
-	const headerConversationId = event.request.headers.get('X-Conversation-Id');
-	const headerWidgetId = event.request.headers.get('X-Widget-Id');
+	const headerConversationId = event.request.headers.get('X-Conversation-Id') || event.request.headers.get('x-conversation-id');
+	const headerWidgetId = event.request.headers.get('X-Widget-Id') || event.request.headers.get('x-widget-id');
+	
+	// Debug logging (remove in production if needed)
+	if (headerConversationId || headerWidgetId) {
+		console.log('[MCP API] Headers received:', { headerConversationId, headerWidgetId, action, hasParamsConversationId: !!params.conversationId, hasParamsWidgetId: !!params.widgetId });
+	}
 	
 	// Merge header values into params if not already present
 	const enrichedParams = {
@@ -1364,6 +1369,19 @@ export const POST: RequestHandler = async (event) => {
 				let resolvedWidgetId = typeof widgetId === 'string' ? widgetId.trim() : null;
 				const convId = typeof conversationId === 'string' ? conversationId.trim() : undefined;
 
+				// Debug logging
+				console.log('[create_diy_checkout]', {
+					hasWidgetId: !!resolvedWidgetId,
+					hasConversationId: !!convId,
+					widgetId: resolvedWidgetId,
+					conversationId: convId,
+					workspaceId: authInfo.workspaceId,
+					headerConversationId,
+					headerWidgetId,
+					paramsConversationId: params.conversationId,
+					paramsWidgetId: params.widgetId
+				});
+
 				// If widgetId not provided, try to resolve from conversationId
 				if (!resolvedWidgetId && convId) {
 					const { data: conv, error: convErr } = await supabase
@@ -1373,6 +1391,7 @@ export const POST: RequestHandler = async (event) => {
 						.eq('widgets.workspace_id', authInfo.workspaceId)
 						.single();
 					if (convErr || !conv) {
+						console.error('[create_diy_checkout] Conversation lookup failed:', { convErr, convId, workspaceId: authInfo.workspaceId });
 						if (convErr?.code === 'PGRST116') return json({ error: 'Conversation not found' }, { status: 404 });
 						return json({ error: 'Conversation not found or access denied' }, { status: 404 });
 					}
@@ -1380,6 +1399,7 @@ export const POST: RequestHandler = async (event) => {
 				}
 
 				if (!resolvedWidgetId) {
+					console.error('[create_diy_checkout] Missing widgetId and conversationId:', { widgetId: resolvedWidgetId, conversationId: convId });
 					return json({ error: 'widgetId or conversationId required' }, { status: 400 });
 				}
 
@@ -1391,6 +1411,7 @@ export const POST: RequestHandler = async (event) => {
 					.eq('workspace_id', authInfo.workspaceId)
 					.single();
 				if (widgetErr || !widget) {
+					console.error('[create_diy_checkout] Widget lookup failed:', { widgetErr, resolvedWidgetId, workspaceId: authInfo.workspaceId });
 					if (widgetErr?.code === 'PGRST116') return json({ error: 'Widget not found' }, { status: 404 });
 					return json({ error: 'Widget not found or access denied' }, { status: 404 });
 				}
