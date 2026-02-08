@@ -24,6 +24,8 @@ export type WorkflowRunContext = {
 	ownerId: string;
 	contact: { name?: string | null; email?: string | null; phone?: string | null; address?: string | null; roof_size_sqm?: number | null };
 	extractedRoofSize?: number;
+	/** App origin (e.g. https://app.profitbot.ai) for building short download URLs. */
+	origin?: string;
 };
 
 export type WorkflowRunResult = {
@@ -263,6 +265,7 @@ export async function runQuoteWorkflow(
 ): Promise<WorkflowRunResult> {
 	const actions = getActionNodesInOrder(workflow.nodes, workflow.edges);
 	let signedUrl: string | undefined;
+	let storagePath: string | undefined;
 	let quoteEmailSent: boolean | null = null;
 	const contact = ctx.contact;
 	let contactId: string | null = null;
@@ -299,6 +302,7 @@ export async function runQuoteWorkflow(
 					);
 					if (gen.signedUrl && gen.storagePath) {
 						signedUrl = gen.signedUrl;
+						storagePath = gen.storagePath;
 						const { error: appendErr } = await admin.rpc('append_pdf_quote_to_contact', {
 							p_conversation_id: ctx.conversationId,
 							p_widget_id: ctx.widgetId,
@@ -442,9 +446,15 @@ export async function runQuoteWorkflow(
 		quoteEmailSent === true
 			? ' In the same message, say they will also receive the quote by email, but give them the link above as a hyperlink in your response.'
 			: ' Give them the link above as a hyperlink in your response. Do not say they will receive it by email.';
+	// Use the short /api/quote/download redirect URL so the link never expires
+	// (it generates a fresh signed URL on each click). Fall back to raw signedUrl if no origin.
+	const chatLinkUrl =
+		ctx.origin && storagePath
+			? `${ctx.origin}/api/quote/download?path=${encodeURIComponent(storagePath)}`
+			: signedUrl;
 	const webhookResult =
-		signedUrl != null
-			? `A quote PDF has been generated. You MUST include this exact clickable link in your reply on a single line (no line break between the text and the URL): [Download Quote](${signedUrl}).${emailInstruction}`
+		chatLinkUrl != null
+			? `A quote PDF has been generated. You MUST include this exact clickable link in your reply on a single line (no line break between the text and the URL): [Download PDF Quote](${chatLinkUrl}).${emailInstruction}`
 			: '';
 
 	// Use 'quote' / 'Quote' so chat prompt treats this as quote result (instruction with download link, etc.)

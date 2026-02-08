@@ -23,7 +23,8 @@ export const GET: RequestHandler = async (event) => {
 
 	try {
 		const admin = getSupabaseAdmin();
-		const { data, error } = await admin.storage.from(BUCKET).createSignedUrl(path, 3600);
+		const ONE_YEAR = 31536000; // 365 days in seconds
+	const { data, error } = await admin.storage.from(BUCKET).createSignedUrl(path, ONE_YEAR);
 		if (error || !data?.signedUrl) {
 			console.error('quote/download createSignedUrl:', error);
 			return new Response('Quote not found or expired', { status: 404 });

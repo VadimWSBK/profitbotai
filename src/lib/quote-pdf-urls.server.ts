@@ -27,7 +27,7 @@ export async function resolvePdfQuotesToSignedUrls(pdf_quotes: unknown): Promise
 			result.push({ url: stored, created_at, total });
 			continue;
 		}
-		const { data } = await admin.storage.from('roof_quotes').createSignedUrl(filePath, 3600);
+		const { data } = await admin.storage.from('roof_quotes').createSignedUrl(filePath, 31536000 /* 1 year */);
 		if (data?.signedUrl) {
 			result.push({ url: data.signedUrl, created_at, total });
 		} else {

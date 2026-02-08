@@ -62,7 +62,6 @@ export const POST: RequestHandler = async (event) => {
 			webhookTriggers: WebhookTrigger[];
 			bot: { role?: string; tone?: string; instructions?: string };
 			agentAutonomy: boolean;
-			agentSystemPrompt?: string;
 			agentAllowedTools?: string[] | null;
 			keyOwnerId: string | null; // user id to resolve LLM key (widget or agent owner)
 		};
@@ -71,7 +70,7 @@ export const POST: RequestHandler = async (event) => {
 		if (agentId) {
 			const { data: agentRow, error: agentErr } = await admin
 				.from('agents')
-				.select('chat_backend, llm_provider, llm_model, llm_fallback_provider, llm_fallback_model, agent_takeover_timeout_minutes, webhook_triggers, bot_role, bot_tone, bot_instructions, system_prompt, allowed_tools, created_by')
+				.select('chat_backend, llm_provider, llm_model, llm_fallback_provider, llm_fallback_model, agent_takeover_timeout_minutes, webhook_triggers, bot_role, bot_tone, bot_instructions, allowed_tools, created_by')
 				.eq('id', agentId)
 				.single();
 			if (agentErr || !agentRow) return json({ error: 'Agent not found' }, { status: 404 });
@@ -90,7 +89,6 @@ export const POST: RequestHandler = async (event) => {
 					instructions: (agentRow.bot_instructions as string) ?? ''
 				},
 				agentAutonomy: Boolean(config.agentAutonomy),
-				agentSystemPrompt: (agentRow.system_prompt as string) ?? '',
 				agentAllowedTools: Array.isArray(agentRow.allowed_tools) ? (agentRow.allowed_tools as string[]) : null,
 				keyOwnerId: agentRow.created_by as string | null
 			};
@@ -107,7 +105,6 @@ export const POST: RequestHandler = async (event) => {
 				webhookTriggers: (config.webhookTriggers as WebhookTrigger[] | undefined) ?? [],
 				bot: (config.bot as { role?: string; tone?: string; instructions?: string }) ?? {},
 				agentAutonomy: Boolean(config.agentAutonomy),
-				agentSystemPrompt: undefined,
 				agentAllowedTools: null,
 				keyOwnerId: widget.created_by as string | null
 			};
@@ -403,7 +400,8 @@ export const POST: RequestHandler = async (event) => {
 							ownerId: ownerId ?? '',
 							contact,
 							extractedRoofSize:
-								effectiveRoofSize ?? undefined
+								effectiveRoofSize ?? undefined,
+							origin: event.url.origin
 						});
 						quoteEmailSent = runResult.quoteEmailSent;
 						triggerResult = {
@@ -438,9 +436,12 @@ export const POST: RequestHandler = async (event) => {
 								p_total: gen.total ?? null
 							});
 							quoteEmailSent = false; // no workflow email
+							// Use the short /api/quote/download redirect so the link never expires
+							// (it generates a fresh signed URL on each click)
+							const downloadUrl = `${event.url.origin}/api/quote/download?path=${encodeURIComponent(gen.storagePath)}`;
 							triggerResult = {
 								...triggerResult,
-								webhookResult: `Quote generated successfully. You MUST include this exact clickable link in your reply on a single line: [Download Quote](${gen.signedUrl}). Confirm the quote is ready and share the link.`
+								webhookResult: `Quote generated successfully. You MUST include this exact clickable link in your reply on a single line: [Download PDF Quote](${downloadUrl}). Confirm the quote is ready and share the link.`
 							};
 							console.log('[chat/quote] Generated quote directly (no workflow)');
 						} else {
@@ -471,51 +472,44 @@ export const POST: RequestHandler = async (event) => {
 		}
 
 		const agentAutonomy = effectiveConfig.agentAutonomy;
-		const bot = effectiveConfig.bot;
-		const parts: string[] = [
-			'CRITICAL: Reply only with natural conversational text. Never output technical strings, commands, codes, or syntax (e.g. workflow_start, contacts_query, or similar). Speak like a human to a human. Your entire reply must be readable by the customer with no internal jargon.',
-			'FORMATTING: When presenting quotes, pricing, or structured data, do NOT use ** for bolding. Use a markdown table (| Label | Value |) or a clean list with "Label: value" per line. Example: "Coverage needed: 200 litres..." — no asterisks.',
-			'For quotes: Ask whether the customer wants DIY (calculate in chat) or Done For You (we coat the roof for them—use generate_quote tool). Only use generate_quote for Done For You. For DIY, calculate litres, buckets, and price in chat. We need name, email, and roof size (sqm) before generating a Done For You quote PDF.'
-		];
-		if (agentAutonomy) {
-			parts.push(
-				'You have access to tools. Use them when appropriate: search_contacts; get_current_contact; generate_quote for Done For You quotes ONLY (we coat the roof for the customer—never for DIY); send_email; shopify_check_orders; shopify_create_draft_order; shopify_create_diy_checkout_link for one-click DIY purchase (use discount_percent: 10 or 15 when customer asks for a discount); shopify_cancel_order; shopify_refund_order. For DIY quotes (when Shopify is connected): respond in ONE step only. Call shopify_create_diy_checkout_link with roof_size_sqm or bucket counts, then reply with a brief intro sentence (e.g. "Here is your one-click checkout for your X m² roof:") followed immediately by the full previewMarkdown from the tool. Do NOT output an Item/Details breakdown table first. Do NOT ask "would you like a checkout link?"—always include the checkout preview and Buy now link in the same message. Use the tools, then reply naturally. Do not mention "calling a tool" or technical names.'
-			);
-		}
 		const agentAllowedTools = effectiveConfig.agentAllowedTools ?? null;
-		if (effectiveConfig.agentSystemPrompt?.trim()) {
-			parts.push(`Agent instructions:\n${effectiveConfig.agentSystemPrompt.trim()}`);
-		}
+		const bot = effectiveConfig.bot;
+
+		// ── System prompt: Role + Tone (identity) ──────────────────────────
+		// Everything else (formatting rules, tool usage, quote flow, etc.)
+		// belongs in the agent's RAG knowledge base, not hardcoded here.
+		const parts: string[] = [];
 		if (bot.role?.trim()) parts.push(bot.role.trim());
 		if (bot.tone?.trim()) parts.push(`Tone: ${bot.tone.trim()}`);
 		if (bot.instructions?.trim()) parts.push(bot.instructions.trim());
-		// Dynamic product pricing (overrides hardcoded values in agent rules)
-		if (ownerId) {
-			const products = await getProductPricingForOwner(ownerId);
-			if (products.length > 0) {
-				parts.push(`Current product pricing (use for DIY quotes): ${formatProductPricingForAgent(products)}`);
-			}
-		}
-		// RAG: retrieve relevant rules for this message (only when widget has an agent)
+
+		// ── RAG: retrieve relevant rules for this message ──────────────────
 		if (agentId && message) {
 			try {
 				const relevantRules = await getRelevantRulesForAgent(agentId, message, 5);
 				if (relevantRules.length > 0) {
 					parts.push(
-						`Relevant rules (retrieved for this query—follow these):\n${relevantRules.map((r) => r.content).join('\n\n')}`
+						`Rules (follow these):\n${relevantRules.map((r) => r.content).join('\n\n')}`
 					);
 				}
 			} catch (e) {
 				console.error('[chat] getRelevantRulesForAgent:', e);
 			}
 		}
-		// Contact data is ALREADY loaded below — use it directly, never output query syntax
-		const contactLines: string[] = [
-			'Contact data (already loaded from database): Use the info below when the user asks about their details, quote, or "what do you have on file?". If PDF links are listed, share them as clickable hyperlinks using markdown: [Download Quote](paste-the-url-here). The chat renders [text](url) as clickable links.'
-		];
+
+		// ── Dynamic context: product pricing ───────────────────────────────
+		if (ownerId) {
+			const products = await getProductPricingForOwner(ownerId);
+			if (products.length > 0) {
+				parts.push(`Current product pricing: ${formatProductPricingForAgent(products)}`);
+			}
+		}
+
+		// ── Dynamic context: contact data ──────────────────────────────────
 		const currentContact = contactForPrompt;
+		const contactLines: string[] = [];
 		if (currentContact && (currentContact.name || currentContact.email || currentContact.phone || currentContact.address || currentContact.roof_size_sqm != null || (Array.isArray(currentContact.pdf_quotes) && currentContact.pdf_quotes.length > 0))) {
-			contactLines.push('Current conversation contact:');
+			contactLines.push('Contact on file:');
 			if (currentContact.name) contactLines.push(`- Name: ${currentContact.name}`);
 			if (currentContact.email) contactLines.push(`- Email: ${currentContact.email}`);
 			if (currentContact.phone) contactLines.push(`- Phone: ${currentContact.phone}`);
@@ -528,17 +522,15 @@ export const POST: RequestHandler = async (event) => {
 					const stored = typeof q === 'object' && q !== null && 'url' in q ? (q as { url: string }).url : String(q);
 					const filePath = stored.match(/roof_quotes\/(.+)$/)?.[1] ?? stored.trim();
 					if (!filePath) continue;
-					const { data } = await adminSupabase.storage.from('roof_quotes').createSignedUrl(filePath, 3600);
+					const { data } = await adminSupabase.storage.from('roof_quotes').createSignedUrl(filePath, 31536000 /* 1 year */);
 					if (data?.signedUrl) signedUrls.push(data.signedUrl);
 				}
 				if (signedUrls.length > 0) {
-					contactLines.push(`- PDF quote links (when user asks for their quote, reply with: [Download Quote](URL) using one of these): ${signedUrls.join(', ')}`);
+					contactLines.push(`- PDF quotes: ${signedUrls.map((u) => `[Download Quote](${u})`).join(', ')}`);
 				}
 			}
-		} else {
-			contactLines.push('Current conversation contact: (none stored yet)');
 		}
-		// If user message contains an email, search contacts for this widget and include any match
+		// If user message contains an email, search contacts for this widget
 		const emailInMessage = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/.exec(message);
 		if (emailInMessage) {
 			const searchEmail = emailInMessage[0].toLowerCase();
@@ -565,33 +557,34 @@ export const POST: RequestHandler = async (event) => {
 							const stored = typeof q === 'object' && q !== null && 'url' in q ? (q as { url: string }).url : String(q);
 							const filePath = stored.match(/roof_quotes\/(.+)$/)?.[1] ?? stored.trim();
 							if (!filePath) continue;
-							const { data } = await adminSupabase.storage.from('roof_quotes').createSignedUrl(filePath, 3600);
+							const { data } = await adminSupabase.storage.from('roof_quotes').createSignedUrl(filePath, 31536000 /* 1 year */);
 							if (data?.signedUrl) signedUrls.push(data.signedUrl);
 						}
 						if (signedUrls.length > 0)
-							contactLines.push(`- PDF quote links: ${signedUrls.join(', ')}`);
+							contactLines.push(`- PDF quotes: ${signedUrls.join(', ')}`);
 					}
 				}
 			}
 		}
-		parts.push(contactLines.join('\n'));
-		// When AI takes over again after live-agent timeout, ask the model to apologize and answer
+		if (contactLines.length > 0) parts.push(contactLines.join('\n'));
+
+		// ── Situational context (only when relevant) ───────────────────────
 		if (resumingAfterAgentTimeout) {
 			parts.push(
-				'The customer was waiting for a human agent who did not respond in time. Start your reply with a brief apology for the delay, then answer their question helpfully.'
+				'The customer was waiting for a human agent who did not respond in time. Briefly apologize for the delay, then answer their question.'
 			);
 		}
-		// If we got data from a webhook trigger or built-in quote, tell the model to use it in the reply
 		if (triggerResult?.webhookResult) {
 			const isQuote = quoteTriggerIds.has(triggerResult.triggerId.toLowerCase());
 			const quoteHasLink = isQuote && triggerResult.webhookResult.includes('[Download Quote]');
 			const instruction = quoteHasLink
-				? `A quote was just generated. In your reply you MUST: (1) Confirm the quote is ready${quoteEmailSent === true ? ', (2) Say they will receive it by email, AND (3)' : ', (2)'} Include the download link from the data below as a clickable markdown link. Copy the link exactly as given: [Download Quote](url) on one line with no newline between the brackets and the URL—so the customer only sees "Download Quote" as a link, not the long URL.`
+				? `A quote was generated.${quoteEmailSent === true ? ' They will also receive it by email.' : ''} Include this download link in your reply as a clickable markdown link: [Download Quote](url).`
 				: isQuote
-					? `The user asked for a quote but we need more information first. Follow the instruction below—ask only for what is missing. Do not say the quote is being generated until we have name, email, and roof size (square metres).`
-					: `The following information was retrieved from an external system (trigger: ${triggerResult.triggerName}). Use it to answer the customer's question accurately and naturally. Do not say "according to our system" unless appropriate.`;
-			parts.push(`${instruction}\n\nData to use in your reply:\n${triggerResult.webhookResult}`);
+					? `The user wants a quote but information is missing. Ask only for what is missing.`
+					: `Use this data to answer the customer naturally.`;
+			parts.push(`${instruction}\n\n${triggerResult.webhookResult}`);
 		}
+
 		const systemPrompt = parts.length > 0 ? parts.join('\n\n') : 'You are a helpful assistant.';
 
 		const modelMessages = llmHistory.map((m) => ({
