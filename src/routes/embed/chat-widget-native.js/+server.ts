@@ -592,6 +592,24 @@ const EMBED_SCRIPT = String.raw`
     var btn = el('button', { type: 'button', className: 'pb-bubble pb-bubble-pulse', 'aria-label': 'Open chat' });
     
     // Add inline styles as fallback to ensure bubble is visible
+    // Set inline styles using both methods to ensure they stick
+    var inlineStyle = 'width: ' + bubbleSize + 'px !important; ' +
+                      'height: ' + bubbleSize + 'px !important; ' +
+                      'background-color: ' + bubbleBg + ' !important; ' +
+                      'border-radius: ' + bubbleRadius + ' !important; ' +
+                      'display: flex !important; ' +
+                      'align-items: center !important; ' +
+                      'justify-content: center !important; ' +
+                      'pointer-events: auto !important; ' +
+                      'cursor: pointer !important; ' +
+                      'border: none !important; ' +
+                      'position: relative !important; ' +
+                      'z-index: 20 !important; ' +
+                      'flex-shrink: 0 !important; ' +
+                      'box-shadow: 0 8px 24px rgba(0,0,0,0.25), 0 4px 8px rgba(0,0,0,0.15) !important;';
+    btn.setAttribute('style', inlineStyle);
+    
+    // Also set via style object for compatibility
     btn.style.width = bubbleSize + 'px';
     btn.style.height = bubbleSize + 'px';
     btn.style.backgroundColor = bubbleBg;
@@ -605,7 +623,13 @@ const EMBED_SCRIPT = String.raw`
     btn.style.position = 'relative';
     btn.style.zIndex = '20';
     btn.style.flexShrink = '0';
+    btn.style.boxShadow = '0 8px 24px rgba(0,0,0,0.25), 0 4px 8px rgba(0,0,0,0.15)';
+    
     console.log('[ProfitBot] Bubble inline styles set as fallback');
+    console.log('[ProfitBot] Bubble element after styles:', btn);
+    console.log('[ProfitBot] Bubble style attribute:', btn.getAttribute('style'));
+    console.log('[ProfitBot] Bubble style.width:', btn.style.width);
+    console.log('[ProfitBot] Bubble style.height:', btn.style.height);
 
     if (b.customIconUrl) {
       var img = el('img', {
@@ -614,7 +638,12 @@ const EMBED_SCRIPT = String.raw`
         style: { width: (b.customIconSize || 50) + '%', height: (b.customIconSize || 50) + '%', objectFit: 'contain', pointerEvents: 'none', borderRadius: (b.customIconBorderRadius || 0) + 'px' }
       });
       img.onerror = function() {
+        // Preserve inline styles when clearing innerHTML
+        var savedWidth = btn.style.width;
+        var savedHeight = btn.style.height;
         btn.innerHTML = '';
+        btn.style.width = savedWidth;
+        btn.style.height = savedHeight;
         btn.appendChild(svgFilled('0 0 24 24', 'M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z', '50%', b.colorOfInternalIcons || '#ffffff'));
       };
       btn.appendChild(img);
@@ -954,6 +983,18 @@ const EMBED_SCRIPT = String.raw`
     var b = config.bubble || {};
     var bubbleRight = b.rightPositionPx || 20;
     var bubbleBottom = b.bottomPositionPx || 20;
+    // Set wrapper styles with !important to ensure they apply
+    var wrapperStyle = 'position: fixed !important; ' +
+                        'right: ' + bubbleRight + 'px !important; ' +
+                        'bottom: ' + bubbleBottom + 'px !important; ' +
+                        'z-index: 2147483647 !important; ' +
+                        'display: flex !important; ' +
+                        'flex-direction: column !important; ' +
+                        'align-items: flex-end !important; ' +
+                        'pointer-events: none !important;';
+    wrapper.setAttribute('style', wrapperStyle);
+    
+    // Also set via style object
     wrapper.style.position = 'fixed';
     wrapper.style.right = bubbleRight + 'px';
     wrapper.style.bottom = bubbleBottom + 'px';
@@ -963,6 +1004,7 @@ const EMBED_SCRIPT = String.raw`
     wrapper.style.alignItems = 'flex-end';
     wrapper.style.pointerEvents = 'none';
     console.log('[ProfitBot] Wrapper inline styles set as fallback');
+    console.log('[ProfitBot] Wrapper style attribute:', wrapper.getAttribute('style'));
 
     /* Backdrop (mobile only) */
     var backdrop = el('div', { className: 'pb-backdrop' });
@@ -996,9 +1038,31 @@ const EMBED_SCRIPT = String.raw`
     wrapper.appendChild(bottomRow);
     console.log('[ProfitBot] Bubble appended to wrapper. Bubble element:', bubble);
     console.log('[ProfitBot] Bubble classes:', bubble.className);
+    console.log('[ProfitBot] Bubble inline styles after append:', {
+      width: bubble.style.width,
+      height: bubble.style.height,
+      backgroundColor: bubble.style.backgroundColor,
+      display: bubble.style.display
+    });
     console.log('[ProfitBot] Wrapper element:', wrapper);
+    console.log('[ProfitBot] Wrapper inline styles:', {
+      position: wrapper.style.position,
+      right: wrapper.style.right,
+      bottom: wrapper.style.bottom
+    });
     console.log('[ProfitBot] Container in DOM:', container.parentNode ? 'YES' : 'NO');
     console.log('[ProfitBot] Shadow root:', shadow);
+    
+    // Immediate check of computed styles
+    setTimeout(function() {
+      var computed = window.getComputedStyle(bubble);
+      console.log('[ProfitBot] Immediate computed styles:', {
+        width: computed.width,
+        height: computed.height,
+        display: computed.display,
+        position: computed.position
+      });
+    }, 100);
 
     /* Fetch visitor name */
     fetch(base + '/api/widgets/' + widgetId + '/visitor?session_id=' + encodeURIComponent(sessionId))
