@@ -40,15 +40,12 @@ const EMBED_SCRIPT = String.raw`
     iframe.allow = 'clipboard-write';
     iframe.setAttribute('scrolling', 'no');
     
-    // Position iframe only where widget is (not full viewport)
-    // Need enough space for tooltip (left) + bubble (right) + chat window padding
+    // Initial iframe positioning - will be adjusted dynamically based on widget dimensions
     if (isMobile) {
       iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:100px;height:100px;border:none;z-index:2147483647;background:transparent;overflow:visible;pointer-events:auto;';
     } else {
-      // Desktop: need space for tooltip (~250px) + bubble (~100px) + chat window with padding (~500px)
-      // Position from right edge but allow content to extend left
-      // Use larger dimensions and ensure overflow is visible
-      iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:900px;height:900px;border:none;z-index:2147483647;background:transparent;pointer-events:auto;overflow:visible;';
+      // Desktop: start with reasonable default, will be adjusted when widget sends dimensions
+      iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:500px;height:300px;border:none;z-index:2147483647;background:transparent;pointer-events:auto;overflow:visible;';
     }
 
     try {
@@ -58,30 +55,68 @@ const EMBED_SCRIPT = String.raw`
       return;
     }
 
-    // Listen for postMessage to resize iframe when chat opens/closes
+    // Function to resize iframe based on widget dimensions + 10% padding
+    function resizeIframe(dimensions) {
+      if (!dimensions || !dimensions.width || !dimensions.height) return;
+      
+      // Calculate iframe size: widget size + 10% padding
+      var iframeWidth = Math.ceil(dimensions.width * 1.1);
+      var iframeHeight = Math.ceil(dimensions.height * 1.1);
+      
+      // Get widget position relative to viewport
+      var widgetRight = window.innerWidth - dimensions.right;
+      var widgetBottom = window.innerHeight - dimensions.bottom;
+      
+      // Position iframe to cover widget area with padding
+      // Calculate left position: widget left - 5% padding (half of 10%)
+      var paddingLeft = Math.ceil(dimensions.width * 0.05);
+      var paddingTop = Math.ceil(dimensions.height * 0.05);
+      var iframeLeft = Math.max(0, dimensions.left - paddingLeft);
+      var iframeTop = Math.max(0, dimensions.top - paddingTop);
+      
+      // Adjust iframe size if it would overflow viewport
+      var maxWidth = window.innerWidth - iframeLeft;
+      var maxHeight = window.innerHeight - iframeTop;
+      iframeWidth = Math.min(iframeWidth, maxWidth);
+      iframeHeight = Math.min(iframeHeight, maxHeight);
+      
+      // Update iframe position and size
+      iframe.style.position = 'fixed';
+      iframe.style.left = iframeLeft + 'px';
+      iframe.style.top = iframeTop + 'px';
+      iframe.style.width = iframeWidth + 'px';
+      iframe.style.height = iframeHeight + 'px';
+      iframe.style.right = 'auto';
+      iframe.style.bottom = 'auto';
+    }
+
+    // Listen for postMessage to resize iframe
     window.addEventListener('message', function(e) {
       if (!e.data || e.data.source !== 'profitbot-widget') return;
       
-      if (e.data.type === 'chat-opened') {
+      if (e.data.type === 'widget-dimensions') {
+        // Dynamically resize iframe based on widget dimensions
+        resizeIframe(e.data);
+      } else if (e.data.type === 'chat-opened') {
         if (isMobile) {
           iframe.style.width = '100%';
           iframe.style.height = '100%';
           iframe.style.bottom = '0';
           iframe.style.right = '0';
-        } else {
-          // Desktop: expand to fit chat window (keep wide enough for tooltip + chat)
-          iframe.style.width = '900px';
-          iframe.style.height = '900px';
+          iframe.style.left = 'auto';
+          iframe.style.top = 'auto';
         }
+        // Desktop: dimensions will be sent via widget-dimensions message
       } else if (e.data.type === 'chat-closed') {
         if (isMobile) {
           iframe.style.width = '100px';
           iframe.style.height = '100px';
-        } else {
-          // Desktop: keep wide enough for tooltip + bubble
-          iframe.style.width = '500px';
-          iframe.style.height = '250px';
+          iframe.style.bottom = '0';
+          iframe.style.right = '0';
+          iframe.style.left = 'auto';
+          iframe.style.top = 'auto';
         }
+        // Desktop: dimensions will be sent via widget-dimensions message
       }
     });
 
@@ -93,7 +128,8 @@ const EMBED_SCRIPT = String.raw`
       if (isMobile && !wasMobile) {
         iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:100px;height:100px;border:none;z-index:2147483647;background:transparent;overflow:visible;pointer-events:auto;';
       } else if (!isMobile && wasMobile) {
-        iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:900px;height:900px;border:none;z-index:2147483647;background:transparent;pointer-events:auto;overflow:visible;';
+        // Desktop: will be adjusted when widget sends dimensions
+        iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:500px;height:300px;border:none;z-index:2147483647;background:transparent;pointer-events:auto;overflow:visible;';
       }
     });
   }

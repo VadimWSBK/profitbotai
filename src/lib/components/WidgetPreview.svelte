@@ -30,6 +30,28 @@
 		} catch { /* cross-origin — safe to ignore */ }
 	}
 
+	/** Send widget dimensions to parent iframe */
+	function sendDimensions() {
+		try {
+			if (window.parent && window.parent !== window && isEmbedded) {
+				const wrapper = document.querySelector('.widget-preview-wrapper') as HTMLElement;
+				if (wrapper) {
+					const rect = wrapper.getBoundingClientRect();
+					window.parent.postMessage({
+						source: 'profitbot-widget',
+						type: 'widget-dimensions',
+						width: rect.width,
+						height: rect.height,
+						left: rect.left,
+						top: rect.top,
+						right: rect.right,
+						bottom: rect.bottom
+					}, '*');
+				}
+			}
+		} catch { /* cross-origin — safe to ignore */ }
+	}
+
 	onMount(() => {
 		const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
 		prefersReducedMotion = mq.matches;
@@ -58,13 +80,41 @@
 				}
 			});
 		}
-	});
 
-	onDestroy(() => {
-		if (cleanupPostMessage) {
-			cleanupPostMessage();
-			cleanupPostMessage = null;
+		// Send dimensions when widget loads and when it changes
+		if (isEmbedded && browser) {
+			// Send initial dimensions after a delay to allow DOM to render
+			setTimeout(() => sendDimensions(), 500);
+			
+			// Set up ResizeObserver to watch for size changes
+			let resizeObserver: ResizeObserver | null = null;
+			const wrapper = document.querySelector('.widget-preview-wrapper') as HTMLElement;
+			if (wrapper && window.ResizeObserver) {
+				resizeObserver = new ResizeObserver(() => {
+					sendDimensions();
+				});
+				resizeObserver.observe(wrapper);
+			}
+			
+			// Also send dimensions periodically as fallback
+			const interval = setInterval(() => {
+				if (isEmbedded) sendDimensions();
+			}, 1000);
+
+			// Cleanup on destroy
+			onDestroy(() => {
+				if (resizeObserver) resizeObserver.disconnect();
+				clearInterval(interval);
+			});
 		}
+
+		// Cleanup postMessage listener
+		return () => {
+			if (cleanupPostMessage) {
+				cleanupPostMessage();
+				cleanupPostMessage = null;
+			}
+		};
 	});
 
 	// Custom open transition: scale + translate + opacity
@@ -150,7 +200,10 @@
 	$effect(() => {
 		if (!isEmbedded) return;
 		notifyParent(open ? 'chat-opened' : 'chat-closed');
+		// Send dimensions after a short delay to allow DOM to update
+		setTimeout(() => sendDimensions(), 100);
 	});
+
 
 	$effect(() => {
 		void config.bubble.customIconUrl;
