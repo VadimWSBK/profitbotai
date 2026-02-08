@@ -964,6 +964,7 @@ export const controller = String.raw`
 
     function finishSend(reply, checkoutPreview) {
       state.loading = false;
+      state.agentTyping = false;
       inputEl.disabled = false;
       sendBtn.disabled = false;
       inputEl.focus();
