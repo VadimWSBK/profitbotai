@@ -447,24 +447,32 @@ export const controller = String.raw`
 
       /* Always sync starter prompts visibility with message state */
       if (state.messages.length > 0) {
-        state.showStarterPrompts = false;
-        if (startersArea) startersArea.style.display = 'none';
+        hideStarterPrompts();
       }
 
       requestAnimationFrame(function() { scrollToBottom(forceAll); });
     }
 
+    var starterPromptsUsed = false; // Once any message is sent, never show starters again
+
+    function hideStarterPrompts() {
+      state.showStarterPrompts = false;
+      starterPromptsUsed = true;
+      if (startersArea) {
+        startersArea.style.display = 'none';
+        startersArea.innerHTML = '';
+      }
+    }
+
     function updateStarterPrompts() {
       if (!startersArea) return;
-      var prompts = (config.window && config.window.starterPrompts) || [];
-      var filtered = prompts.filter(function(p) { return p && p.trim(); });
-      // Hide starter prompts if there are any messages (chat has been initiated)
-      // This includes user messages, bot messages, or any message at all
-      if (state.messages.length > 0) {
-        state.showStarterPrompts = false;
-        startersArea.style.display = 'none';
+      // Once conversation has started, never show starters again
+      if (starterPromptsUsed || state.messages.length > 0) {
+        hideStarterPrompts();
         return;
       }
+      var prompts = (config.window && config.window.starterPrompts) || [];
+      var filtered = prompts.filter(function(p) { return p && p.trim(); });
       // Show starter prompts only if no messages exist and flag is true
       if (state.showStarterPrompts && filtered.length > 0) {
         startersArea.innerHTML = '';
@@ -775,14 +783,9 @@ export const controller = String.raw`
       if (!trimmed || state.loading) return;
 
       state.messages.push({ id: null, _localId: nextLocalId(), role: 'user', content: trimmed, createdAt: new Date().toISOString() });
-      state.showStarterPrompts = false;
       state.loading = true;
-      // Hide starter prompts immediately when message is sent
-      if (startersArea) {
-        startersArea.style.display = 'none';
-      }
+      hideStarterPrompts();
       renderMessages();
-      updateStarterPrompts();
       inputEl.disabled = true;
       sendBtn.disabled = true;
       requestAnimationFrame(function() { scrollToBottom(true); });
