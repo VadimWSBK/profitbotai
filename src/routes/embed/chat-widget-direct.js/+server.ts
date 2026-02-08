@@ -4,8 +4,24 @@
  */
 const EMBED_SCRIPT = String.raw`
 (function() {
+  // Support both synchronous (document.currentScript) and deferred (find by data-widget-id) loading
   var script = document.currentScript;
-  if (!script) return;
+  if (!script) {
+    // Script loaded with defer/async - find it by data-widget-id attribute
+    var scripts = document.querySelectorAll('script[data-widget-id]');
+    for (var i = 0; i < scripts.length; i++) {
+      var s = scripts[i];
+      var srcAttr = s.getAttribute('src') || '';
+      if (srcAttr.indexOf('/embed/chat-widget-direct.js') >= 0) {
+        script = s;
+        break;
+      }
+    }
+  }
+  if (!script) {
+    console.warn('[ProfitBot] Could not find script tag. Ensure the script tag includes data-widget-id attribute.');
+    return;
+  }
   var widgetId = script.getAttribute('data-widget-id');
   if (!widgetId || widgetId === 'YOUR_WIDGET_ID') {
     console.warn('[ProfitBot] Missing or invalid data-widget-id. Replace with your widget ID from the Embed tab.');

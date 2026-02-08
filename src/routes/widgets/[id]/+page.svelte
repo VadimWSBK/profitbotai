@@ -107,7 +107,7 @@
 
 	function getEmbedSnippet(): string {
 		const origin = typeof window !== 'undefined' ? window.location.origin : 'https://your-domain.com';
-		return `<script src="${origin}/embed/chat-widget-native.js" data-widget-id="${widgetId}"><\/script>`;
+		return `<script src="${origin}/embed/chat-widget-native.js" data-widget-id="${widgetId}" defer><\/script>`;
 	}
 
 </script>
