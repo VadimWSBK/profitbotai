@@ -20,7 +20,7 @@ export const POST: RequestHandler = async (event) => {
 	// Accept full Key (roof_quotes/path) or path within bucket
 	if (filePath.startsWith('roof_quotes/')) filePath = filePath.slice(12);
 
-	const expiresIn = typeof body?.expiresIn === 'number' ? body.expiresIn : 3600; // 1 hour default
+	const expiresIn = typeof body?.expiresIn === 'number' ? body.expiresIn : 31536000; // 1 year default
 
 	try {
 		const supabase = getSupabaseAdmin();

@@ -149,7 +149,7 @@ export async function generateQuoteForConversation(
 		return { error: `Upload failed: ${uploadErr.message}. Ensure the roof_quotes bucket exists in Supabase Storage.` };
 	}
 
-	const { data: signed } = await admin.storage.from(BUCKET).createSignedUrl(fileName, 3600);
+	const { data: signed } = await admin.storage.from(BUCKET).createSignedUrl(fileName, 31536000 /* 1 year */);
 	const currency = settings.currency ?? 'USD';
 	const formattedTotal =
 		new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(computed.total) ?? 0);
@@ -238,7 +238,7 @@ export async function generateQuoteForForm(
 	});
 	if (uploadErr) return { error: uploadErr.message };
 
-	const { data: signed } = await admin.storage.from(BUCKET).createSignedUrl(fileName, 3600);
+	const { data: signed } = await admin.storage.from(BUCKET).createSignedUrl(fileName, 31536000 /* 1 year */);
 	return { signedUrl: signed?.signedUrl ?? undefined, storagePath: fileName };
 }
 

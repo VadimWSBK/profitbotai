@@ -400,7 +400,8 @@ export const POST: RequestHandler = async (event) => {
 							ownerId: ownerId ?? '',
 							contact,
 							extractedRoofSize:
-								effectiveRoofSize ?? undefined
+								effectiveRoofSize ?? undefined,
+							origin: event.url.origin
 						});
 						quoteEmailSent = runResult.quoteEmailSent;
 						triggerResult = {
@@ -435,9 +436,12 @@ export const POST: RequestHandler = async (event) => {
 								p_total: gen.total ?? null
 							});
 							quoteEmailSent = false; // no workflow email
+							// Use the short /api/quote/download redirect so the link never expires
+							// (it generates a fresh signed URL on each click)
+							const downloadUrl = `${event.url.origin}/api/quote/download?path=${encodeURIComponent(gen.storagePath)}`;
 							triggerResult = {
 								...triggerResult,
-								webhookResult: `Quote generated successfully. You MUST include this exact clickable link in your reply on a single line: [Download Quote](${gen.signedUrl}). Confirm the quote is ready and share the link.`
+								webhookResult: `Quote generated successfully. You MUST include this exact clickable link in your reply on a single line: [Download PDF Quote](${downloadUrl}). Confirm the quote is ready and share the link.`
 							};
 							console.log('[chat/quote] Generated quote directly (no workflow)');
 						} else {
@@ -518,7 +522,7 @@ export const POST: RequestHandler = async (event) => {
 					const stored = typeof q === 'object' && q !== null && 'url' in q ? (q as { url: string }).url : String(q);
 					const filePath = stored.match(/roof_quotes\/(.+)$/)?.[1] ?? stored.trim();
 					if (!filePath) continue;
-					const { data } = await adminSupabase.storage.from('roof_quotes').createSignedUrl(filePath, 3600);
+					const { data } = await adminSupabase.storage.from('roof_quotes').createSignedUrl(filePath, 31536000 /* 1 year */);
 					if (data?.signedUrl) signedUrls.push(data.signedUrl);
 				}
 				if (signedUrls.length > 0) {
@@ -553,7 +557,7 @@ export const POST: RequestHandler = async (event) => {
 							const stored = typeof q === 'object' && q !== null && 'url' in q ? (q as { url: string }).url : String(q);
 							const filePath = stored.match(/roof_quotes\/(.+)$/)?.[1] ?? stored.trim();
 							if (!filePath) continue;
-							const { data } = await adminSupabase.storage.from('roof_quotes').createSignedUrl(filePath, 3600);
+							const { data } = await adminSupabase.storage.from('roof_quotes').createSignedUrl(filePath, 31536000 /* 1 year */);
 							if (data?.signedUrl) signedUrls.push(data.signedUrl);
 						}
 						if (signedUrls.length > 0)

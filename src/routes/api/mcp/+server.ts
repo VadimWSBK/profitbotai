@@ -865,7 +865,7 @@ export const POST: RequestHandler = async (event) => {
 					return json({ error: uploadErr.message }, { status: 500 });
 				}
 
-				const { data: signed } = await supabase.storage.from(BUCKET).createSignedUrl(fileName, 3600);
+				const { data: signed } = await supabase.storage.from(BUCKET).createSignedUrl(fileName, 31536000 /* 1 year */);
 				const pdfUrl = signed?.signedUrl ?? fileName;
 
 				return json({ success: true, data: { pdfUrl, fileName, total: computed.total } });

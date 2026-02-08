@@ -44,7 +44,7 @@ Deno.serve(async (req) => {
 			filePath = filePath.slice(12);
 		}
 
-		const expiresIn = typeof body?.expiresIn === 'number' ? body.expiresIn : 86400;
+		const expiresIn = typeof body?.expiresIn === 'number' ? body.expiresIn : 31536000; // 1 year default
 
 		const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 		const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;

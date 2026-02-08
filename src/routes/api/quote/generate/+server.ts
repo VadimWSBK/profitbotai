@@ -170,7 +170,7 @@ export const POST: RequestHandler = async (event) => {
 	}
 
 	// For sample or for linking: return signed URL so client can download (bucket may be private)
-	const { data: signed } = await admin.storage.from(BUCKET).createSignedUrl(fileName, 3600);
+	const { data: signed } = await admin.storage.from(BUCKET).createSignedUrl(fileName, 31536000 /* 1 year */);
 	const pdfUrl = signed?.signedUrl ?? fileName;
 
 	return json({ success: true, pdfUrl, fileName });
