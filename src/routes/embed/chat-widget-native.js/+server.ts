@@ -350,17 +350,22 @@ const EMBED_SCRIPT = String.raw`
   function getWidgetCSS(config, scopeId) {
     // Scope all selectors to the widget container to avoid conflicts
     var scope = scopeId ? '[data-profitbot-id="' + scopeId + '"]' : '';
-    var scopeSelector = function(selector) {
-      // Handle :host and other special selectors
-      if (selector.indexOf(':host') >= 0) {
-        return selector.replace(':host', scope || ':host');
+    
+    function scopeSelector(sel) {
+      if (!scope) return sel;
+      // Don't scope keyframes, media queries, or global resets
+      if (sel.indexOf('@') === 0 || sel.indexOf('*') === 0) return sel;
+      // Handle pseudo-selectors (e.g., .pb-bubble:hover)
+      var pseudoMatch = sel.match(/^([^:]+)(:[\w-()]+)?$/);
+      if (pseudoMatch) {
+        var baseSelector = pseudoMatch[1];
+        var pseudo = pseudoMatch[2] || '';
+        return scope + ' ' + baseSelector + pseudo;
       }
-      // Scope regular selectors
-      if (selector.indexOf('.') === 0 || selector.indexOf('#') === 0) {
-        return scope + ' ' + selector;
-      }
-      return selector;
-    };
+      // Scope class and ID selectors
+      return scope + ' ' + sel;
+    }
+    
     var b = config.bubble || {};
     var w = config.window || {};
     var t = config.tooltip || {};
@@ -395,16 +400,10 @@ const EMBED_SCRIPT = String.raw`
     var footerText = w.footerTextColor || '#6b7280';
     var avatarSize = w.avatarSize || 40;
     var avatarRadius = w.avatarBorderRadius || 25;
-
-    // Scope all selectors to the widget container
-    var scope = scopeId ? '[data-profitbot-id="' + scopeId + '"]' : '';
     
-    function scopeSelector(sel) {
-      if (!scope) return sel;
-      // Don't scope keyframes, media queries, or global resets
-      if (sel.indexOf('@') === 0 || sel.indexOf('*') === 0) return sel;
-      // Scope class and ID selectors
-      return scope + ' ' + sel;
+    // Helper to add !important to critical properties for maximum specificity
+    function important(prop, val) {
+      return prop + ': ' + val + ' !important;';
     }
     
     return [
