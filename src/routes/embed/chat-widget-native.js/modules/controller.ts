@@ -273,6 +273,9 @@ export const controller = String.raw`
       chatWin.classList.remove('pb-closing');
       inputEl.focus();
       fetchMessages(true);
+      // Force scroll to bottom after messages render and chat window animation settles
+      setTimeout(function() { scrollToBottom(true); }, 150);
+      setTimeout(function() { scrollToBottom(true); }, 400);
       // Don't start continuous polling - only poll when messages are sent
       // Initial fetchMessages(true) loads existing messages
       dispatchEvent('profitbot:chat-opened');
@@ -448,7 +451,7 @@ export const controller = String.raw`
         if (startersArea) startersArea.style.display = 'none';
       }
 
-      requestAnimationFrame(function() { scrollToBottom(); });
+      requestAnimationFrame(function() { scrollToBottom(forceAll); });
     }
 
     function updateStarterPrompts() {
