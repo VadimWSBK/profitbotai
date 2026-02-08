@@ -280,6 +280,7 @@ export const controller = String.raw`
       bubble.setAttribute('aria-label', 'Open chat');
       bubble.setAttribute('aria-expanded', 'false');
       chatWin.classList.add('pb-closing');
+      stopPolling(); // Stop polling when chat is closed
       setTimeout(function() {
         if (chatWin.parentNode) chatWin.parentNode.removeChild(chatWin);
         if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
@@ -692,11 +693,19 @@ export const controller = String.raw`
               if (payload === '[DONE]' || payload === '') continue;
               try {
                 var parsed = JSON.parse(payload);
-                var chunk = parsed.text || parsed.content || parsed.delta || '';
+                // Check for done flag first (n8n SSE format: data: {"done":true})
+                if (parsed.done === true) {
+                  streamDone = true;
+                  continue;
+                }
+                // Support n8n token format: data: {"token":"Hello"}
+                // Also support other formats: text, content, delta
+                var chunk = parsed.token || parsed.text || parsed.content || parsed.delta || '';
                 if (chunk && typeof chunk === 'string') {
                   for (var ci = 0; ci < chunk.length; ci++) charQueue.push(chunk[ci]);
                 }
               } catch (e) {
+                // If JSON parsing fails, treat as plain text (fallback)
                 if (payload) {
                   for (var ci = 0; ci < payload.length; ci++) charQueue.push(payload[ci]);
                 }
@@ -780,6 +789,9 @@ export const controller = String.raw`
         finishSend(config.window.customErrorMessage || 'Error: n8n webhook not configured');
         return;
       }
+      // IMPORTANT: This calls n8n directly (not through Vercel) to avoid Vercel streaming costs
+      // n8n is a fixed monthly cost, so streaming from n8n is cost-effective
+      console.log('[ProfitBot] Calling n8n webhook directly:', n8nUrl);
       var body = { message: message, sessionId: sessionId, widgetId: widgetId };
       if (conversationId) body.conversationId = conversationId;
       if (config.agentId) body.agentId = config.agentId;
@@ -892,11 +904,12 @@ export const controller = String.raw`
 
     /* ===== INIT ===== */
     console.log('[ProfitBot] Widget initialization complete. Session ID:', sessionId);
-    console.log('[ProfitBot] Starting message fetch...');
+    console.log('[ProfitBot] Starting initial message fetch...');
     // Small delay to ensure DOM is fully ready and sessionId is set
+    // Only fetch messages initially, don't start polling until chat is opened
     setTimeout(function() {
       fetchMessages(true);
-      startPolling();
+      // Don't start polling here - wait until chat is opened
     }, 100);
     updateStarterPrompts();
     dispatchEvent('profitbot:ready');
