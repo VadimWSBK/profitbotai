@@ -117,7 +117,7 @@ export const cssgenerator = String.raw`
       '@keyframes pb-pulse { 0%,100% { box-shadow: 0 8px 24px rgba(0,0,0,0.25), 0 4px 8px rgba(0,0,0,0.15), 0 0 0 0 rgba(0,0,0,0.15); } 50% { box-shadow: 0 8px 24px rgba(0,0,0,0.25), 0 4px 8px rgba(0,0,0,0.15), 0 0 0 8px rgba(0,0,0,0); } }',
 
       /* Tooltip */
-      scopeSelector('.pb-tooltip') + ' { pointer-events: auto; position: absolute; bottom: ' + (bubbleSize + 12) + 'px; right: ' + (bubbleSize + 12) + 'px; background-color: ' + (t.backgroundColor || '#ffffff') + '; color: ' + (t.textColor || '#111827') + '; font-size: ' + (t.fontSizePx || 14) + 'px; padding: 12px 16px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-width: 220px; cursor: pointer; z-index: 19; white-space: normal; animation: pb-fade-in 0.2s ease-out; }',
+      scopeSelector('.pb-tooltip') + ' { pointer-events: auto; position: absolute; bottom: ' + (bubbleSize + 12) + 'px; right: ' + (bubbleSize + 12) + 'px; background-color: ' + (t.backgroundColor || '#ffffff') + '; color: ' + (t.textColor || '#111827') + '; font-size: ' + (t.fontSizePx || 14) + 'px; padding: 16px 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-width: 280px; min-width: 200px; line-height: 1.5; cursor: pointer; z-index: 19; white-space: normal; animation: pb-fade-in 0.2s ease-out; }',
       scopeSelector('.pb-tooltip-hidden') + ' { opacity: 0; pointer-events: none; transition: opacity 0.3s; }',
 
       /* Chat window - with !important */
