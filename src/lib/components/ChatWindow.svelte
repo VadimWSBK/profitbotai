@@ -747,50 +747,37 @@
 											<div class="chat-message-intro">{@html formatMessage(stripCheckoutBlock(msg.content, msg.checkoutPreview.checkoutUrl))}</div>
 										{/if}
 										<div class="checkout-preview-block">
-											<div class="checkout-header">
-												<h3 class="checkout-title">Your checkout preview</h3>
-												<span class="checkout-product-label">Product</span>
-											</div>
-											{#each msg.checkoutPreview.lineItemsUI as item}
-												<div class="line-item">
-													<div class="image-wrap">
+											<div class="checkout-preview">
+												<h3 class="checkout-title">Your Checkout Preview</h3>
+												{#each msg.checkoutPreview.lineItemsUI as item}
+													<div class="line-item">
 														{#if item.imageUrl}
-															<img src={item.imageUrl} alt={item.title} />
+															<img class="product-image" src={item.imageUrl} alt={item.title} loading="lazy" />
+														{:else}
+															<div class="product-image image-placeholder" aria-hidden="true"></div>
 														{/if}
-														<span class="qty-badge">{item.quantity}</span>
-													</div>
-													<div class="details">
-														<div class="product-name">{item.title}</div>
-														{#if item.variant}
-															<div class="product-variant">{item.variant}</div>
-														{/if}
-														<div class="price-row">
-															<div class="price-col">
-																<div class="price-label">Unit Price</div>
-																<div class="price-value">${item.unitPrice}</div>
-															</div>
-															<div class="price-col">
-																<div class="price-label">Total</div>
-																<div class="price-value">${item.lineTotal}</div>
-															</div>
+														<div class="product-details">
+															<div class="product-title">{item.title}</div>
+															<div class="product-meta">Unit Price: $${item.unitPrice} {msg.checkoutPreview.summary.currency ?? 'AUD'}</div>
 														</div>
+														<div class="product-qty">Qty: {item.quantity}</div>
+														<div class="product-total">${item.lineTotal} {msg.checkoutPreview.summary.currency ?? 'AUD'}</div>
 													</div>
-												</div>
-											{/each}
-											<div class="checkout-summary">
-												<div class="summary-row"><span class="summary-label">Total Items</span><span class="summary-value">{msg.checkoutPreview.summary.totalItems} items</span></div>
-												<div class="summary-row"><span class="summary-label">Shipping</span><span class="summary-value">FREE</span></div>
+												{/each}
+												<hr class="checkout-hr" />
+												<div class="summary-row"><span>Items</span><span>{msg.checkoutPreview.summary.totalItems}</span></div>
 												{#if msg.checkoutPreview.summary.discountPercent != null}
-													<div class="summary-row"><span class="summary-label">Discount</span><span class="summary-value">{msg.checkoutPreview.summary.discountPercent}% OFF</span></div>
+													<div class="summary-row"><span>Discount</span><span>{msg.checkoutPreview.summary.discountPercent}% OFF</span></div>
 												{/if}
-												<div class="summary-row"><span class="summary-label">Subtotal</span><span class="summary-value">${msg.checkoutPreview.summary.subtotal} {msg.checkoutPreview.summary.currency}</span></div>
+												<div class="summary-row"><span>Shipping</span><span>FREE</span></div>
+												<div class="summary-row subtotal"><span>Subtotal</span><span>${msg.checkoutPreview.summary.subtotal} {msg.checkoutPreview.summary.currency}</span></div>
 												{#if msg.checkoutPreview.summary.discountAmount != null}
-													<div class="summary-row"><span class="summary-label">Savings</span><span class="summary-value">-${msg.checkoutPreview.summary.discountAmount}</span></div>
+													<div class="summary-row savings"><span>Savings</span><span>- ${msg.checkoutPreview.summary.discountAmount} {msg.checkoutPreview.summary.currency}</span></div>
 												{/if}
-												<div class="summary-row summary-total"><span class="summary-label">Total</span><span class="summary-value">${msg.checkoutPreview.summary.total} {msg.checkoutPreview.summary.currency}</span></div>
-												<div class="summary-footer">GST included</div>
+												<div class="summary-row total"><span>Total</span><span>${msg.checkoutPreview.summary.total} {msg.checkoutPreview.summary.currency}</span></div>
+												<div class="gst-note">GST included</div>
+												<a href={msg.checkoutPreview.checkoutUrl} target="_blank" rel="noopener noreferrer" class="checkout-button">GO TO CHECKOUT</a>
 											</div>
-											<a href={msg.checkoutPreview.checkoutUrl} target="_blank" rel="noopener noreferrer" class="chat-cta-button">GO TO CHECKOUT</a>
 										</div>
 									{:else}
 										{@html formatMessage(msg.content)}{#if isStreaming && streamingMessageId === msg._localId}<span class="streaming-cursor">&#9612;</span>{/if}
@@ -1255,153 +1242,103 @@
 		background: transparent !important;
 		background-color: transparent !important;
 	}
-	:global(.checkout-preview-block .checkout-header) {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin-bottom: 1.25em;
-		padding-bottom: 0.75em;
-		border-bottom: 1px solid rgba(255, 255, 255, 0.15);
-	}
 	:global(.checkout-preview-block .checkout-title) {
 		font-size: 18px;
 		font-weight: 700;
-		margin: 0;
-		color: rgba(34, 197, 94, 1);
+		margin: 0 0 12px 0;
+		color: inherit;
 		line-height: 1.2;
-	}
-	:global(.checkout-preview-block .checkout-product-label) {
-		font-size: 14px;
-		font-weight: 500;
-		opacity: 0.75;
 	}
 	:global(.checkout-preview-block .line-item) {
 		display: flex;
-		gap: 16px;
-		align-items: flex-start;
-		margin-bottom: 1.75em;
+		align-items: center;
+		gap: 12px;
+		padding: 10px 0;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.15);
 	}
 	:global(.checkout-preview-block .line-item:last-of-type) {
-		margin-bottom: 1em;
+		border-bottom: none;
 	}
-	:global(.checkout-preview-block .image-wrap) {
-		position: relative;
-		width: 80px;
-		height: 80px;
+	:global(.checkout-preview-block .product-image) {
+		width: 64px;
+		height: 64px;
+		min-width: 64px;
 		border-radius: 8px;
-		background: rgba(255, 255, 255, 0.1);
-		overflow: hidden;
-		flex-shrink: 0;
-	}
-	:global(.checkout-preview-block .image-wrap img) {
-		width: 100%;
-		height: 100%;
 		object-fit: cover;
+		background: rgba(255, 255, 255, 0.1);
 	}
-	:global(.checkout-preview-block .line-item .qty-badge) {
-		position: absolute;
-		top: -8px;
-		right: -8px;
-		background: #374151;
-		color: #fff;
-		font-size: 13px;
-		font-weight: 700;
-		padding: 6px 10px;
-		border-radius: 6px;
-		min-width: 28px;
-		text-align: center;
-		box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-		z-index: 1;
+	:global(.checkout-preview-block .product-image.image-placeholder) {
+		display: block;
 	}
-	:global(.checkout-preview-block .details) {
+	:global(.checkout-preview-block .product-details) {
 		flex: 1;
 		min-width: 0;
-		padding-top: 2px;
 	}
-	:global(.checkout-preview-block .details .product-name) {
+	:global(.checkout-preview-block .product-title) {
 		font-weight: 700;
-		font-size: 16px;
+		font-size: 15px;
 		margin-bottom: 4px;
-		color: rgba(34, 197, 94, 1);
 		line-height: 1.3;
 	}
-	:global(.checkout-preview-block .details .product-variant) {
-		font-size: 14px;
+	:global(.checkout-preview-block .product-meta) {
+		font-size: 13px;
 		opacity: 0.85;
-		margin-bottom: 10px;
-		line-height: 1.4;
 	}
-	:global(.checkout-preview-block .price-row) {
-		display: flex;
-		gap: 40px;
-		margin-top: 6px;
+	:global(.checkout-preview-block .product-qty) {
+		font-size: 13px;
+		white-space: nowrap;
 	}
-	:global(.checkout-preview-block .price-col) {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-		min-width: 80px;
-	}
-	:global(.checkout-preview-block .price-label) {
-		font-size: 12px;
-		opacity: 0.7;
-		font-weight: 500;
-		line-height: 1.3;
-	}
-	:global(.checkout-preview-block .price-value) {
-		font-size: 16px;
+	:global(.checkout-preview-block .product-total) {
 		font-weight: 700;
-		color: inherit;
-		line-height: 1.3;
+		font-size: 15px;
+		white-space: nowrap;
 	}
-	:global(.checkout-summary) {
-		margin-top: 1em;
-		padding-top: 0.75em;
+	:global(.checkout-preview-block .checkout-hr) {
+		border: none;
 		border-top: 1px solid rgba(255, 255, 255, 0.2);
-		background: transparent !important;
-		background-color: transparent !important;
+		margin: 12px 0;
 	}
-	:global(.checkout-summary .summary-row) {
+	:global(.checkout-preview-block .summary-row) {
 		display: flex;
 		justify-content: space-between;
-		align-items: center;
-		padding: 0.2em 0;
+		padding: 4px 0;
+		font-size: 14px;
 	}
-	:global(.checkout-summary .summary-label) {
-		font-weight: 600;
+	:global(.checkout-preview-block .summary-row.subtotal) {
+		margin-top: 4px;
 	}
-	:global(.checkout-summary .summary-value) {
-		font-weight: 600;
+	:global(.checkout-preview-block .summary-row.savings) {
+		color: rgba(34, 197, 94, 0.95);
 	}
-	:global(.checkout-summary .summary-total) {
-		margin-top: 0.25em;
+	:global(.checkout-preview-block .summary-row.total) {
+		font-weight: 700;
 		font-size: 1.05em;
+		margin-top: 6px;
+		padding-top: 6px;
+		border-top: 1px solid rgba(255, 255, 255, 0.2);
 	}
-	:global(.checkout-summary .summary-divider) {
-		height: 1px;
-		background: rgba(255, 255, 255, 0.15);
-		margin: 0.5em 0;
-	}
-	:global(.checkout-summary .summary-footer) {
-		font-size: 0.85em;
+	:global(.checkout-preview-block .gst-note) {
+		font-size: 13px;
 		opacity: 0.8;
-		margin-top: 0.5em;
+		margin-top: 8px;
+		font-style: italic;
 	}
-	:global(.checkout-preview-block .chat-cta-button) {
+	:global(.checkout-preview-block .checkout-button) {
 		display: inline-block;
-		margin-top: 1em;
-		text-decoration: none;
-		padding: 0.6em 1.2em;
+		margin-top: 14px;
+		padding: 12px 24px;
 		border-radius: 8px;
 		font-weight: 600;
-		background: rgba(255, 255, 255, 0.25);
-		border: 1px solid rgba(255, 255, 255, 0.4);
-		transition: background 0.15s, border-color 0.15s;
-		color: inherit;
+		text-decoration: none;
+		text-align: center;
+		background: #ea580c;
+		color: #fff;
+		border: none;
+		transition: background 0.15s;
 	}
-	:global(.checkout-preview-block .chat-cta-button:hover) {
-		background: rgba(255, 255, 255, 0.35);
-		border-color: rgba(255, 255, 255, 0.6);
+	:global(.checkout-preview-block .checkout-button:hover) {
+		background: #c2410c;
+		color: #fff;
 	}
 	:global(.chat-message-intro) {
 		margin-bottom: 0.5em;

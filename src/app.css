@@ -203,155 +203,110 @@ body:has(.app-layout) {
 	border-radius: 0.375rem;
 }
 
-/* Data-driven checkout preview (Messages page) */
+/* Checkout preview: table-form line items (Messages page + shared) */
 .rich-message-content .checkout-preview-block {
 	margin-top: 0.75em;
-}
-.rich-message-content .checkout-preview-block .checkout-header {
-	display: flex;
-	justify-content: space-between;
-	align-items: center;
-	margin-bottom: 1.25em;
-	padding-bottom: 0.75em;
-	border-bottom: 1px solid rgb(229 231 235);
 }
 .rich-message-content .checkout-preview-block .checkout-title {
 	font-size: 18px;
 	font-weight: 700;
-	margin: 0;
-	color: rgb(34 197 94);
+	margin: 0 0 12px 0;
+	color: #111827;
 	line-height: 1.2;
-}
-.rich-message-content .checkout-preview-block .checkout-product-label {
-	font-size: 14px;
-	font-weight: 500;
-	color: #6b7280;
 }
 .rich-message-content .checkout-preview-block .line-item {
 	display: flex;
-	gap: 16px;
-	align-items: flex-start;
-	margin-bottom: 1.75em;
+	align-items: center;
+	gap: 12px;
+	padding: 10px 0;
+	border-bottom: 1px solid rgb(229 231 235);
 }
 .rich-message-content .checkout-preview-block .line-item:last-of-type {
-	margin-bottom: 1em;
+	border-bottom: none;
 }
-.rich-message-content .checkout-preview-block .image-wrap {
-	position: relative;
-	width: 80px;
-	height: 80px;
+.rich-message-content .checkout-preview-block .product-image {
+	width: 64px;
+	height: 64px;
+	min-width: 64px;
 	border-radius: 8px;
-	background: #f2f2f2;
-	overflow: hidden;
-	flex-shrink: 0;
-}
-.rich-message-content .checkout-preview-block .image-wrap img {
-	width: 100%;
-	height: 100%;
 	object-fit: cover;
+	background: #f3f4f6;
 }
-.rich-message-content .checkout-preview-block .line-item .qty-badge {
-	position: absolute;
-	top: -8px;
-	right: -8px;
-	background: #374151;
-	color: #fff;
-	font-size: 13px;
-	font-weight: 700;
-	padding: 6px 10px;
-	border-radius: 6px;
-	min-width: 28px;
-	text-align: center;
-	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-	z-index: 1;
+.rich-message-content .checkout-preview-block .product-image.image-placeholder {
+	display: block;
 }
-.rich-message-content .checkout-preview-block .details {
+.rich-message-content .checkout-preview-block .product-details {
 	flex: 1;
 	min-width: 0;
-	padding-top: 2px;
 }
-.rich-message-content .checkout-preview-block .details .product-name {
+.rich-message-content .checkout-preview-block .product-title {
 	font-weight: 700;
-	font-size: 16px;
+	font-size: 15px;
 	margin-bottom: 4px;
-	color: rgb(34 197 94);
+	color: #111827;
 	line-height: 1.3;
 }
-.rich-message-content .checkout-preview-block .details .product-variant {
-	font-size: 14px;
+.rich-message-content .checkout-preview-block .product-meta {
+	font-size: 13px;
 	color: #6b7280;
-	margin-bottom: 10px;
-	line-height: 1.4;
 }
-.rich-message-content .checkout-preview-block .price-row {
-	display: flex;
-	gap: 40px;
-	margin-top: 6px;
+.rich-message-content .checkout-preview-block .product-qty {
+	font-size: 13px;
+	color: #374151;
+	white-space: nowrap;
 }
-.rich-message-content .checkout-preview-block .price-col {
-	display: flex;
-	flex-direction: column;
-	gap: 4px;
-	min-width: 80px;
-}
-.rich-message-content .checkout-preview-block .price-label {
-	font-size: 12px;
-	color: #6b7280;
-	font-weight: 500;
-	line-height: 1.3;
-}
-.rich-message-content .checkout-preview-block .price-value {
-	font-size: 16px;
+.rich-message-content .checkout-preview-block .product-total {
 	font-weight: 700;
-	color: inherit;
-	line-height: 1.3;
+	font-size: 15px;
+	color: #111827;
+	white-space: nowrap;
 }
-.rich-message-content .checkout-summary {
-	margin-top: 1em;
-	padding-top: 0.75em;
+.rich-message-content .checkout-preview-block .checkout-hr {
+	border: none;
 	border-top: 1px solid rgb(229 231 235);
+	margin: 12px 0;
 }
-.rich-message-content .checkout-summary .summary-row {
+.rich-message-content .checkout-preview-block .summary-row {
 	display: flex;
 	justify-content: space-between;
-	align-items: center;
-	padding: 0.2em 0;
+	padding: 4px 0;
+	font-size: 14px;
 }
-.rich-message-content .checkout-summary .summary-label {
-	font-weight: 600;
+.rich-message-content .checkout-preview-block .summary-row.subtotal {
+	margin-top: 4px;
 }
-.rich-message-content .checkout-summary .summary-value {
-	font-weight: 600;
+.rich-message-content .checkout-preview-block .summary-row.savings {
+	color: #059669;
 }
-.rich-message-content .checkout-summary .summary-total {
-	margin-top: 0.25em;
+.rich-message-content .checkout-preview-block .summary-row.total {
+	font-weight: 700;
 	font-size: 1.05em;
+	margin-top: 6px;
+	padding-top: 6px;
+	border-top: 1px solid rgb(229 231 235);
 }
-.rich-message-content .checkout-summary .summary-divider {
-	height: 1px;
-	background: rgb(229 231 235);
-	margin: 0.5em 0;
+.rich-message-content .checkout-preview-block .gst-note {
+	font-size: 13px;
+	color: #6b7280;
+	margin-top: 8px;
+	font-style: italic;
 }
-.rich-message-content .checkout-summary .summary-footer {
-	font-size: 0.85em;
-	color: rgb(107 114 128);
-	margin-top: 0.5em;
-}
-.rich-message-content .checkout-preview-block .chat-cta-button {
+.rich-message-content .checkout-preview-block .checkout-button {
 	display: inline-block;
-	margin-top: 1em;
-	text-decoration: none;
-	padding: 0.6em 1.2em;
+	margin-top: 14px;
+	padding: 12px 24px;
 	border-radius: 8px;
 	font-weight: 600;
-	background: rgb(217 119 6);
+	text-decoration: none;
+	text-align: center;
+	background: #ea580c;
 	color: white;
-	border: 1px solid rgb(180 83 9);
-	transition: background 0.15s, border-color 0.15s;
+	border: none;
+	transition: background 0.15s;
 }
-.rich-message-content .checkout-preview-block .chat-cta-button:hover {
-	background: rgb(180 83 9);
-	border-color: rgb(146 64 14);
+.rich-message-content .checkout-preview-block .checkout-button:hover {
+	background: #c2410c;
+	color: white;
 }
 .rich-message-content .chat-message-intro {
 	margin-bottom: 0.5em;

@@ -653,7 +653,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 			// Fallback text for AI reply and for contexts without preview data (e.g. email, old messages).
 			const hasDiscount = !!appliedDiscount;
 			const previewParts: string[] = [
-				'**🧾 Your Checkout Preview**',
+				'**Your Checkout Preview**',
 				'',
 				`**Items** ${totalItems}`,
 				...(hasDiscount ? [`**Discount** ${appliedDiscount!.value}% OFF`] : []),
