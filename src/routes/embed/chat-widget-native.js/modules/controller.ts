@@ -793,12 +793,14 @@ export const controller = String.raw`
 
       /* Get conversation ID and send */
       var conversationId = null;
+      var backend = config.chatBackend || 'n8n';
+      var useN8n = backend === 'n8n' && !!(config.n8nWebhookUrl && config.n8nWebhookUrl.trim());
       fetch(base + '/api/widgets/' + widgetId + '/conversation?session_id=' + encodeURIComponent(sessionId))
         .then(function(r) { return r.json(); })
         .then(function(data) {
           if (data.conversationId) conversationId = data.conversationId;
-          /* Save user message */
-          if (conversationId) {
+          /* Save user message only for n8n (direct LLM /chat endpoint saves it internally) */
+          if (conversationId && useN8n) {
             fetch(base + '/api/widgets/' + widgetId + '/messages/save', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -813,12 +815,13 @@ export const controller = String.raw`
     }
 
     function doSend(message, conversationId) {
-      var useN8n = !!(config.n8nWebhookUrl && config.n8nWebhookUrl.trim());
+      var backend = config.chatBackend || 'n8n';
+      var useN8n = backend === 'n8n' && !!(config.n8nWebhookUrl && config.n8nWebhookUrl.trim());
 
       if (useN8n) {
         sendToN8n(message, conversationId);
       } else {
-        sendToDirectChat(message);
+        sendToDirectChat(message, conversationId);
       }
     }
 
@@ -904,19 +907,20 @@ export const controller = String.raw`
         });
     }
 
-    function sendToDirectChat(message) {
+    function sendToDirectChat(message, conversationId) {
       fetch(base + '/api/widgets/' + widgetId + '/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: message, sessionId: sessionId })
+        body: JSON.stringify({ message: message, sessionId: sessionId, conversationId: conversationId })
       })
         .then(function(res) { return res.json(); })
         .then(function(data) {
           if (data.error) {
             finishSend(config.window.customErrorMessage || 'Error: ' + data.error);
           } else {
-            var reply = data.message || data.content || data.reply || '';
-            finishSend(reply || config.window.customErrorMessage);
+            var reply = data.message || data.content || data.reply || data.output || '';
+            var checkoutPreview = data.checkoutPreview || null;
+            finishSend(reply || config.window.customErrorMessage, checkoutPreview);
           }
         })
         .catch(function(err) {
@@ -958,13 +962,12 @@ export const controller = String.raw`
       inputEl.disabled = false;
       sendBtn.disabled = false;
       inputEl.focus();
+      stopPolling();
       if (reply) {
         state.messages.push({ id: null, _localId: nextLocalId(), role: 'bot', content: reply, checkoutPreview: checkoutPreview || undefined, createdAt: new Date().toISOString() });
       }
       renderMessages();
-      // Don't start continuous polling - only poll when actively waiting for a response
-      // If this was a direct chat response, we already have it, so no need to poll
-      // Only sync with database once after response
+      // Sync with database once after response to reconcile local messages with stored ones
       setTimeout(function() { fetchMessages(true); }, 2000);
     }
 

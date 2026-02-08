@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { streamText, stepCountIs } from 'ai';
+import { generateText, stepCountIs } from 'ai';
 import { getSupabase, getSupabaseAdmin } from '$lib/supabase.server';
 import { createAgentTools } from '$lib/agent-tools.server';
 import { getAISdkModel } from '$lib/ai-sdk-model.server';
@@ -616,57 +616,59 @@ export const POST: RequestHandler = async (event) => {
 				.eq('id', conv.id);
 		}
 
-		async function runStream(provider: string, model: string, key: string) {
+		async function runGenerate(provider: string, model: string, key: string): Promise<string> {
 			const modelInstance = getAISdkModel(provider, model, key);
 			const baseOptions = {
 				model: modelInstance,
 				system: systemPrompt,
 				messages: modelMessages,
-				maxOutputTokens: 1024,
-				onFinish: async ({ text }: { text: string }) => {
-					await clearAiTyping();
-					if (text) {
-						const { data: inserted, error: insertErr } = await supabase
-							.from('widget_conversation_messages')
-							.insert({ conversation_id: conv.id, role: 'assistant', content: text })
-							.select('id')
-							.single();
-						if (insertErr) console.error('Failed to persist assistant message:', insertErr);
-						// Link latest checkout preview (from shopify_create_diy_checkout_link) to this message.
-						if (inserted?.id) {
-							const { data: previewRow } = await adminSupabaseForTyping
-								.from('widget_checkout_previews')
-								.select('id')
-								.eq('conversation_id', conv.id)
-								.is('message_id', null)
-								.order('created_at', { ascending: false })
-								.limit(1)
-								.maybeSingle();
-							if (previewRow?.id) {
-								await adminSupabaseForTyping
-									.from('widget_checkout_previews')
-									.update({ message_id: inserted.id })
-									.eq('id', previewRow.id);
-							}
-						}
-					}
-				}
+				maxOutputTokens: 1024
 			};
+			let result;
 			if (agentAutonomy && agentContext) {
 				const tools = createAgentTools(adminSupabaseForTyping, agentAllowedTools ?? undefined);
-				return streamText({
+				result = await generateText({
 					...baseOptions,
 					tools,
 					stopWhen: stepCountIs(5),
 					experimental_context: agentContext
 				});
+			} else {
+				result = await generateText(baseOptions);
 			}
-			return streamText(baseOptions);
+			return result.text ?? '';
 		}
 
 		try {
-			const result = await runStream(llmProvider, llmModel, apiKey);
-			return result.toUIMessageStreamResponse();
+			const text = await runGenerate(llmProvider, llmModel, apiKey);
+			await clearAiTyping();
+			// Persist assistant message
+			if (text) {
+				const { data: inserted, error: insertErr } = await supabase
+					.from('widget_conversation_messages')
+					.insert({ conversation_id: conv.id, role: 'assistant', content: text })
+					.select('id')
+					.single();
+				if (insertErr) console.error('Failed to persist assistant message:', insertErr);
+				// Link latest checkout preview to this message
+				if (inserted?.id) {
+					const { data: previewRow } = await adminSupabaseForTyping
+						.from('widget_checkout_previews')
+						.select('id')
+						.eq('conversation_id', conv.id)
+						.is('message_id', null)
+						.order('created_at', { ascending: false })
+						.limit(1)
+						.maybeSingle();
+					if (previewRow?.id) {
+						await adminSupabaseForTyping
+							.from('widget_checkout_previews')
+							.update({ message_id: inserted.id })
+							.eq('id', previewRow.id);
+					}
+				}
+			}
+			return json({ message: text, output: text });
 		} catch (primaryErr) {
 			if (llmFallbackProvider && llmFallbackModel) {
 				let fallbackKey: string | null = null;
@@ -687,8 +689,14 @@ export const POST: RequestHandler = async (event) => {
 				}
 				if (fallbackKey) {
 					try {
-						const result = await runStream(llmFallbackProvider, llmFallbackModel, fallbackKey);
-						return result.toUIMessageStreamResponse();
+						const text = await runGenerate(llmFallbackProvider, llmFallbackModel, fallbackKey);
+						await clearAiTyping();
+						if (text) {
+							await supabase
+								.from('widget_conversation_messages')
+								.insert({ conversation_id: conv.id, role: 'assistant', content: text });
+						}
+						return json({ message: text, output: text });
 					} catch {
 						// fallthrough to error response
 					}

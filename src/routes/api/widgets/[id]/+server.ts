@@ -31,10 +31,9 @@ export const GET: RequestHandler = async (event) => {
 		// Map DB row to app WidgetConfig shape
 		const config = (data.config as Record<string, unknown>) ?? {};
 		let chatBackend = (config.chatBackend as string) ?? 'n8n';
-		let n8nUrl =
-			(data.n8n_webhook_url as string)?.trim() ||
-			(chatBackend === 'n8n' ? (env.N8N_CHAT_WEBHOOK_URL ?? '').trim() : '') ||
-			'';
+		let n8nUrl = chatBackend === 'n8n'
+			? ((data.n8n_webhook_url as string)?.trim() || (env.N8N_CHAT_WEBHOOK_URL ?? '').trim() || '')
+			: '';
 
 		// When widget has an agent, use agent's chat backend and system prompt. Use admin so anon embed can read agent.
 		const agentId = (config.agentId as string)?.trim();
@@ -48,11 +47,13 @@ export const GET: RequestHandler = async (event) => {
 				.single();
 			if (agentRow) {
 				chatBackend = (agentRow.chat_backend as string) ?? chatBackend;
-				const agentN8n = (agentRow.n8n_webhook_url as string)?.trim();
-				n8nUrl =
-					agentN8n ||
-					(chatBackend === 'n8n' ? (env.N8N_CHAT_WEBHOOK_URL ?? '').trim() : '') ||
-					n8nUrl;
+				if (chatBackend === 'n8n') {
+					const agentN8n = (agentRow.n8n_webhook_url as string)?.trim();
+					n8nUrl = agentN8n || (env.N8N_CHAT_WEBHOOK_URL ?? '').trim() || n8nUrl;
+				} else {
+					// Direct LLM: clear n8n URL so the embed never routes to n8n
+					n8nUrl = '';
+				}
 				// System prompt for n8n: always combine Role + Tone + Additional instructions; append system_prompt if set
 				const role = (agentRow.bot_role as string)?.trim();
 				const tone = (agentRow.bot_tone as string)?.trim();
