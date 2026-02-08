@@ -444,7 +444,14 @@ export const controller = String.raw`
       if (!startersArea) return;
       var prompts = (config.window && config.window.starterPrompts) || [];
       var filtered = prompts.filter(function(p) { return p && p.trim(); });
-      if (state.showStarterPrompts && filtered.length > 0 && state.messages.length === 0) {
+      // Hide starter prompts if there are any messages (chat has been initiated)
+      if (state.messages.length > 0) {
+        state.showStarterPrompts = false;
+        startersArea.style.display = 'none';
+        return;
+      }
+      // Show starter prompts only if no messages exist and flag is true
+      if (state.showStarterPrompts && filtered.length > 0) {
         startersArea.innerHTML = '';
         for (var i = 0; i < filtered.length; i++) {
           (function(prompt, idx) {
@@ -509,6 +516,7 @@ export const controller = String.raw`
             });
             if (newMsgs.length > 0) {
               state.messages = state.messages.concat(newMsgs);
+              state.showStarterPrompts = false; // Hide starter prompts when new messages arrive
               renderMessages();
             }
           } else if (list.length === state.messages.length && list.length > 0) {
@@ -521,9 +529,15 @@ export const controller = String.raw`
               state.messages = list.map(function(m) {
                 return { id: m.id, _localId: nextLocalId(), role: m.role === 'user' ? 'user' : 'bot', content: m.content, avatarUrl: m.avatarUrl, checkoutPreview: m.checkoutPreview, createdAt: m.createdAt };
               });
+              state.showStarterPrompts = false; // Hide starter prompts when messages exist
               state.renderedIds = {};
               renderMessages(true);
             }
+          }
+          
+          // Ensure starter prompts are hidden if messages exist (regardless of how we got here)
+          if (state.messages.length > 0) {
+            state.showStarterPrompts = false;
           }
 
           state.agentTyping = !!data.agentTyping;
