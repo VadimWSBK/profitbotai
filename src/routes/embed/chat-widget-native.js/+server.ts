@@ -653,71 +653,89 @@ const EMBED_SCRIPT = String.raw`
       '}'
     ];
     
-    // Process CSS array: scope ALL selectors and add !important to ALL properties
-    var processedCSS = cssArray.map(function(rule) {
-      // Don't modify keyframes, media queries
-      if (rule.indexOf('@keyframes') === 0) {
-        return rule;
-      }
-      
-      // Handle media queries - scope selectors inside them
-      if (rule.indexOf('@media') === 0) {
-        // Extract media query and content
-        var mediaMatch = rule.match(/^(@media[^{]+)\{([^}]+)\}/);
-        if (mediaMatch) {
-          var mediaQuery = mediaMatch[1];
-          var content = mediaMatch[2];
-          // Scope all .pb- selectors in the content
-          content = content.replace(/\.pb-[\w-]+/g, function(match) {
-            return scope ? (scope + ' ' + match) : match;
-          });
-          // Add !important to all properties in media query
-          content = content.replace(/([^:;!]+):\s*([^;!]+)(;|$)/g, function(match, prop, val, end) {
-            if (prop.trim() && val.trim() && match.indexOf('!important') === -1) {
-              return prop.trim() + ': ' + val.trim() + ' !important' + end;
-            }
-            return match;
-          });
-          return mediaQuery + '{' + content + '}';
-        }
-        return rule;
-      }
-      
-      // Skip if already has scope or is a reset rule
-      if (rule.indexOf(scope) === 0 && scope) {
-        return rule;
-      }
-      
-      // Process all other rules
-      var parts = rule.split('{');
-      if (parts.length === 2) {
-        var selector = parts[0].trim();
-        var styles = parts[1];
-        
-        // Skip if not a .pb- selector (unless it's a reset)
-        if (selector.indexOf('.pb-') === -1 && selector.indexOf(scope) === -1 && scope) {
-          return rule;
-        }
-        
-        // Scope the selector if it's a .pb- class
-        var scopedSelector = selector.indexOf('.pb-') >= 0 ? scopeSelector(selector) : selector;
-        
-        // Add !important to ALL properties that don't already have it
-        styles = styles.replace(/([a-z-]+)\s*:\s*([^;!]+)(;|$)/gi, function(match, prop, val, end) {
-          // Skip if already has !important or is a keyframe/animation property
-          if (match.indexOf('!important') >= 0 || prop === 'animation' || prop === 'transition') {
-            return match;
-          }
-          // Add !important to all other properties
-          return prop + ': ' + val.trim() + ' !important' + end;
-        });
-        
-        return scopedSelector + ' {' + styles;
-      }
-      return rule;
-    });
+    console.log('[ProfitBot] CSS array length before processing:', cssArray.length);
+    console.log('[ProfitBot] First few CSS rules:', cssArray.slice(0, 5));
+    console.log('[ProfitBot] Scope ID:', scopeId, 'Scope selector:', scope);
     
-    return processedCSS.join('\n');
+    // Process CSS array: scope ALL selectors and add !important to ALL properties
+    var processedCSS = [];
+    try {
+      for (var i = 0; i < cssArray.length; i++) {
+        var rule = cssArray[i];
+        if (!rule || typeof rule !== 'string') {
+          console.warn('[ProfitBot] Skipping invalid CSS rule at index', i);
+          continue;
+        }
+        
+        // Don't modify keyframes
+        if (rule.indexOf('@keyframes') === 0) {
+          processedCSS.push(rule);
+          continue;
+        }
+        
+        // Handle media queries
+        if (rule.indexOf('@media') === 0) {
+          var openBrace = rule.indexOf('{');
+          if (openBrace >= 0) {
+            var mediaQuery = rule.substring(0, openBrace + 1);
+            var content = rule.substring(openBrace + 1);
+            if (scope) {
+              content = content.replace(/\.pb-[\w-]+/g, function(match) {
+                return scope + ' ' + match;
+              });
+            }
+            content = content.replace(/([a-z-]+)\s*:\s*([^;!}]+)(;|$)/gi, function(match, prop, val, end) {
+              if (match.indexOf('!important') >= 0 || prop === 'animation' || prop === 'transition') {
+                return match;
+              }
+              return prop.trim() + ': ' + val.trim() + ' !important' + end;
+            });
+            processedCSS.push(mediaQuery + content);
+          } else {
+            processedCSS.push(rule);
+          }
+          continue;
+        }
+        
+        // Process regular CSS rules
+        var parts = rule.split('{');
+        if (parts.length === 2) {
+          var selector = parts[0].trim();
+          var styles = parts[1];
+          
+          // Scope .pb- selectors
+          var scopedSelector = selector;
+          if (selector.indexOf('.pb-') >= 0 && scope && selector.indexOf(scope) === -1) {
+            scopedSelector = scopeSelector(selector);
+          }
+          
+          // Add !important
+          styles = styles.replace(/([a-z-]+)\s*:\s*([^;!}]+)(;|$)/gi, function(match, prop, val, end) {
+            if (match.indexOf('!important') >= 0 || prop === 'animation' || prop === 'transition') {
+              return match;
+            }
+            return prop.trim() + ': ' + val.trim() + ' !important' + end;
+          });
+          
+          processedCSS.push(scopedSelector + ' {' + styles);
+        } else {
+          processedCSS.push(rule);
+        }
+      }
+    } catch (e) {
+      console.error('[ProfitBot] Error processing CSS:', e, e.stack);
+      return cssArray.join('\n');
+    }
+    
+    var result = processedCSS.join('\n');
+    console.log('[ProfitBot] CSS processing complete:');
+    console.log('[ProfitBot] - Input rules:', cssArray.length);
+    console.log('[ProfitBot] - Processed rules:', processedCSS.length);
+    console.log('[ProfitBot] - Output length:', result.length);
+    if (result.length < 1000) {
+      console.error('[ProfitBot] ⚠️ CSS output is too short! First 200 chars:', result.substring(0, 200));
+    }
+    return result;
   }
 
   /* ===== 6. COMPONENT BUILDERS ===== */
@@ -1060,8 +1078,26 @@ const EMBED_SCRIPT = String.raw`
     
     /* Inject CSS into document head with scoped selectors */
     var css = getWidgetCSS(config, widgetUniqueId);
+    console.log('[ProfitBot] CSS type:', typeof css);
+    console.log('[ProfitBot] CSS is array:', Array.isArray(css));
+    if (typeof css !== 'string') {
+      console.error('[ProfitBot] CSS is not a string! Type:', typeof css, 'Value:', css);
+      // Try to convert if it's an array
+      if (Array.isArray(css)) {
+        css = css.join('\n');
+        console.log('[ProfitBot] Converted array to string, new length:', css.length);
+      } else {
+        console.error('[ProfitBot] Cannot convert CSS to string, aborting widget render');
+        return;
+      }
+    }
     console.log('[ProfitBot] Injecting CSS into document head, length:', css.length);
-    console.log('[ProfitBot] CSS preview (first 500 chars):', css.substring(0, 500));
+    if (css.length < 1000) {
+      console.warn('[ProfitBot] ⚠️ CSS is very short (' + css.length + ' chars), might be incomplete!');
+      console.log('[ProfitBot] Full CSS:', css);
+    } else {
+      console.log('[ProfitBot] CSS preview (first 500 chars):', css.substring(0, 500));
+    }
     
     // Check if style already exists (prevent duplicates)
     var existingStyleId = 'profitbot-style-' + widgetUniqueId;
