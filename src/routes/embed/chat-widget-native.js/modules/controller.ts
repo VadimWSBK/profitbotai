@@ -462,12 +462,30 @@ export const controller = String.raw`
 
     /* ===== 8. NETWORK ===== */
     function fetchMessages(forceRefresh) {
-      if (!widgetId || !sessionId || sessionId === 'preview') return;
+      if (!widgetId || !sessionId || sessionId === 'preview') {
+        console.warn('[ProfitBot] Cannot fetch messages - missing widgetId or sessionId. widgetId:', widgetId, 'sessionId:', sessionId);
+        return;
+      }
       if (forceRefresh) state.messagesLoading = true;
 
-      fetch(base + '/api/widgets/' + widgetId + '/messages?session_id=' + encodeURIComponent(sessionId))
-        .then(function(res) { return res.json(); })
+      var url = base + '/api/widgets/' + widgetId + '/messages?session_id=' + encodeURIComponent(sessionId);
+      console.log('[ProfitBot] Fetching messages from:', url);
+      
+      fetch(url, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json'
+        },
+        credentials: 'omit'
+      })
+        .then(function(res) {
+          if (!res.ok) {
+            throw new Error('Failed to fetch messages: ' + res.status + ' ' + res.statusText);
+          }
+          return res.json();
+        })
         .then(function(data) {
+          console.log('[ProfitBot] Messages fetched successfully, count:', Array.isArray(data.messages) ? data.messages.length : 0);
           var list = Array.isArray(data.messages) ? data.messages : [];
 
           if (forceRefresh || state.messages.length === 0) {
@@ -516,7 +534,15 @@ export const controller = String.raw`
         })
         .catch(function(err) {
           console.error('[ProfitBot] Error fetching messages:', err);
+          console.error('[ProfitBot] Error details - widgetId:', widgetId, 'sessionId:', sessionId, 'base:', base);
           state.messagesLoading = false;
+          // Retry once after a short delay if this was a force refresh
+          if (forceRefresh) {
+            console.log('[ProfitBot] Retrying message fetch after 1 second...');
+            setTimeout(function() {
+              fetchMessages(true);
+            }, 1000);
+          }
         });
     }
 
@@ -531,7 +557,11 @@ export const controller = String.raw`
     }
 
     function handleRefresh(btn) {
-      if (state.messagesLoading) return;
+      if (state.messagesLoading) {
+        console.log('[ProfitBot] Refresh already in progress, skipping...');
+        return;
+      }
+      console.log('[ProfitBot] Refresh triggered. Session ID:', sessionId);
       state.messagesLoading = true;
       state.messages = [];
       state.renderedIds = {};
@@ -540,6 +570,13 @@ export const controller = String.raw`
       var svgIcon = btn.querySelector('svg');
       if (svgIcon) svgIcon.classList.add('pb-spin');
       btn.disabled = true;
+      
+      // Ensure we have a valid sessionId before fetching
+      if (!sessionId || sessionId === 'preview') {
+        sessionId = getSessionId();
+        console.log('[ProfitBot] Refreshed sessionId:', sessionId);
+      }
+      
       fetchMessages(true);
       setTimeout(function() {
         if (svgIcon) svgIcon.classList.remove('pb-spin');
@@ -840,9 +877,13 @@ export const controller = String.raw`
     }
 
     /* ===== INIT ===== */
-    console.log('[ProfitBot] Widget initialization complete. Starting message fetch...');
-    fetchMessages(true);
-    startPolling();
+    console.log('[ProfitBot] Widget initialization complete. Session ID:', sessionId);
+    console.log('[ProfitBot] Starting message fetch...');
+    // Small delay to ensure DOM is fully ready and sessionId is set
+    setTimeout(function() {
+      fetchMessages(true);
+      startPolling();
+    }, 100);
     updateStarterPrompts();
     dispatchEvent('profitbot:ready');
     console.log('[ProfitBot] Widget ready! Bubble should be visible at bottom-right.');
