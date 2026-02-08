@@ -226,32 +226,37 @@ export const components = String.raw`
 
   function renderCheckoutPreview(preview) {
     var html = '<div class="pb-checkout-preview">';
-    html += '<div class="pb-checkout-header"><h3>Your checkout preview</h3><span>Product</span></div>';
+    html += '<div class="pb-checkout-header"><h3>Your Checkout Preview</h3><span class="pb-checkout-product-label">Product</span></div>';
     if (preview.lineItemsUI && Array.isArray(preview.lineItemsUI)) {
       for (var i = 0; i < preview.lineItemsUI.length; i++) {
         var item = preview.lineItemsUI[i];
         html += '<div class="pb-line-item">';
         html += '<div class="pb-image-wrap">';
-        if (item.imageUrl) html += '<img src="' + escapeHtml(item.imageUrl) + '" alt="' + escapeHtml(item.title || '') + '" />';
+        if (item.imageUrl) {
+          html += '<img src="' + escapeHtml(item.imageUrl) + '" alt="' + escapeHtml(item.title || '') + '" loading="lazy" />';
+        } else {
+          html += '<div class="pb-image-placeholder" aria-hidden="true"></div>';
+        }
         html += '<span class="pb-qty-badge">' + escapeHtml(String(item.quantity || 1)) + '</span>';
         html += '</div>';
-        html += '<div style="flex:1;min-width:0;padding-top:2px">';
+        html += '<div class="pb-line-item-details">';
         html += '<div class="pb-product-name">' + escapeHtml(item.title || '') + '</div>';
         if (item.variant) html += '<div class="pb-product-variant">' + escapeHtml(item.variant) + '</div>';
         html += '<div class="pb-price-row">';
-        html += '<div class="pb-price-col"><div class="pb-price-label">Unit Price</div><div class="pb-price-value">' + escapeHtml(item.unitPrice || '') + '</div></div>';
-        html += '<div class="pb-price-col"><div class="pb-price-label">Total</div><div class="pb-price-value">' + escapeHtml(item.lineTotal || '') + '</div></div>';
+        html += '<div class="pb-price-col"><div class="pb-price-label">Unit Price</div><div class="pb-price-value">$' + escapeHtml(String(item.unitPrice || '')) + '</div></div>';
+        html += '<div class="pb-price-col"><div class="pb-price-label">Total</div><div class="pb-price-value">$' + escapeHtml(String(item.lineTotal || '')) + '</div></div>';
         html += '</div></div></div>';
       }
     }
     if (preview.summary) {
+      var cur = escapeHtml(String(preview.summary.currency || ''));
       html += '<div class="pb-checkout-summary">';
-      html += '<div class="pb-summary-row"><span>Total Items</span><span>' + escapeHtml(String(preview.summary.totalItems || 0)) + ' items</span></div>';
-      html += '<div class="pb-summary-row"><span>Shipping</span><span>FREE</span></div>';
-      if (preview.summary.discountPercent != null) html += '<div class="pb-summary-row"><span>Discount</span><span>' + escapeHtml(String(preview.summary.discountPercent)) + '% OFF</span></div>';
-      html += '<div class="pb-summary-row"><span>Subtotal</span><span>' + escapeHtml(preview.summary.subtotal || '') + ' ' + escapeHtml(preview.summary.currency || '') + '</span></div>';
-      if (preview.summary.discountAmount != null) html += '<div class="pb-summary-row"><span>Savings</span><span>-' + escapeHtml(preview.summary.discountAmount) + '</span></div>';
-      html += '<div class="pb-summary-row pb-summary-total"><span>Total</span><span>' + escapeHtml(preview.summary.total || '') + ' ' + escapeHtml(preview.summary.currency || '') + '</span></div>';
+      html += '<div class="pb-summary-row"><span class="pb-summary-label">Total Items</span><span class="pb-summary-value">' + escapeHtml(String(preview.summary.totalItems || 0)) + ' items</span></div>';
+      html += '<div class="pb-summary-row"><span class="pb-summary-label">Shipping</span><span class="pb-summary-value">FREE</span></div>';
+      if (preview.summary.discountPercent != null) html += '<div class="pb-summary-row"><span class="pb-summary-label">Discount</span><span class="pb-summary-value">' + escapeHtml(String(preview.summary.discountPercent)) + '% OFF</span></div>';
+      html += '<div class="pb-summary-row"><span class="pb-summary-label">Subtotal</span><span class="pb-summary-value">$' + escapeHtml(String(preview.summary.subtotal || '')) + ' ' + cur + '</span></div>';
+      if (preview.summary.discountAmount != null) html += '<div class="pb-summary-row"><span class="pb-summary-label">Savings</span><span class="pb-summary-value">-$' + escapeHtml(String(preview.summary.discountAmount)) + '</span></div>';
+      html += '<div class="pb-summary-row pb-summary-total"><span class="pb-summary-label">Total</span><span class="pb-summary-value">$' + escapeHtml(String(preview.summary.total || '')) + ' ' + cur + '</span></div>';
       html += '<div class="pb-summary-footer">GST included</div>';
       html += '</div>';
     }

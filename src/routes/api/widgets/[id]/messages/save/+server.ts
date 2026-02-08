@@ -29,6 +29,11 @@ export const POST: RequestHandler = async (event) => {
 		role?: string;
 		content?: string;
 		createdAt?: string;
+		checkoutPreview?: {
+			lineItemsUI?: unknown[];
+			summary?: Record<string, unknown>;
+			checkoutUrl?: string;
+		};
 	};
 	try {
 		body = await event.request.json();
@@ -156,6 +161,28 @@ export const POST: RequestHandler = async (event) => {
 		if (msgError || !message) {
 			console.error('Error inserting message:', msgError);
 			return json({ error: 'Failed to save message' }, { status: 500 });
+		}
+
+		// If assistant message includes checkoutPreview, persist so Messages and embed show full breakdown (line items + images + summary)
+		const preview = body.checkoutPreview;
+		if (
+			role === 'assistant' &&
+			preview &&
+			typeof preview === 'object' &&
+			Array.isArray(preview.lineItemsUI) &&
+			preview.lineItemsUI.length > 0 &&
+			typeof preview.checkoutUrl === 'string' &&
+			preview.checkoutUrl.trim()
+		) {
+			const summary = preview.summary && typeof preview.summary === 'object' ? preview.summary : {};
+			await admin.from('widget_checkout_previews').insert({
+				conversation_id: finalConversationId,
+				widget_id: widgetId,
+				message_id: message.id,
+				line_items_ui: preview.lineItemsUI,
+				summary,
+				checkout_url: preview.checkoutUrl.trim()
+			});
 		}
 
 		return json({
