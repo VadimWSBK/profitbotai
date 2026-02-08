@@ -336,7 +336,7 @@ export const controller = String.raw`
           var welcomeText = w.welcomeMessage || 'Hi! How can I help you today?';
           var firstName = state.visitorName ? state.visitorName.split(/\s+/)[0] : '';
           welcomeText = welcomeText.replace(/\{first_name\}/gi, firstName || 'there').replace(/\{name\}/gi, state.visitorName || 'there');
-          var wRow = el('div', { className: 'pb-msg-row' });
+          var wRow = el('div', { className: 'pb-msg-row pb-no-anim' });
           if (bot.showAvatar && bot.avatarUrl) {
             wRow.appendChild(el('img', { src: bot.avatarUrl, alt: '', className: 'pb-avatar' }));
           }
