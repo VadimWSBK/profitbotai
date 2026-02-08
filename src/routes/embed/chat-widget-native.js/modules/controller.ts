@@ -474,6 +474,10 @@ export const controller = String.raw`
         console.warn('[ProfitBot] Cannot fetch messages - missing widgetId or sessionId. widgetId:', widgetId, 'sessionId:', sessionId);
         return;
       }
+      // Don't fetch messages while streaming (polling will resume after stream completes)
+      if (state.isStreaming && !forceRefresh) {
+        return;
+      }
       if (forceRefresh) state.messagesLoading = true;
 
       var url = base + '/api/widgets/' + widgetId + '/messages?session_id=' + encodeURIComponent(sessionId);
@@ -564,7 +568,17 @@ export const controller = String.raw`
     function startPolling() {
       stopPolling();
       if (!widgetId || !sessionId || sessionId === 'preview') return;
-      state.pollTimer = setInterval(function() { fetchMessages(); }, 3000);
+      // Don't poll while streaming to avoid race conditions
+      if (state.isStreaming) {
+        console.log('[ProfitBot] Polling paused - streaming in progress');
+        return;
+      }
+      state.pollTimer = setInterval(function() { 
+        // Double-check streaming state before each poll
+        if (!state.isStreaming) {
+          fetchMessages(); 
+        }
+      }, 3000);
     }
 
     function stopPolling() {
@@ -791,7 +805,13 @@ export const controller = String.raw`
       }
       // IMPORTANT: This calls n8n directly (not through Vercel) to avoid Vercel streaming costs
       // n8n is a fixed monthly cost, so streaming from n8n is cost-effective
-      console.log('[ProfitBot] Calling n8n webhook directly:', n8nUrl);
+      // 
+      // n8n Setup Requirements:
+      // 1. Use "Respond to Webhook" node (NOT "Respond immediately")
+      // 2. Set Content-Type: text/event-stream header
+      // 3. Send SSE format: data: {"token":"Hello"} data: {"token":"world"} data: {"done":true}
+      // 4. Note: Streaming works best on self-hosted n8n. n8n Cloud may buffer responses behind Cloudflare
+      console.log('[ProfitBot] Calling n8n webhook directly (bypassing Vercel):', n8nUrl);
       var body = { message: message, sessionId: sessionId, widgetId: widgetId };
       if (conversationId) body.conversationId = conversationId;
       if (config.agentId) body.agentId = config.agentId;
@@ -805,8 +825,16 @@ export const controller = String.raw`
       })
         .then(function(res) {
           var contentType = res.headers.get('content-type') || '';
-          if (res.ok && res.body && !contentType.includes('application/json')) {
-            /* Streaming response */
+          // Check for SSE streaming: n8n should send Content-Type: text/event-stream
+          // Expected format: data: {"token":"Hello"} data: {"token":"world"} data: {"done":true}
+          var isSSE = contentType.includes('text/event-stream');
+          var isStreaming = res.ok && res.body && (isSSE || !contentType.includes('application/json'));
+          
+          if (isStreaming) {
+            console.log('[ProfitBot] n8n streaming response detected. Content-Type:', contentType);
+            // Stop polling while streaming to avoid race conditions
+            stopPolling();
+            /* Streaming response from n8n (direct call, not proxied through Vercel) */
             handleStreamingResponse(res, function(content) {
               state.loading = false;
               inputEl.disabled = false;
