@@ -1,33 +1,114 @@
 /**
  * Native embed script - fully functional widget without iframe
- * Uses Shadow DOM for CSS isolation, similar to GoHighLevel widget
- * Includes: chat, messages, polling, streaming, checkout previews, tooltips, etc.
+ * Uses Shadow DOM for CSS isolation.
+ * Includes: chat, messages, polling, streaming with character buffer,
+ * checkout previews, tooltips, avatars, copy-to-clipboard, scroll FAB,
+ * reduced-motion support, mobile full-screen with safe areas, etc.
  */
 const EMBED_SCRIPT = String.raw`
 (function() {
   'use strict';
-  
+
+  /* ===== 1. BOOTSTRAP ===== */
   var script = document.currentScript;
   if (!script) return;
   var widgetId = script.getAttribute('data-widget-id');
   if (!widgetId || widgetId === 'YOUR_WIDGET_ID') {
-    console.warn('[ProfitBot] Missing or invalid data-widget-id. Replace with your widget ID from the Embed tab.');
+    console.warn('[ProfitBot] Missing or invalid data-widget-id.');
     return;
   }
   var src = script.getAttribute('src') || '';
   var base = src.replace(/\/embed\/chat-widget-native\.js.*$/, '');
   if (!base) return;
-
-  // Prevent duplicate loading
-  if (window.__profitbot_widget_loaded && window.__profitbot_widget_loaded[widgetId]) {
-    return;
-  }
-  if (!window.__profitbot_widget_loaded) {
-    window.__profitbot_widget_loaded = {};
-  }
+  if (!window.__profitbot_widget_loaded) window.__profitbot_widget_loaded = {};
+  if (window.__profitbot_widget_loaded[widgetId]) return;
   window.__profitbot_widget_loaded[widgetId] = true;
 
-  // Session management
+  /* ===== 2. UTILITIES ===== */
+  var prefersReducedMotion = false;
+  try {
+    var mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    prefersReducedMotion = mq.matches;
+    mq.addEventListener('change', function(e) { prefersReducedMotion = e.matches; });
+  } catch (e) {}
+
+  function dur(ms) { return prefersReducedMotion ? 0 : ms; }
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function el(tag, attrs, children) {
+    var node = document.createElement(tag);
+    if (attrs) {
+      for (var key in attrs) {
+        if (!attrs.hasOwnProperty(key)) continue;
+        var val = attrs[key];
+        if (key === 'style' && typeof val === 'object') {
+          for (var sk in val) { if (val.hasOwnProperty(sk)) node.style[sk] = val[sk]; }
+        } else if (key === 'className') {
+          node.className = val;
+        } else if (key.indexOf('on') === 0 && typeof val === 'function') {
+          node.addEventListener(key.slice(2).toLowerCase(), val);
+        } else if (key === 'innerHTML') {
+          node.innerHTML = val;
+        } else if (key === 'textContent') {
+          node.textContent = val;
+        } else {
+          node.setAttribute(key, val);
+        }
+      }
+    }
+    if (children) {
+      var arr = Array.isArray(children) ? children : [children];
+      for (var i = 0; i < arr.length; i++) {
+        var c = arr[i];
+        if (typeof c === 'string') node.appendChild(document.createTextNode(c));
+        else if (c) node.appendChild(c);
+      }
+    }
+    return node;
+  }
+
+  function svgEl(viewBox, pathD, size, color) {
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', viewBox);
+    svg.setAttribute('width', size || '16');
+    svg.setAttribute('height', size || '16');
+    svg.style.fill = 'none';
+    svg.style.stroke = color || 'currentColor';
+    svg.style.pointerEvents = 'none';
+    var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', pathD);
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('stroke-linejoin', 'round');
+    path.setAttribute('stroke-width', '2');
+    svg.appendChild(path);
+    return svg;
+  }
+
+  function svgFilled(viewBox, pathD, size, color) {
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', viewBox);
+    svg.setAttribute('width', size || '50%');
+    svg.setAttribute('height', size || '50%');
+    svg.style.fill = color || 'currentColor';
+    svg.style.pointerEvents = 'none';
+    var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', pathD);
+    svg.appendChild(path);
+    return svg;
+  }
+
+  function throttle(fn, ms) {
+    var last = 0;
+    return function() {
+      var now = Date.now();
+      if (now - last >= ms) { last = now; fn.apply(null, arguments); }
+    };
+  }
+
+  /* ===== 3. SESSION ===== */
   function getSessionId() {
     var params = new URLSearchParams(window.location.search);
     var fromUrl = params.get('session_id');
@@ -36,43 +117,185 @@ const EMBED_SCRIPT = String.raw`
     try {
       var stored = localStorage.getItem(key);
       if (stored && stored.trim()) return stored.trim();
-    } catch (e) {
-      // ignore
-    }
+    } catch (e) {}
     var newId = 'visitor_' + Date.now() + '_' + Math.random().toString(36).slice(2, 12);
-    try {
-      localStorage.setItem(key, newId);
-    } catch (e) {
-      // ignore
-    }
+    try { localStorage.setItem(key, newId); } catch (e) {}
     return newId;
   }
 
-  // Message formatting utilities
-  function escapeHtml(s) {
-    return String(s)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+  /* ===== 4. MESSAGE FORMATTING (full port of chat-message-format.ts) ===== */
+  function splitTablesAndText(message) {
+    if (!message || typeof message !== 'string') return [];
+    var lines = message.split('\n');
+    var parts = [];
+    var i = 0;
+    function isTableRow(line) { return /^\|.+\|[\s]*$/.test(line.trim()); }
+    while (i < lines.length) {
+      if (isTableRow(lines[i])) {
+        var tableLines = [];
+        while (i < lines.length && isTableRow(lines[i])) { tableLines.push(lines[i]); i++; }
+        if (tableLines.length >= 2) { parts.push({ type: 'table', content: tableLines.join('\n') }); continue; }
+        parts.push({ type: 'text', content: tableLines.join('\n') }); continue;
+      }
+      var textLines = [];
+      while (i < lines.length && !isTableRow(lines[i])) { textLines.push(lines[i]); i++; }
+      if (textLines.length) parts.push({ type: 'text', content: textLines.join('\n') });
+    }
+    return parts;
+  }
+
+  function renderTableCell(cell, colIndex, isCheckoutTable, header) {
+    var imgRe = /!\[([^\]]*)\]\s*\((https?:\/\/[^)\s]+)\)?/;
+    var m = cell.match(imgRe);
+    if (m) {
+      var alt = escapeHtml(m[1] || '');
+      var url = escapeHtml(m[2] || '');
+      var rest = cell.replace(imgRe, '').trim();
+      var qtyMatch = rest.match(/×\s*(\d+)\s*$/);
+      var qty = qtyMatch ? qtyMatch[1] : '';
+      var imgHtml = '<img src="' + url + '" alt="' + alt + '" class="pb-table-cell-image" loading="lazy" />';
+      if (qty && isCheckoutTable) {
+        return '<div class="pb-checkout-img-wrap"><span class="pb-qty-badge">' + escapeHtml(qty) + '</span>' + imgHtml + '</div>';
+      }
+      return imgHtml + (rest ? ' ' + escapeHtml(rest) : '');
+    }
+    if (isCheckoutTable && header && header.toLowerCase() === 'product') {
+      if (cell.indexOf('||') >= 0) {
+        var qtyPriceParts = cell.split(/\s*\|\|\s*/).map(function(p){return p.trim();}).filter(Boolean);
+        var mainPart = qtyPriceParts[0] || '';
+        var qtyPriceLine = qtyPriceParts[1] || '';
+        var mainParts = mainPart.split(/\s*%%\s*/).map(function(p){return p.trim();}).filter(Boolean);
+        var title = mainParts[0] || mainPart;
+        var variant = mainParts[1] || '';
+        var html = '<span class="pb-checkout-product-cell"><strong>' + escapeHtml(title) + '</strong>';
+        if (variant) html += '<br /><span class="pb-checkout-variant-line">' + escapeHtml(variant) + '</span>';
+        if (qtyPriceLine) html += '<br /><span class="pb-checkout-qty-price-line">' + escapeHtml(qtyPriceLine) + '</span>';
+        html += '</span>';
+        return html;
+      }
+      var cellParts = cell.split(/\s*%%\s*/).map(function(p){return p.trim();});
+      var cTitle = cellParts[0] || '';
+      var cVariant = cellParts[1] || '';
+      var unitPrice = cellParts[2] || '';
+      var total = cellParts[3] || '';
+      var chtml = '<span class="pb-checkout-product-cell"><strong>' + escapeHtml(cTitle) + '</strong>';
+      if (cVariant) chtml += '<br /><span class="pb-checkout-variant-line">' + escapeHtml(cVariant) + '</span>';
+      if (unitPrice || total) {
+        chtml += '<div class="pb-checkout-price-grid">';
+        if (unitPrice) chtml += '<div class="pb-checkout-price-block"><div class="pb-checkout-price-label">Unit Price</div><div class="pb-checkout-price-value">' + escapeHtml(unitPrice) + '</div></div>';
+        if (total) chtml += '<div class="pb-checkout-price-block"><div class="pb-checkout-price-label">Total</div><div class="pb-checkout-price-value">' + escapeHtml(total) + '</div></div>';
+        chtml += '</div>';
+      }
+      chtml += '</span>';
+      return chtml;
+    }
+    var escaped = escapeHtml(cell);
+    return escaped.replace(/\n/g, '<br />');
+  }
+
+  function markdownTableToHtml(tableContent) {
+    var lines = tableContent.split('\n').filter(function(l){return l.trim();});
+    if (lines.length < 2) return escapeHtml(tableContent);
+    function parseRow(line) {
+      return line.split('|').map(function(c){return c.trim();}).filter(function(_,i,arr){return i > 0 && i < arr.length - 1;});
+    }
+    var headerCells = parseRow(lines[0]);
+    function isSep(line) {
+      var cells = parseRow(line);
+      return cells.length > 0 && cells.every(function(c){return /^[\s\-:]+$/.test(c);});
+    }
+    var bodyStart = lines.length > 1 && isSep(lines[1]) ? 2 : 1;
+    var isCheckoutTable = headerCells[0] !== undefined && headerCells[0].toLowerCase() === '' && headerCells[1] !== undefined && headerCells[1].toLowerCase() === 'product' && headerCells[2] !== undefined && headerCells[2].toLowerCase() === 'total';
+    var isSummaryTable = !isCheckoutTable && headerCells.every(function(c){return !c;});
+    var tableClass = isCheckoutTable ? 'pb-table pb-checkout-table' : isSummaryTable ? 'pb-summary-table' : 'pb-table';
+    var html = '<table class="' + tableClass + '"><thead' + (isSummaryTable ? ' class="pb-summary-head"' : '') + '><tr>';
+    for (var hi = 0; hi < headerCells.length; hi++) html += '<th>' + escapeHtml(headerCells[hi]) + '</th>';
+    html += '</tr></thead><tbody>';
+    for (var r = bodyStart; r < lines.length; r++) {
+      var cells = parseRow(lines[r]);
+      if (cells.length === 0) continue;
+      html += '<tr>';
+      for (var ci = 0; ci < cells.length; ci++) {
+        html += '<td>' + renderTableCell(cells[ci], ci, isCheckoutTable, headerCells[ci]) + '</td>';
+      }
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+    return html;
+  }
+
+  function formatMessageWithLinks(text) {
+    if (!text || typeof text !== 'string') return '';
+    var parts = [];
+    var lastIndex = 0;
+    var imageRe = /!\[([^\]]*)\]\s*\((https?:\/\/[^)\s]+)\)?/g;
+    var mdLinkRe = /\[([^\]]*)\]\s*\((https?:\/\/[^)\s]+)\)?/g;
+    var rawUrlRe = /(https?:\/\/[^\s<>"']+)/g;
+    var matches = [];
+    var m;
+    imageRe.lastIndex = 0;
+    while ((m = imageRe.exec(text)) !== null) {
+      matches.push({ index: m.index, end: imageRe.lastIndex, type: 'image', alt: m[1]||'', url: m[2] });
+    }
+    mdLinkRe.lastIndex = 0;
+    while ((m = mdLinkRe.exec(text)) !== null) {
+      matches.push({ index: m.index, end: mdLinkRe.lastIndex, type: 'markdown', text: m[1]||m[2], url: m[2] });
+    }
+    rawUrlRe.lastIndex = 0;
+    while ((m = rawUrlRe.exec(text)) !== null) {
+      var inside = matches.some(function(match) {
+        return (match.type === 'markdown' || match.type === 'image') && m.index >= match.index && m.index < match.end;
+      });
+      if (!inside) matches.push({ index: m.index, end: rawUrlRe.lastIndex, type: 'raw', url: m[1] });
+    }
+    matches.sort(function(a,b){return a.index - b.index;});
+    for (var i = 0; i < matches.length; i++) {
+      var match = matches[i];
+      parts.push(escapeHtml(text.slice(lastIndex, match.index)));
+      var url = match.url;
+      if (match.type === 'image') {
+        parts.push('<img src="' + escapeHtml(url) + '" alt="' + escapeHtml(match.alt) + '" class="pb-msg-image" loading="lazy" />');
+      } else {
+        var displayText = match.type === 'markdown' ? match.text : url;
+        var isCta = /buy\s*now|complete\s*your\s*purchase|go\s*to\s*checkout/i.test(displayText);
+        var linkClass = isCta ? 'pb-msg-link pb-cta-button' : 'pb-msg-link pb-underline';
+        parts.push('<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" class="' + linkClass + '">' + escapeHtml(displayText) + '</a>');
+      }
+      lastIndex = match.end;
+    }
+    parts.push(escapeHtml(text.slice(lastIndex)));
+    return parts.join('').replace(/\n/g, '<br />');
   }
 
   function formatMessage(content) {
     if (!content || typeof content !== 'string') return '';
-    // Convert markdown links [text](url) to HTML
-    content = content.replace(/\[([^\]]+)\]\(([^)]+)\)/g, function(match, text, url) {
-      var isCta = /buy\s*now|complete\s*your\s*purchase|go\s*to\s*checkout/i.test(text);
-      var linkClass = isCta ? 'chat-message-link chat-cta-button' : 'chat-message-link underline';
-      return '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" class="' + linkClass + '">' + escapeHtml(text) + '</a>';
-    });
-    // Convert raw URLs to links
-    content = content.replace(/(https?:\/\/[^\s<>"']+)/g, function(url) {
-      if (content.indexOf('href="' + url) >= 0) return url; // Already a link
-      return '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" class="chat-message-link underline">' + escapeHtml(url) + '</a>';
-    });
-    // Convert line breaks
-    content = content.replace(/\n/g, '<br />');
-    return content;
+    var parts = splitTablesAndText(content);
+    return parts.map(function(p) {
+      return p.type === 'table' ? '<div class="pb-table-wrapper">' + markdownTableToHtml(p.content) + '</div>' : formatMessageWithLinks(p.content);
+    }).join('');
+  }
+
+  function stripCheckoutBlock(content, checkoutUrl) {
+    if (!content) return content;
+    var cleaned = content;
+    if (checkoutUrl) {
+      var escapedUrl = checkoutUrl.replace(/[.*+?^$\x7b\x7d()|[\]\\]/g, '\\$&');
+      cleaned = cleaned.replace(new RegExp(escapedUrl, 'gi'), '').trim();
+    }
+    var start = cleaned.search(/\*\*[^*]*Your [Cc]heckout [Pp]review\*\*/i);
+    if (start < 0) {
+      cleaned = cleaned.replace(/(https?:\/\/[^\s<>"']*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"']*)/gi, '').trim();
+      return cleaned;
+    }
+    var before = cleaned.slice(0, start).replace(/\n+$/, '');
+    var afterStart = cleaned.slice(start);
+    var linkMatch = afterStart.match(/\[GO TO CHECKOUT\]\s*\([^)]+\)/i) || afterStart.match(/\[Buy now[^\]]*\]\s*\([^)]+\)/i);
+    if (linkMatch) {
+      var rest = afterStart.slice(linkMatch.index + linkMatch[0].length).replace(/^\s*\n?/, '');
+      rest = rest.replace(/(https?:\/\/[^\s<>"']*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"']*)/gi, '').trim();
+      return (before + (rest ? '\n\n' + rest : '')).trim();
+    }
+    return before.replace(/(https?:\/\/[^\s<>"']*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"']*)/gi, '').trim() || cleaned;
   }
 
   function formatTimestamp(createdAt) {
@@ -82,41 +305,490 @@ const EMBED_SCRIPT = String.raw`
       if (isNaN(date.getTime())) return '';
       var now = new Date();
       var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      var messageDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-      var diffDays = Math.floor((today.getTime() - messageDate.getTime()) / (1000 * 60 * 60 * 24));
-      var timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-      if (diffDays === 0) return timeStr;
-      if (diffDays === 1) return 'Yesterday ' + timeStr;
-      if (diffDays < 7) return date.toLocaleDateString('en-US', { weekday: 'short' }) + ' ' + timeStr;
+      var msgDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+      var diff = Math.floor((today.getTime() - msgDate.getTime()) / 86400000);
+      var t = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      if (diff === 0) return t;
+      if (diff === 1) return 'Yesterday ' + t;
+      if (diff < 7) return date.toLocaleDateString('en-US', { weekday: 'short' }) + ' ' + t;
       return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
-    } catch (e) {
-      return '';
-    }
+    } catch (e) { return ''; }
   }
 
-  function initWidget() {
-    if (!document.body) {
-      setTimeout(initWidget, 10);
-      return;
+  /* ===== 5. CSS GENERATOR ===== */
+  function getWidgetCSS(config) {
+    var b = config.bubble || {};
+    var w = config.window || {};
+    var t = config.tooltip || {};
+    var bot = w.botMessageSettings || {};
+    var bubbleBg = b.backgroundColor || '#3b82f6';
+    var winBg = w.backgroundColor || '#ffffff';
+    var botBg = bot.backgroundColor || '#f3f4f6';
+    var botText = bot.textColor || '#111827';
+    var fontSize = w.fontSizePx || 14;
+    var msgRadius = w.messageBorderRadius || 12;
+    var winRadius = w.borderRadiusStyle === 'rounded' ? '12px' : '0';
+    var headerRadius = w.borderRadiusStyle === 'rounded' ? '12px 12px 0 0' : '0';
+    var bubbleSize = b.bubbleSizePx || 60;
+    var bubbleRight = b.rightPositionPx || 20;
+    var bubbleBottom = b.bottomPositionPx || 20;
+    var bubbleRadius = b.borderRadiusStyle === 'circle' ? '50%' : b.borderRadiusStyle === 'rounded' ? '16px' : '0';
+    var starterBg = w.starterPromptBackgroundColor || '#f9fafb';
+    var starterText = w.starterPromptTextColor || '#374151';
+    var starterBorder = w.starterPromptBorderColor || '#d1d5db';
+    var starterFontSize = Math.max(11, (w.starterPromptFontSizePx || 14) - 3);
+    var borderColor = w.sectionBorderColor || '#e5e7eb';
+    var inputBorder = w.inputBorderColor || '#d1d5db';
+    var inputBg = w.inputBackgroundColor || '#ffffff';
+    var inputText = w.inputTextColor || '#111827';
+    var inputPh = w.inputPlaceholderColor || '#9ca3af';
+    var sendBg = w.sendButtonBackgroundColor || '#3b82f6';
+    var sendIcon = w.sendButtonIconColor || '#ffffff';
+    var headerBg = w.headerBackgroundColor || '#f3f4f6';
+    var headerText = w.headerTextColor || '#111827';
+    var headerIcon = w.headerIconColor || '#374151';
+    var footerBg = w.footerBackgroundColor || winBg;
+    var footerText = w.footerTextColor || '#6b7280';
+    var avatarSize = w.avatarSize || 40;
+    var avatarRadius = w.avatarBorderRadius || 25;
+
+    return [
+      /* Reset & wrapper */
+      '*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }',
+      ':host { all: initial; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-size: ' + fontSize + 'px; line-height: 1.5; color: #111827; }',
+      '.pb-wrapper { position: fixed; z-index: 2147483647; right: ' + bubbleRight + 'px; bottom: ' + bubbleBottom + 'px; display: flex; flex-direction: column; align-items: flex-end; pointer-events: none; }',
+
+      /* Bubble */
+      '.pb-bubble { pointer-events: auto; width: ' + bubbleSize + 'px; height: ' + bubbleSize + 'px; background-color: ' + bubbleBg + '; border-radius: ' + bubbleRadius + '; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 24px rgba(0,0,0,0.25), 0 4px 8px rgba(0,0,0,0.15); transition: transform 0.2s ease-out, box-shadow 0.2s ease-out; position: relative; z-index: 20; flex-shrink: 0; outline: none; }',
+      '.pb-bubble:hover { transform: scale(1.05); box-shadow: 0 12px 32px rgba(0,0,0,0.3), 0 6px 12px rgba(0,0,0,0.2); }',
+      '.pb-bubble.pb-open { transform: scale(0.95); }',
+      '.pb-bubble-pulse { animation: pb-pulse 2s ease-in-out 3; }',
+      '@keyframes pb-pulse { 0%,100% { box-shadow: 0 8px 24px rgba(0,0,0,0.25), 0 4px 8px rgba(0,0,0,0.15), 0 0 0 0 rgba(0,0,0,0.15); } 50% { box-shadow: 0 8px 24px rgba(0,0,0,0.25), 0 4px 8px rgba(0,0,0,0.15), 0 0 0 8px rgba(0,0,0,0); } }',
+
+      /* Tooltip */
+      '.pb-tooltip { pointer-events: auto; position: absolute; bottom: ' + (bubbleSize + 12) + 'px; right: ' + (bubbleSize + 12) + 'px; background-color: ' + (t.backgroundColor || '#ffffff') + '; color: ' + (t.textColor || '#111827') + '; font-size: ' + (t.fontSizePx || 14) + 'px; padding: 12px 16px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-width: 220px; cursor: pointer; z-index: 19; white-space: normal; animation: pb-fade-in 0.2s ease-out; }',
+      '.pb-tooltip-hidden { opacity: 0; pointer-events: none; transition: opacity 0.3s; }',
+
+      /* Chat window */
+      '.pb-window { pointer-events: auto; position: absolute; bottom: ' + (bubbleSize + 12) + 'px; right: 0; width: ' + (w.widthPx || 400) + 'px; height: ' + (w.heightPx || 600) + 'px; max-height: calc(100vh - ' + (bubbleSize + bubbleBottom + 32) + 'px); background-color: ' + winBg + '; border-radius: ' + winRadius + '; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); display: flex; flex-direction: column; overflow: hidden; z-index: 18; animation: pb-window-in ' + dur(250) + 'ms cubic-bezier(0.33,1,0.68,1) both; }',
+      '.pb-window.pb-closing { animation: pb-window-out ' + dur(180) + 'ms cubic-bezier(0.33,1,0.68,1) both; }',
+      '@keyframes pb-window-in { from { opacity: 0; transform: translateY(12px) scale(0.95); transform-origin: bottom right; } to { opacity: 1; transform: translateY(0) scale(1); } }',
+      '@keyframes pb-window-out { from { opacity: 1; transform: translateY(0) scale(1); } to { opacity: 0; transform: translateY(8px) scale(0.96); } }',
+
+      /* Header */
+      '.pb-header { display: flex; align-items: center; gap: 8px; padding: 12px 16px; background-color: ' + headerBg + '; color: ' + headerText + '; border-radius: ' + headerRadius + '; flex-shrink: 0; }',
+      '.pb-header-avatar { width: 32px; height: 32px; border-radius: 50%; object-fit: contain; }',
+      '.pb-header-title { flex: 1; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
+      '.pb-header-btn { background: none; border: none; padding: 6px; border-radius: 4px; cursor: pointer; color: ' + headerIcon + '; display: flex; align-items: center; justify-content: center; transition: opacity 0.15s; outline: none; }',
+      '.pb-header-btn:hover { opacity: 0.7; }',
+      '.pb-header-btn:disabled { opacity: 0.4; cursor: default; }',
+      '.pb-spin { animation: pb-spin 1s linear infinite; }',
+      '@keyframes pb-spin { to { transform: rotate(360deg); } }',
+
+      /* Messages area */
+      '.pb-messages { flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-anchor: none; scroll-behavior: smooth; position: relative; }',
+      '.pb-messages::-webkit-scrollbar { width: 6px; }',
+      '.pb-messages::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }',
+      w.showScrollbar === false ? '.pb-messages { scrollbar-width: none; -ms-overflow-style: none; } .pb-messages::-webkit-scrollbar { display: none; }' : '.pb-messages { scrollbar-width: thin; scrollbar-color: #d1d5db transparent; }',
+
+      /* Message rows */
+      '.pb-msg-row { display: flex; gap: 8px; align-items: flex-start; animation: pb-fly-left ' + dur(280) + 'ms cubic-bezier(0.33,1,0.68,1) both; }',
+      '.pb-msg-row-user { justify-content: flex-end; animation-name: pb-fly-right; }',
+      '.pb-msg-row.pb-no-anim, .pb-msg-row-user.pb-no-anim { animation: none; }',
+      '@keyframes pb-fly-left { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: translateX(0); } }',
+      '@keyframes pb-fly-right { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }',
+
+      /* Bubbles */
+      '.pb-msg { padding: 12px 16px; border-radius: ' + msgRadius + 'px; max-width: 85%; word-wrap: break-word; overflow-wrap: break-word; position: relative; }',
+      '.pb-msg-bot { background-color: ' + botBg + '; color: ' + botText + '; align-self: flex-start; }',
+      '.pb-msg-user { background-color: ' + bubbleBg + '; color: ' + (b.colorOfInternalIcons || '#ffffff') + '; align-self: flex-end; }',
+      '.pb-msg-content { min-width: 0; overflow-x: auto; overflow-y: visible; max-width: 100%; }',
+
+      /* Avatar */
+      '.pb-avatar { width: ' + avatarSize + 'px; height: ' + avatarSize + 'px; border-radius: ' + avatarRadius + 'px; object-fit: contain; flex-shrink: 0; }',
+      '.pb-avatar-placeholder { width: ' + avatarSize + 'px; height: ' + avatarSize + 'px; border-radius: ' + avatarRadius + 'px; background-color: ' + botBg + '; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }',
+
+      /* Timestamps */
+      '.pb-timestamp { font-size: 0.7rem; opacity: 0.6; margin-top: 4px; padding: 0 4px; user-select: none; line-height: 1.2; }',
+
+      /* Copy button */
+      '.pb-copy-btn { position: absolute; top: 8px; right: 8px; background: none; border: none; cursor: pointer; opacity: 0; transition: opacity 0.2s; padding: 2px; border-radius: 4px; color: inherit; display: flex; align-items: center; justify-content: center; }',
+      '.pb-msg:hover .pb-copy-btn { opacity: 0.6; }',
+      '.pb-copy-btn:hover { opacity: 1 !important; }',
+
+      /* Typing indicator */
+      '.pb-typing { display: flex; gap: 4px; align-items: center; padding: 12px 16px; }',
+      '.pb-typing-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.4; animation: pb-dot-bounce 1.4s ease-in-out infinite both; }',
+      '.pb-typing-dot:nth-child(2) { animation-delay: 0.2s; }',
+      '.pb-typing-dot:nth-child(3) { animation-delay: 0.4s; }',
+      '@keyframes pb-dot-bounce { 0%,80%,100% { transform: scale(0.6); opacity: 0.4; } 40% { transform: scale(1); opacity: 1; } }',
+
+      /* Streaming cursor */
+      '.pb-streaming-cursor { display: inline; animation: pb-blink 530ms steps(1) infinite; font-weight: 100; margin-left: 1px; }',
+      '@keyframes pb-blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }',
+
+      /* Scroll-to-bottom FAB */
+      '.pb-scroll-fab { position: sticky; bottom: 8px; align-self: flex-end; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.15); color: ' + botText + '; border: none; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.2); transition: opacity 0.2s, background 0.2s; animation: pb-fade-in 0.2s ease-out; pointer-events: auto; }',
+      '.pb-scroll-fab:hover { background: rgba(0,0,0,0.25); }',
+
+      /* Starter prompts */
+      '.pb-starters { padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 6px; border-top: 1px solid ' + borderColor + '; flex-shrink: 0; background-color: ' + winBg + '; }',
+      '.pb-starter-btn { padding: 6px 12px; border: 1px solid ' + starterBorder + '; border-radius: 6px; background: ' + starterBg + '; color: ' + starterText + '; font-size: ' + starterFontSize + 'px; cursor: pointer; transition: all 0.2s; outline: none; }',
+      '.pb-starter-btn:hover { transform: scale(1.02); opacity: 0.9; }',
+
+      /* Input area */
+      '.pb-input-area { padding: 12px 16px; border-top: 1px solid ' + borderColor + '; display: flex; gap: 8px; flex-shrink: 0; background-color: ' + winBg + '; }',
+      '.pb-input { flex: 1; padding: 8px 12px; border: 1px solid ' + inputBorder + '; border-radius: 8px; outline: none; font-size: ' + fontSize + 'px; background-color: ' + inputBg + '; color: ' + inputText + '; font-family: inherit; transition: border-color 0.15s, box-shadow 0.15s; }',
+      '.pb-input:focus { border-color: ' + sendBg + '; box-shadow: 0 0 0 2px ' + sendBg + '33; }',
+      '.pb-input::placeholder { color: ' + inputPh + '; }',
+      '.pb-send-btn { width: 40px; height: 40px; border-radius: 50%; background-color: ' + sendBg + '; color: ' + sendIcon + '; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: transform 0.15s ease-out, opacity 0.15s; outline: none; }',
+      '.pb-send-btn:active { transform: scale(0.92); }',
+      '.pb-send-btn:disabled { opacity: 0.5; cursor: default; }',
+      '.pb-send-pulse { transform: scale(0.88); }',
+
+      /* Footer */
+      '.pb-footer { padding: 8px 16px; text-align: center; font-size: 11px; color: ' + footerText + '; background-color: ' + footerBg + '; border-top: 1px solid ' + borderColor + '; flex-shrink: 0; }',
+
+      /* Links */
+      '.pb-msg-link { color: inherit; text-decoration: underline; word-break: normal; overflow-wrap: break-word; }',
+      '.pb-msg-link:hover { opacity: 0.9; }',
+      '.pb-underline { text-decoration: underline; }',
+      '.pb-cta-button { display: inline-block; text-decoration: none; padding: 0.5em 1em; margin-top: 0.5em; border-radius: 8px; font-weight: 600; background-color: rgba(255,255,255,0.25); border: 1px solid rgba(255,255,255,0.4); transition: background-color 0.15s, border-color 0.15s; }',
+      '.pb-cta-button:hover { background-color: rgba(255,255,255,0.35); border-color: rgba(255,255,255,0.6); }',
+
+      /* Images in messages */
+      '.pb-msg-image { max-width: 100%; height: auto; border-radius: 8px; margin: 4px 0; }',
+
+      /* Tables */
+      '.pb-table-wrapper { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0.5em 0; max-width: 100%; }',
+      '.pb-table { border-collapse: collapse; font-size: 0.95em; width: max-content; min-width: 100%; }',
+      '.pb-table th, .pb-table td { border: 1px solid currentColor; opacity: 0.9; padding: 0.4em 0.6em; text-align: left; }',
+      '.pb-table th { font-weight: 600; opacity: 1; }',
+      '.pb-summary-table { border-collapse: collapse; width: 100%; margin-top: 0.25rem; font-size: 0.95em; }',
+      '.pb-summary-head { display: none; }',
+      '.pb-summary-table td { border: none; padding: 0.25em 0; }',
+      '.pb-summary-table tr + tr td { border-top: 1px solid rgba(255,255,255,0.16); }',
+      '.pb-summary-table td:first-child { font-weight: 600; padding-right: 1.5em; white-space: nowrap; }',
+      '.pb-summary-table td:last-child { text-align: right; font-weight: 600; white-space: nowrap; }',
+
+      /* Checkout table cells */
+      '.pb-checkout-table { border: none; width: 100%; }',
+      '.pb-checkout-table thead th { border: none; background: transparent; font-weight: 500; font-size: 0.9em; opacity: 0.8; padding-bottom: 0.5em; }',
+      '.pb-checkout-table td { border: none; border-bottom: 1px solid rgba(255,255,255,0.12); background: transparent; padding: 0.75em 0; vertical-align: top; }',
+      '.pb-checkout-table th:first-child, .pb-checkout-table td:first-child { width: 1%; white-space: nowrap; vertical-align: top; padding-right: 1em; }',
+      '.pb-checkout-table th:last-child, .pb-checkout-table td:last-child { display: none; }',
+      '.pb-checkout-img-wrap { position: relative; display: inline-block; width: 64px; height: 64px; flex-shrink: 0; overflow: hidden; border-radius: 6px; }',
+      '.pb-table-cell-image { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 6px; }',
+      '.pb-qty-badge { position: absolute; top: 2px; right: 2px; background: rgba(0,0,0,0.75); color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; line-height: 1.2; z-index: 1; }',
+      '.pb-checkout-product-cell { display: block; font-size: 0.95em; }',
+      '.pb-checkout-variant-line { display: block; margin-top: 0.2em; font-size: 0.85em; opacity: 0.85; font-weight: 400; }',
+      '.pb-checkout-qty-price-line { display: block; margin-top: 0.2em; font-size: 0.85em; opacity: 0.9; font-weight: 400; }',
+      '.pb-checkout-price-grid { display: flex; gap: 1.5em; margin-top: 0.5em; }',
+      '.pb-checkout-price-block { display: flex; flex-direction: column; font-size: 0.85em; }',
+      '.pb-checkout-price-label { opacity: 0.85; }',
+      '.pb-checkout-price-value { margin-top: 0.1em; font-weight: 600; }',
+
+      /* Structured checkout preview (from checkoutPreview data) */
+      '.pb-checkout-preview { margin-top: 12px; }',
+      '.pb-checkout-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.15); }',
+      '.pb-checkout-header h3 { font-size: 18px; font-weight: 700; margin: 0; color: #22c55e; }',
+      '.pb-line-item { display: flex; gap: 16px; margin-bottom: 28px; }',
+      '.pb-image-wrap { position: relative; width: 80px; height: 80px; border-radius: 8px; background: rgba(255,255,255,0.1); overflow: hidden; flex-shrink: 0; }',
+      '.pb-image-wrap img { width: 100%; height: 100%; object-fit: cover; }',
+      '.pb-image-wrap .pb-qty-badge { top: -8px; right: -8px; background: #374151; font-size: 13px; font-weight: 700; padding: 6px 10px; border-radius: 6px; min-width: 28px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }',
+      '.pb-product-name { font-weight: 700; font-size: 16px; margin-bottom: 4px; color: #22c55e; }',
+      '.pb-product-variant { font-size: 14px; opacity: 0.85; margin-bottom: 10px; }',
+      '.pb-price-row { display: flex; gap: 40px; margin-top: 6px; }',
+      '.pb-price-col { display: flex; flex-direction: column; gap: 4px; }',
+      '.pb-price-label { font-size: 12px; opacity: 0.7; font-weight: 500; }',
+      '.pb-price-value { font-size: 16px; font-weight: 700; }',
+      '.pb-checkout-summary { margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.2); }',
+      '.pb-summary-row { display: flex; justify-content: space-between; padding: 4px 0; }',
+      '.pb-summary-total { margin-top: 8px; font-size: 1.05em; }',
+      '.pb-summary-footer { font-size: 0.85em; opacity: 0.8; margin-top: 8px; }',
+      '.pb-checkout-cta { display: inline-block; margin-top: 16px; padding: 12px 24px; background: rgba(255,255,255,0.25); border: 1px solid rgba(255,255,255,0.4); border-radius: 8px; font-weight: 600; text-decoration: none; color: inherit; transition: all 0.15s; }',
+      '.pb-checkout-cta:hover { background: rgba(255,255,255,0.35); border-color: rgba(255,255,255,0.6); }',
+
+      /* Backdrop for mobile */
+      '.pb-backdrop { display: none; }',
+
+      /* Loading spinner */
+      '.pb-loader { display: flex; align-items: center; justify-content: center; min-height: 120px; }',
+      '.pb-loader svg { animation: pb-spin 1s linear infinite; color: #9ca3af; }',
+
+      /* Generic animations */
+      '@keyframes pb-fade-in { from { opacity: 0; } to { opacity: 1; } }',
+      '@keyframes pb-fade-out { from { opacity: 1; } to { opacity: 0; } }',
+
+      /* Mobile full-screen */
+      '@media (max-width: 768px) {',
+      '  .pb-wrapper { right: ' + bubbleRight + 'px; bottom: ' + bubbleBottom + 'px; }',
+      '  .pb-window { position: fixed !important; inset: 0 !important; width: 100% !important; height: 100% !important; max-height: 100dvh !important; border-radius: 0 !important; padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); padding-top: env(safe-area-inset-top); }',
+      '  .pb-header { border-radius: 0 !important; }',
+      '  .pb-input-area { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }',
+      '  .pb-bubble.pb-open { display: none !important; }',
+      '  .pb-backdrop { display: block; position: fixed; inset: 0; background: rgba(0,0,0,0.3); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); z-index: 17; pointer-events: auto; animation: pb-fade-in 0.2s ease-out; }',
+      '  .pb-tooltip { display: none !important; }',
+      '}',
+
+      /* Desktop hide tooltip on mobile */
+      t.hideTooltipOnMobile ? '@media (max-width: 768px) { .pb-tooltip { display: none !important; } }' : '',
+
+      /* Reduced motion */
+      '@media (prefers-reduced-motion: reduce) {',
+      '  .pb-bubble-pulse, .pb-typing-dot, .pb-streaming-cursor { animation: none !important; }',
+      '  .pb-bubble, .pb-send-btn, .pb-starter-btn, .pb-msg-row, .pb-msg-row-user { animation: none !important; transition-duration: 0.01ms !important; }',
+      '  .pb-window { animation-duration: 0.01ms !important; }',
+      '}'
+    ].join('\n');
+  }
+
+  /* ===== 6. COMPONENT BUILDERS ===== */
+  function createBubble(config, onClick) {
+    var b = config.bubble || {};
+    var btn = el('button', { type: 'button', className: 'pb-bubble pb-bubble-pulse', 'aria-label': 'Open chat' });
+
+    if (b.customIconUrl) {
+      var img = el('img', {
+        src: b.customIconUrl,
+        alt: 'Chat',
+        style: { width: (b.customIconSize || 50) + '%', height: (b.customIconSize || 50) + '%', objectFit: 'contain', pointerEvents: 'none', borderRadius: (b.customIconBorderRadius || 0) + 'px' }
+      });
+      img.onerror = function() {
+        btn.innerHTML = '';
+        btn.appendChild(svgFilled('0 0 24 24', 'M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z', '50%', b.colorOfInternalIcons || '#ffffff'));
+      };
+      btn.appendChild(img);
+    } else {
+      btn.appendChild(svgFilled('0 0 24 24', 'M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z', '50%', b.colorOfInternalIcons || '#ffffff'));
     }
 
-    // Create container for widget (will use Shadow DOM)
+    btn.addEventListener('click', onClick);
+    return btn;
+  }
+
+  function createTooltip(config, state, onClick) {
+    var t = config.tooltip || {};
+    if (!t.displayTooltip) return null;
+
+    var message = t.message || 'Hi! How can I help?';
+    var firstName = state.visitorName ? state.visitorName.split(/\s+/)[0] : '';
+    message = message.replace(/\{first_name\}/gi, firstName || 'there').replace(/\{name\}/gi, state.visitorName || 'there');
+
+    var tip = el('div', { className: 'pb-tooltip', role: 'button', tabindex: '0', textContent: message });
+    tip.addEventListener('click', onClick);
+    tip.addEventListener('keydown', function(e) { if (e.key === 'Enter') onClick(); });
+
+    if (t.autoHideTooltip && t.autoHideDelaySeconds > 0) {
+      setTimeout(function() { tip.classList.add('pb-tooltip-hidden'); }, t.autoHideDelaySeconds * 1000);
+    }
+
+    return tip;
+  }
+
+  function createChatWindow(config, state, callbacks) {
+    var w = config.window || {};
+    var bot = w.botMessageSettings || {};
+    var win = el('div', { className: 'pb-window' });
+
+    /* Header */
+    if (w.showTitleSection) {
+      var headerChildren = [];
+      if (w.titleAvatarUrl) {
+        headerChildren.push(el('img', { src: w.titleAvatarUrl, alt: '', className: 'pb-header-avatar' }));
+      }
+      headerChildren.push(el('span', { className: 'pb-header-title', textContent: w.title || 'Chat' }));
+
+      /* Refresh button */
+      var refreshBtn = el('button', { type: 'button', className: 'pb-header-btn', title: 'Refresh' });
+      refreshBtn.appendChild(svgEl('0 0 24 24', 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15', '16', w.headerIconColor || '#374151'));
+      refreshBtn.addEventListener('click', function() { callbacks.onRefresh(refreshBtn); });
+      headerChildren.push(refreshBtn);
+
+      /* Close button */
+      var closeBtn = el('button', { type: 'button', className: 'pb-header-btn', title: 'Close' });
+      closeBtn.appendChild(svgEl('0 0 24 24', 'M6 18L18 6M6 6l12 12', '16', w.headerIconColor || '#374151'));
+      closeBtn.addEventListener('click', callbacks.onClose);
+      headerChildren.push(closeBtn);
+
+      var header = el('div', { className: 'pb-header' }, headerChildren);
+      win.appendChild(header);
+    }
+
+    /* Messages area */
+    var messagesArea = el('div', { className: 'pb-messages' });
+    messagesArea.addEventListener('scroll', function() { callbacks.onScroll(messagesArea); });
+    win.appendChild(messagesArea);
+
+    /* Starter prompts */
+    var startersArea = el('div', { className: 'pb-starters' });
+    startersArea.style.display = 'none';
+    win.appendChild(startersArea);
+
+    /* Input area */
+    var form = el('form', { className: 'pb-input-area' });
+    var input = el('input', { type: 'text', className: 'pb-input', placeholder: w.inputPlaceholder || 'Type your query', autocomplete: 'off', 'aria-label': 'Message input' });
+    var sendBtn = el('button', { type: 'submit', className: 'pb-send-btn', title: 'Send' });
+    sendBtn.appendChild(svgEl('0 0 24 24', 'M12 19l9 2-9-18-9 18 9-2zm0 0V11', '20', w.sendButtonIconColor || '#ffffff'));
+    form.appendChild(input);
+    form.appendChild(sendBtn);
+    form.addEventListener('submit', function(e) {
+      e.preventDefault();
+      if (input.value.trim()) {
+        callbacks.onSend(input.value.trim());
+        input.value = '';
+        /* Send pulse */
+        sendBtn.classList.add('pb-send-pulse');
+        setTimeout(function() { sendBtn.classList.remove('pb-send-pulse'); }, 200);
+      }
+    });
+    win.appendChild(form);
+
+    /* Footer */
+    if (w.footerText) {
+      win.appendChild(el('div', { className: 'pb-footer', textContent: w.footerText }));
+    }
+
+    return { win: win, messagesArea: messagesArea, startersArea: startersArea, input: input, sendBtn: sendBtn };
+  }
+
+  function createMessageEl(msg, config, state, isNew) {
+    var w = config.window || {};
+    var bot = w.botMessageSettings || {};
+    var b = config.bubble || {};
+    var isBot = msg.role !== 'user';
+    var row = el('div', { className: 'pb-msg-row' + (isBot ? '' : ' pb-msg-row-user') + (isNew ? '' : ' pb-no-anim') });
+
+    if (isBot) {
+      /* Avatar */
+      if (bot.showAvatar) {
+        var avatarUrl = msg.avatarUrl || state.agentAvatarUrl || bot.avatarUrl;
+        if (avatarUrl) {
+          row.appendChild(el('img', { src: avatarUrl, alt: '', className: 'pb-avatar' }));
+        } else {
+          var ph = el('div', { className: 'pb-avatar-placeholder' });
+          ph.appendChild(svgFilled('0 0 24 24', 'M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z', '20', '#9ca3af'));
+          row.appendChild(ph);
+        }
+      }
+    }
+
+    var col = el('div', { style: { display: 'flex', flexDirection: 'column', maxWidth: '85%', minWidth: '0' } });
+
+    var bubble = el('div', { className: 'pb-msg ' + (isBot ? 'pb-msg-bot' : 'pb-msg-user') });
+
+    if (isBot) {
+      var content = el('div', { className: 'pb-msg-content' });
+      if (msg.checkoutPreview) {
+        var intro = stripCheckoutBlock(msg.content, msg.checkoutPreview.checkoutUrl).trim();
+        if (intro) content.innerHTML = '<div style="margin-bottom:0.5em">' + formatMessage(intro) + '</div>';
+        content.innerHTML += renderCheckoutPreview(msg.checkoutPreview);
+      } else {
+        content.innerHTML = formatMessage(msg.content);
+      }
+      bubble.appendChild(content);
+
+      /* Copy button */
+      if (bot.showCopyToClipboardIcon) {
+        var copyBtn = el('button', { type: 'button', className: 'pb-copy-btn', title: 'Copy' });
+        copyBtn.appendChild(svgEl('0 0 24 24', 'M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z', '14'));
+        copyBtn.addEventListener('click', function() {
+          try { navigator.clipboard.writeText(msg.content); } catch (e) {}
+        });
+        bubble.appendChild(copyBtn);
+      }
+    } else {
+      bubble.textContent = msg.content;
+    }
+
+    col.appendChild(bubble);
+
+    if (msg.createdAt) {
+      col.appendChild(el('div', { className: 'pb-timestamp', textContent: formatTimestamp(msg.createdAt), style: { color: isBot ? (bot.textColor || '#111827') : (b.colorOfInternalIcons || '#ffffff') } }));
+    }
+
+    row.appendChild(col);
+    row.setAttribute('data-msg-id', msg.id || msg._localId || '');
+    return row;
+  }
+
+  function createTypingIndicator(config) {
+    var bot = config.window ? config.window.botMessageSettings || {} : {};
+    var row = el('div', { className: 'pb-msg-row' });
+    if (bot.showAvatar) {
+      var avatarUrl = bot.avatarUrl;
+      if (avatarUrl) {
+        row.appendChild(el('img', { src: avatarUrl, alt: '', className: 'pb-avatar' }));
+      } else {
+        var ph = el('div', { className: 'pb-avatar-placeholder' });
+        ph.appendChild(svgFilled('0 0 24 24', 'M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z', '20', '#9ca3af'));
+        row.appendChild(ph);
+      }
+    }
+    var botBg = (config.window && config.window.botMessageSettings) ? config.window.botMessageSettings.backgroundColor : '#f3f4f6';
+    var botText = (config.window && config.window.botMessageSettings) ? config.window.botMessageSettings.textColor : '#111827';
+    var dots = el('div', { className: 'pb-msg pb-msg-bot pb-typing', style: { color: botText } }, [
+      el('span', { className: 'pb-typing-dot' }),
+      el('span', { className: 'pb-typing-dot' }),
+      el('span', { className: 'pb-typing-dot' })
+    ]);
+    row.appendChild(dots);
+    return row;
+  }
+
+  function renderCheckoutPreview(preview) {
+    var html = '<div class="pb-checkout-preview">';
+    html += '<div class="pb-checkout-header"><h3>Your checkout preview</h3><span>Product</span></div>';
+    if (preview.lineItemsUI && Array.isArray(preview.lineItemsUI)) {
+      for (var i = 0; i < preview.lineItemsUI.length; i++) {
+        var item = preview.lineItemsUI[i];
+        html += '<div class="pb-line-item">';
+        html += '<div class="pb-image-wrap">';
+        if (item.imageUrl) html += '<img src="' + escapeHtml(item.imageUrl) + '" alt="' + escapeHtml(item.title || '') + '" />';
+        html += '<span class="pb-qty-badge">' + escapeHtml(String(item.quantity || 1)) + '</span>';
+        html += '</div>';
+        html += '<div style="flex:1;min-width:0;padding-top:2px">';
+        html += '<div class="pb-product-name">' + escapeHtml(item.title || '') + '</div>';
+        if (item.variant) html += '<div class="pb-product-variant">' + escapeHtml(item.variant) + '</div>';
+        html += '<div class="pb-price-row">';
+        html += '<div class="pb-price-col"><div class="pb-price-label">Unit Price</div><div class="pb-price-value">' + escapeHtml(item.unitPrice || '') + '</div></div>';
+        html += '<div class="pb-price-col"><div class="pb-price-label">Total</div><div class="pb-price-value">' + escapeHtml(item.lineTotal || '') + '</div></div>';
+        html += '</div></div></div>';
+      }
+    }
+    if (preview.summary) {
+      html += '<div class="pb-checkout-summary">';
+      html += '<div class="pb-summary-row"><span>Total Items</span><span>' + escapeHtml(String(preview.summary.totalItems || 0)) + ' items</span></div>';
+      html += '<div class="pb-summary-row"><span>Shipping</span><span>FREE</span></div>';
+      if (preview.summary.discountPercent != null) html += '<div class="pb-summary-row"><span>Discount</span><span>' + escapeHtml(String(preview.summary.discountPercent)) + '% OFF</span></div>';
+      html += '<div class="pb-summary-row"><span>Subtotal</span><span>' + escapeHtml(preview.summary.subtotal || '') + ' ' + escapeHtml(preview.summary.currency || '') + '</span></div>';
+      if (preview.summary.discountAmount != null) html += '<div class="pb-summary-row"><span>Savings</span><span>-' + escapeHtml(preview.summary.discountAmount) + '</span></div>';
+      html += '<div class="pb-summary-row pb-summary-total"><span>Total</span><span>' + escapeHtml(preview.summary.total || '') + ' ' + escapeHtml(preview.summary.currency || '') + '</span></div>';
+      html += '<div class="pb-summary-footer">GST included</div>';
+      html += '</div>';
+    }
+    if (preview.checkoutUrl) html += '<a href="' + escapeHtml(preview.checkoutUrl) + '" target="_blank" rel="noopener noreferrer" class="pb-checkout-cta">GO TO CHECKOUT</a>';
+    html += '</div>';
+    return html;
+  }
+
+  /* ===== 7. WIDGET CONTROLLER ===== */
+  function initWidget() {
+    if (!document.body) { setTimeout(initWidget, 10); return; }
+
     var container = document.createElement('div');
     container.id = 'profitbot-widget-' + widgetId;
     container.setAttribute('data-profitbot-widget', widgetId);
     document.body.appendChild(container);
 
-    // Fetch widget config
     fetch(base + '/api/widgets/' + encodeURIComponent(widgetId))
       .then(function(res) {
         if (!res.ok) throw new Error('Widget not found');
         return res.json();
       })
-      .then(function(widgetData) {
-        if (!widgetData || !widgetData.config) {
-          throw new Error('Invalid widget config');
-        }
-        renderWidget(container, widgetData);
+      .then(function(data) {
+        if (!data || !data.config) throw new Error('Invalid config');
+        renderWidget(container, data);
       })
       .catch(function(err) {
         console.error('[ProfitBot] Failed to load widget:', err);
@@ -126,28 +798,20 @@ const EMBED_SCRIPT = String.raw`
 
   function renderWidget(container, widgetData) {
     var config = widgetData.config;
-    var widgetId = widgetData.id;
     var sessionId = getSessionId();
-    
-    // Create Shadow DOM for CSS isolation
     var shadow = container.attachShadow({ mode: 'open' });
-    
-    // Create widget wrapper
-    var wrapper = document.createElement('div');
-    wrapper.className = 'profitbot-widget-wrapper';
-    shadow.appendChild(wrapper);
 
-    // Inject CSS (scoped to shadow DOM)
-    var style = document.createElement('style');
-    style.textContent = getWidgetCSS(config);
-    shadow.appendChild(style);
+    /* Inject CSS */
+    shadow.appendChild(el('style', { textContent: getWidgetCSS(config) }));
 
-    // Widget state
+    /* State */
     var state = {
       isOpen: false,
       isMobile: window.innerWidth <= 768,
       messages: [],
+      renderedIds: {},
       loading: false,
+      messagesLoading: false,
       agentTyping: false,
       agentAvatarUrl: null,
       visitorName: null,
@@ -155,346 +819,539 @@ const EMBED_SCRIPT = String.raw`
       sessionId: sessionId,
       pollTimer: null,
       lastMessageCount: 0,
-      shopifyContext: null
+      localIdCounter: 0,
+      isStreaming: false,
+      streamingMsgId: null,
+      scrollFabEl: null
     };
 
-    // Fetch visitor name
+    function nextLocalId() { return ++state.localIdCounter; }
+
+    /* Main wrapper */
+    var wrapper = el('div', { className: 'pb-wrapper' });
+    shadow.appendChild(wrapper);
+
+    /* Backdrop (mobile only) */
+    var backdrop = el('div', { className: 'pb-backdrop' });
+    backdrop.addEventListener('click', function() { closeChat(); });
+
+    /* Chat window */
+    var chatParts = createChatWindow(config, state, {
+      onClose: function() { closeChat(); },
+      onRefresh: function(btn) { handleRefresh(btn); },
+      onScroll: throttle(function(el) { updateScrollFab(el); }, 100),
+      onSend: function(text) { sendMessage(text); }
+    });
+    var chatWin = chatParts.win;
+    var messagesArea = chatParts.messagesArea;
+    var startersArea = chatParts.startersArea;
+    var inputEl = chatParts.input;
+    var sendBtn = chatParts.sendBtn;
+
+    /* Tooltip */
+    var tooltip = createTooltip(config, state, function() { openChat(); });
+
+    /* Bubble */
+    var bubble = createBubble(config, function() {
+      if (state.isOpen) closeChat(); else openChat();
+    });
+
+    /* Bottom row: tooltip + bubble */
+    var bottomRow = el('div', { style: { display: 'flex', flexDirection: 'row', alignItems: 'flex-end', gap: '8px', position: 'relative', zIndex: '10' } });
+    if (tooltip) bottomRow.appendChild(tooltip);
+    bottomRow.appendChild(bubble);
+    wrapper.appendChild(bottomRow);
+
+    /* Fetch visitor name */
     fetch(base + '/api/widgets/' + widgetId + '/visitor?session_id=' + encodeURIComponent(sessionId))
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (data && data.name && typeof data.name === 'string' && data.name.trim()) {
           state.visitorName = data.name.trim();
-          updateWelcomeMessage();
+          if (tooltip) {
+            var msg = (config.tooltip.message || '').replace(/\{first_name\}/gi, state.visitorName.split(/\s+/)[0] || 'there').replace(/\{name\}/gi, state.visitorName || 'there');
+            tooltip.textContent = msg;
+          }
         }
       })
       .catch(function() {});
 
-    // Create bubble button
-    var bubble = createBubble(config, function() {
-      state.isOpen = !state.isOpen;
-      updateWidget();
-      if (state.isOpen) {
-        input.focus();
-        fetchMessages(true);
-      }
-    });
-    wrapper.appendChild(bubble);
-
-    // Create tooltip
-    var tooltip = null;
-    if (config.tooltip && config.tooltip.displayTooltip) {
-      tooltip = createTooltip(config, function() {
-        state.isOpen = true;
-        updateWidget();
-        input.focus();
-        fetchMessages(true);
-      });
-      wrapper.appendChild(tooltip);
+    /* Open/close */
+    function openChat() {
+      state.isOpen = true;
+      bubble.classList.add('pb-open');
+      bubble.setAttribute('aria-label', 'Close chat');
+      bubble.setAttribute('aria-expanded', 'true');
+      if (tooltip) tooltip.style.display = 'none';
+      /* Insert backdrop before window */
+      wrapper.insertBefore(backdrop, bottomRow);
+      wrapper.insertBefore(chatWin, bottomRow);
+      chatWin.classList.remove('pb-closing');
+      inputEl.focus();
+      fetchMessages(true);
+      startPolling();
+      dispatchEvent('profitbot:chat-opened');
     }
 
-    // Create chat window
-    var chatWindow = createChatWindow(config, widgetId, state, function() {
+    function closeChat() {
       state.isOpen = false;
-      updateWidget();
-    });
-    chatWindow.style.display = 'none';
-    wrapper.appendChild(chatWindow);
+      bubble.classList.remove('pb-open');
+      bubble.setAttribute('aria-label', 'Open chat');
+      bubble.setAttribute('aria-expanded', 'false');
+      chatWin.classList.add('pb-closing');
+      setTimeout(function() {
+        if (chatWin.parentNode) chatWin.parentNode.removeChild(chatWin);
+        if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+        chatWin.classList.remove('pb-closing');
+      }, dur(180));
+      if (tooltip && config.tooltip.displayTooltip) tooltip.style.display = '';
+      dispatchEvent('profitbot:chat-closed');
+    }
 
-    var messagesArea = chatWindow.querySelector('.profitbot-messages');
-    var input = chatWindow.querySelector('.profitbot-input');
-    var sendBtn = chatWindow.querySelector('.profitbot-send-btn');
-    var welcomeArea = chatWindow.querySelector('.profitbot-welcome');
-    var starterPromptsArea = chatWindow.querySelector('.profitbot-starter-prompts');
+    /* Auto-open */
+    if (config.bubble && config.bubble.autoOpenBotWindow) {
+      setTimeout(function() { openChat(); }, 500);
+    }
 
-    function updateWidget() {
-      if (state.isOpen) {
-        chatWindow.style.display = 'block';
-        bubble.classList.add('open');
-        if (tooltip) tooltip.style.display = 'none';
+    /* Dispatch custom events */
+    function dispatchEvent(name, detail) {
+      try {
+        document.dispatchEvent(new CustomEvent(name, { detail: Object.assign({ widgetId: widgetId, sessionId: sessionId }, detail || {}) }));
+      } catch (e) {}
+    }
+
+    /* Scroll FAB */
+    var SCROLL_THRESHOLD = 120;
+    function updateScrollFab(el) {
+      if (!el) return;
+      var nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - SCROLL_THRESHOLD;
+      var canScroll = el.scrollHeight > el.clientHeight;
+      if (canScroll && !nearBottom) {
+        if (!state.scrollFabEl || !state.scrollFabEl.parentNode) {
+          state.scrollFabEl = createScrollFab(function() { scrollToBottom(true); });
+          messagesArea.appendChild(state.scrollFabEl);
+        }
       } else {
-        chatWindow.style.display = 'none';
-        bubble.classList.remove('open');
-        if (tooltip && config.tooltip.displayTooltip && !state.isOpen) {
-          tooltip.style.display = 'block';
+        if (state.scrollFabEl && state.scrollFabEl.parentNode) {
+          state.scrollFabEl.parentNode.removeChild(state.scrollFabEl);
+          state.scrollFabEl = null;
         }
       }
     }
 
-    function updateWelcomeMessage() {
-      if (!welcomeArea) return;
-      var winConfig = config.window || {};
-      var welcomeText = winConfig.welcomeMessage || 'Hi! How can I help you today?';
-      var firstName = state.visitorName ? state.visitorName.split(/\s+/)[0] : '';
-      welcomeText = welcomeText.replace(/\{first_name\}/gi, firstName || 'there');
-      welcomeText = welcomeText.replace(/\{name\}/gi, state.visitorName || 'there');
-      welcomeArea.textContent = welcomeText;
+    function createScrollFab(onClick) {
+      var fab = el('button', { type: 'button', className: 'pb-scroll-fab', title: 'Scroll to bottom', 'aria-label': 'Scroll to latest messages' });
+      fab.appendChild(svgEl('0 0 24 24', 'M19 14l-7 7m0 0l-7-7m7 7V3', '20'));
+      fab.addEventListener('click', onClick);
+      return fab;
     }
 
-    function renderMessages() {
+    function scrollToBottom(force) {
       if (!messagesArea) return;
-      messagesArea.innerHTML = '';
-      
-      if (state.messages.length === 0 && !state.loading) {
-        var welcomeMsg = document.createElement('div');
-        welcomeMsg.className = 'profitbot-message profitbot-message-bot';
-        var welcomeText = config.window?.welcomeMessage || 'Hi! How can I help you today?';
-        var firstName = state.visitorName ? state.visitorName.split(/\\s+/)[0] : '';
-        welcomeText = welcomeText.replace(/\\{first_name\\}/gi, firstName || 'there');
-        welcomeText = welcomeText.replace(/\\{name\\}/gi, state.visitorName || 'there');
-        welcomeMsg.innerHTML = formatMessage(welcomeText);
-        welcomeMsg.style.cssText = getBotMessageStyle(config);
-        messagesArea.appendChild(welcomeMsg);
+      var nearBottom = messagesArea.scrollTop + messagesArea.clientHeight >= messagesArea.scrollHeight - SCROLL_THRESHOLD;
+      if (force || nearBottom) {
+        messagesArea.scrollTo({ top: messagesArea.scrollHeight, behavior: state.isStreaming ? 'auto' : 'smooth' });
+      }
+      /* Remove FAB when at bottom */
+      if (state.scrollFabEl && state.scrollFabEl.parentNode) {
+        state.scrollFabEl.parentNode.removeChild(state.scrollFabEl);
+        state.scrollFabEl = null;
+      }
+    }
+
+    /* ===== DIFFERENTIAL MESSAGE RENDERING ===== */
+    var typingIndicatorEl = null;
+
+    function renderMessages(forceAll) {
+      if (!messagesArea) return;
+
+      /* Remove typing indicator while updating */
+      if (typingIndicatorEl && typingIndicatorEl.parentNode) {
+        typingIndicatorEl.parentNode.removeChild(typingIndicatorEl);
       }
 
-      state.messages.forEach(function(msg) {
-        var msgEl = document.createElement('div');
-        msgEl.className = 'profitbot-message profitbot-message-' + msg.role;
-        
-        if (msg.role === 'user') {
-          msgEl.style.cssText = getUserMessageStyle(config);
-          msgEl.textContent = msg.content;
-        } else {
-          msgEl.style.cssText = getBotMessageStyle(config);
-          if (msg.checkoutPreview) {
-            msgEl.innerHTML = renderCheckoutPreview(msg.checkoutPreview, msg.content);
-          } else {
-            msgEl.innerHTML = formatMessage(msg.content);
+      /* Remove scroll FAB temporarily */
+      if (state.scrollFabEl && state.scrollFabEl.parentNode) {
+        state.scrollFabEl.parentNode.removeChild(state.scrollFabEl);
+      }
+
+      if (forceAll) {
+        /* Full rebuild */
+        messagesArea.innerHTML = '';
+        state.renderedIds = {};
+      }
+
+      /* Welcome message when empty */
+      var welcomeId = '__welcome__';
+      if (state.messages.length === 0 && !state.messagesLoading) {
+        if (!state.renderedIds[welcomeId]) {
+          var w = config.window || {};
+          var bot = w.botMessageSettings || {};
+          var welcomeText = w.welcomeMessage || 'Hi! How can I help you today?';
+          var firstName = state.visitorName ? state.visitorName.split(/\s+/)[0] : '';
+          welcomeText = welcomeText.replace(/\{first_name\}/gi, firstName || 'there').replace(/\{name\}/gi, state.visitorName || 'there');
+          var wRow = el('div', { className: 'pb-msg-row' });
+          if (bot.showAvatar && bot.avatarUrl) {
+            wRow.appendChild(el('img', { src: bot.avatarUrl, alt: '', className: 'pb-avatar' }));
           }
+          var wBubble = el('div', { className: 'pb-msg pb-msg-bot' });
+          wBubble.innerHTML = formatMessage(welcomeText);
+          var wCol = el('div', { style: { display: 'flex', flexDirection: 'column', maxWidth: '85%', minWidth: '0' } });
+          wCol.appendChild(wBubble);
+          wRow.appendChild(wCol);
+          messagesArea.appendChild(wRow);
+          state.renderedIds[welcomeId] = true;
         }
-        
+      } else {
+        /* Remove welcome if messages exist */
+        if (state.renderedIds[welcomeId]) {
+          var firstChild = messagesArea.firstChild;
+          if (firstChild) messagesArea.removeChild(firstChild);
+          delete state.renderedIds[welcomeId];
+        }
+      }
+
+      /* Loading state */
+      if (state.messagesLoading && state.messages.length === 0) {
+        if (!state.renderedIds['__loader__']) {
+          var loader = el('div', { className: 'pb-loader' });
+          var spinSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          spinSvg.setAttribute('viewBox', '0 0 24 24');
+          spinSvg.setAttribute('width', '32');
+          spinSvg.setAttribute('height', '32');
+          spinSvg.style.fill = 'none';
+          var circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          circle.setAttribute('cx', '12'); circle.setAttribute('cy', '12'); circle.setAttribute('r', '10');
+          circle.setAttribute('stroke', 'currentColor'); circle.setAttribute('stroke-width', '4');
+          circle.style.opacity = '0.25';
+          var pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          pathEl.setAttribute('fill', 'currentColor'); pathEl.setAttribute('d', 'M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z');
+          pathEl.style.opacity = '0.75';
+          spinSvg.appendChild(circle); spinSvg.appendChild(pathEl);
+          loader.appendChild(spinSvg);
+          messagesArea.appendChild(loader);
+          state.renderedIds['__loader__'] = true;
+        }
+        return;
+      } else if (state.renderedIds['__loader__']) {
+        var loaderEl = messagesArea.querySelector('.pb-loader');
+        if (loaderEl) loaderEl.remove();
+        delete state.renderedIds['__loader__'];
+      }
+
+      /* Render new messages only */
+      for (var i = 0; i < state.messages.length; i++) {
+        var msg = state.messages[i];
+        var msgKey = msg.id || ('local_' + msg._localId);
+        if (state.renderedIds[msgKey]) continue;
+        var isNew = !forceAll;
+        var msgEl = createMessageEl(msg, config, state, isNew);
         messagesArea.appendChild(msgEl);
-        
-        if (msg.createdAt) {
-          var timestamp = document.createElement('div');
-          timestamp.className = 'profitbot-timestamp';
-          timestamp.textContent = formatTimestamp(msg.createdAt);
-          timestamp.style.cssText = 'font-size: 11px; opacity: 0.6; margin-top: 4px; padding: 0 4px;';
-          msgEl.appendChild(timestamp);
-        }
-      });
-
-      if (state.agentTyping) {
-        var typingEl = document.createElement('div');
-        typingEl.className = 'profitbot-message profitbot-message-bot profitbot-typing';
-        typingEl.style.cssText = getBotMessageStyle(config);
-        typingEl.innerHTML = '<div class="profitbot-typing-dots"><span></span><span></span><span></span></div>';
-        messagesArea.appendChild(typingEl);
+        state.renderedIds[msgKey] = true;
       }
 
-      scrollToBottom();
+      /* Typing indicator */
+      if ((state.loading && !state.isStreaming) || state.agentTyping) {
+        typingIndicatorEl = createTypingIndicator(config);
+        messagesArea.appendChild(typingIndicatorEl);
+      }
+
+      requestAnimationFrame(function() { scrollToBottom(); });
     }
 
-    function renderCheckoutPreview(preview, introText) {
-      var html = '';
-      if (introText && introText.trim()) {
-        html += '<div class="profitbot-checkout-intro">' + formatMessage(introText) + '</div>';
-      }
-      html += '<div class="profitbot-checkout-preview">';
-      html += '<div class="profitbot-checkout-header"><h3>Your checkout preview</h3><span>Product</span></div>';
-      
-      if (preview.lineItemsUI && Array.isArray(preview.lineItemsUI)) {
-        preview.lineItemsUI.forEach(function(item) {
-          html += '<div class="profitbot-line-item">';
-          html += '<div class="profitbot-image-wrap">';
-          if (item.imageUrl) {
-            html += '<img src="' + escapeHtml(item.imageUrl) + '" alt="' + escapeHtml(item.title || '') + '" />';
-          }
-          html += '<span class="profitbot-qty-badge">' + escapeHtml(String(item.quantity || 1)) + '</span>';
-          html += '</div>';
-          html += '<div class="profitbot-details">';
-          html += '<div class="profitbot-product-name">' + escapeHtml(item.title || '') + '</div>';
-          if (item.variant) {
-            html += '<div class="profitbot-product-variant">' + escapeHtml(item.variant) + '</div>';
-          }
-          html += '<div class="profitbot-price-row">';
-          html += '<div class="profitbot-price-col"><div class="profitbot-price-label">Unit Price</div><div class="profitbot-price-value">' + escapeHtml(item.unitPrice || '') + '</div></div>';
-          html += '<div class="profitbot-price-col"><div class="profitbot-price-label">Total</div><div class="profitbot-price-value">' + escapeHtml(item.lineTotal || '') + '</div></div>';
-          html += '</div></div></div>';
-        });
-      }
-      
-      if (preview.summary) {
-        html += '<div class="profitbot-checkout-summary">';
-        html += '<div class="profitbot-summary-row"><span>Total Items</span><span>' + escapeHtml(String(preview.summary.totalItems || 0)) + ' items</span></div>';
-        html += '<div class="profitbot-summary-row"><span>Shipping</span><span>FREE</span></div>';
-        if (preview.summary.discountPercent != null) {
-          html += '<div class="profitbot-summary-row"><span>Discount</span><span>' + escapeHtml(String(preview.summary.discountPercent)) + '% OFF</span></div>';
+    function updateStarterPrompts() {
+      if (!startersArea) return;
+      var prompts = (config.window && config.window.starterPrompts) || [];
+      var filtered = prompts.filter(function(p) { return p && p.trim(); });
+      if (state.showStarterPrompts && filtered.length > 0 && state.messages.length === 0) {
+        startersArea.innerHTML = '';
+        for (var i = 0; i < filtered.length; i++) {
+          (function(prompt, idx) {
+            var btn = el('button', { type: 'button', className: 'pb-starter-btn', textContent: prompt });
+            btn.style.animationDelay = dur(idx * 60) + 'ms';
+            btn.addEventListener('click', function() { sendMessage(prompt); });
+            startersArea.appendChild(btn);
+          })(filtered[i], i);
         }
-        html += '<div class="profitbot-summary-row"><span>Subtotal</span><span>' + escapeHtml(preview.summary.subtotal || '') + ' ' + escapeHtml(preview.summary.currency || '') + '</span></div>';
-        if (preview.summary.discountAmount != null) {
-          html += '<div class="profitbot-summary-row"><span>Savings</span><span>-' + escapeHtml(preview.summary.discountAmount) + '</span></div>';
-        }
-        html += '<div class="profitbot-summary-row profitbot-summary-total"><span>Total</span><span>' + escapeHtml(preview.summary.total || '') + ' ' + escapeHtml(preview.summary.currency || '') + '</span></div>';
-        html += '<div class="profitbot-summary-footer">GST included</div>';
-        html += '</div>';
-      }
-      
-      if (preview.checkoutUrl) {
-        html += '<a href="' + escapeHtml(preview.checkoutUrl) + '" target="_blank" rel="noopener noreferrer" class="profitbot-cta-button">GO TO CHECKOUT</a>';
-      }
-      html += '</div>';
-      return html;
-    }
-
-    function scrollToBottom() {
-      if (messagesArea) {
-        messagesArea.scrollTop = messagesArea.scrollHeight;
+        startersArea.style.display = 'flex';
+      } else {
+        startersArea.style.display = 'none';
       }
     }
 
+    /* ===== 8. NETWORK ===== */
     function fetchMessages(forceRefresh) {
       if (!widgetId || !sessionId || sessionId === 'preview') return;
-      
+      if (forceRefresh) state.messagesLoading = true;
+
       fetch(base + '/api/widgets/' + widgetId + '/messages?session_id=' + encodeURIComponent(sessionId))
         .then(function(res) { return res.json(); })
         .then(function(data) {
           var list = Array.isArray(data.messages) ? data.messages : [];
-          
+
           if (forceRefresh || state.messages.length === 0) {
-            state.messages = list;
+            state.messages = list.map(function(m) {
+              return { id: m.id, _localId: nextLocalId(), role: m.role === 'user' ? 'user' : 'bot', content: m.content, avatarUrl: m.avatarUrl, checkoutPreview: m.checkoutPreview, createdAt: m.createdAt };
+            });
             state.showStarterPrompts = list.length === 0;
+            if (forceRefresh) {
+              state.renderedIds = {};
+              renderMessages(true);
+            } else {
+              renderMessages();
+            }
           } else if (list.length > state.messages.length) {
-            var existingIds = new Set(state.messages.filter(function(m) { return m.id; }).map(function(m) { return m.id; }));
-            var newMessages = list.filter(function(m) { return m.id && !existingIds.has(m.id); });
-            state.messages = state.messages.concat(newMessages);
+            var existingIds = {};
+            for (var j = 0; j < state.messages.length; j++) {
+              if (state.messages[j].id) existingIds[state.messages[j].id] = true;
+            }
+            var newMsgs = list.filter(function(m) { return m.id && !existingIds[m.id]; }).map(function(m) {
+              return { id: m.id, _localId: nextLocalId(), role: m.role === 'user' ? 'user' : 'bot', content: m.content, avatarUrl: m.avatarUrl, checkoutPreview: m.checkoutPreview, createdAt: m.createdAt };
+            });
+            if (newMsgs.length > 0) {
+              state.messages = state.messages.concat(newMsgs);
+              renderMessages();
+            }
           } else if (list.length === state.messages.length && list.length > 0) {
-            state.messages = list;
+            /* Content may have changed (e.g. checkout preview added) */
+            var changed = false;
+            for (var k = 0; k < list.length; k++) {
+              if (list[k].checkoutPreview && !state.messages[k].checkoutPreview) { changed = true; break; }
+            }
+            if (changed) {
+              state.messages = list.map(function(m) {
+                return { id: m.id, _localId: nextLocalId(), role: m.role === 'user' ? 'user' : 'bot', content: m.content, avatarUrl: m.avatarUrl, checkoutPreview: m.checkoutPreview, createdAt: m.createdAt };
+              });
+              state.renderedIds = {};
+              renderMessages(true);
+            }
           }
-          
+
           state.agentTyping = !!data.agentTyping;
           state.agentAvatarUrl = data.agentAvatarUrl || null;
           state.lastMessageCount = list.length;
-          
-          renderMessages();
+          state.messagesLoading = false;
           updateStarterPrompts();
         })
         .catch(function(err) {
           console.error('[ProfitBot] Error fetching messages:', err);
+          state.messagesLoading = false;
         });
     }
 
     function startPolling() {
       stopPolling();
       if (!widgetId || !sessionId || sessionId === 'preview') return;
-      state.pollTimer = setInterval(function() {
-        fetchMessages();
-      }, 3000);
+      state.pollTimer = setInterval(function() { fetchMessages(); }, 3000);
     }
 
     function stopPolling() {
-      if (state.pollTimer) {
-        clearInterval(state.pollTimer);
-        state.pollTimer = null;
-      }
+      if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
     }
 
-    function updateStarterPrompts() {
-      if (!starterPromptsArea) return;
-      var prompts = config.window?.starterPrompts || [];
-      var filtered = prompts.filter(function(p) { return p && p.trim(); });
-      
-      if (state.showStarterPrompts && filtered.length > 0 && state.messages.length === 0) {
-        starterPromptsArea.innerHTML = '';
-        filtered.forEach(function(prompt) {
-          var btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'profitbot-starter-prompt';
-          btn.textContent = prompt;
-          btn.onclick = function() {
-            sendMessage(prompt);
-          };
-          starterPromptsArea.appendChild(btn);
-        });
-        starterPromptsArea.style.display = 'flex';
-      } else {
-        starterPromptsArea.style.display = 'none';
+    function handleRefresh(btn) {
+      if (state.messagesLoading) return;
+      state.messagesLoading = true;
+      state.messages = [];
+      state.renderedIds = {};
+      renderMessages(true);
+      /* Spin icon */
+      var svgIcon = btn.querySelector('svg');
+      if (svgIcon) svgIcon.classList.add('pb-spin');
+      btn.disabled = true;
+      fetchMessages(true);
+      setTimeout(function() {
+        if (svgIcon) svgIcon.classList.remove('pb-spin');
+        btn.disabled = false;
+        startPolling();
+      }, 2000);
+    }
+
+    /* ===== STREAMING ENGINE ===== */
+    function handleStreamingResponse(res, onDone) {
+      var reader = res.body.getReader();
+      var decoder = new TextDecoder();
+      var netBuffer = '';
+      var charQueue = [];
+      var streamDone = false;
+      var drainRafId = null;
+      var lastScrollTime = 0;
+      var fullContent = '';
+
+      /* Add placeholder bot message */
+      var msgId = nextLocalId();
+      var streamMsg = { id: null, _localId: msgId, role: 'bot', content: '', createdAt: new Date().toISOString() };
+      state.messages.push(streamMsg);
+      state.isStreaming = true;
+      state.streamingMsgId = msgId;
+      renderMessages();
+
+      /* Find the DOM element for the streaming message */
+      var streamMsgEl = null;
+      var allRows = messagesArea.querySelectorAll('.pb-msg-row');
+      if (allRows.length > 0) {
+        var lastRow = allRows[allRows.length - 1];
+        var contentDiv = lastRow.querySelector('.pb-msg-content');
+        if (!contentDiv) {
+          contentDiv = lastRow.querySelector('.pb-msg-bot');
+        }
+        streamMsgEl = contentDiv;
       }
+
+      /* Add streaming cursor */
+      function updateStreamContent() {
+        if (streamMsgEl) {
+          streamMsgEl.innerHTML = formatMessage(fullContent) + '<span class="pb-streaming-cursor">&#9612;</span>';
+        }
+      }
+
+      function drainQueue() {
+        if (charQueue.length === 0) {
+          if (streamDone) {
+            drainRafId = null;
+            finishStream();
+            return;
+          }
+          drainRafId = requestAnimationFrame(drainQueue);
+          return;
+        }
+        var charsPerFrame = charQueue.length > 30 ? 4 : charQueue.length > 10 ? 3 : 2;
+        var batch = charQueue.splice(0, charsPerFrame).join('');
+        fullContent += batch;
+        streamMsg.content = fullContent;
+        updateStreamContent();
+        var now = Date.now();
+        if (now - lastScrollTime > 50) {
+          lastScrollTime = now;
+          scrollToBottom();
+        }
+        drainRafId = requestAnimationFrame(drainQueue);
+      }
+
+      function finishStream() {
+        state.isStreaming = false;
+        state.streamingMsgId = null;
+        /* Remove cursor and finalize */
+        if (streamMsgEl) {
+          streamMsgEl.innerHTML = formatMessage(fullContent);
+        }
+        scrollToBottom();
+        onDone(fullContent.trim(), null);
+      }
+
+      drainRafId = requestAnimationFrame(drainQueue);
+
+      function processStream() {
+        reader.read().then(function(result) {
+          if (result.done) {
+            if (netBuffer.trim()) {
+              for (var ci = 0; ci < netBuffer.length; ci++) charQueue.push(netBuffer[ci]);
+            }
+            streamDone = true;
+            return;
+          }
+          netBuffer += decoder.decode(result.value, { stream: true });
+          var lines = netBuffer.split('\n');
+          netBuffer = lines.pop() || '';
+          for (var li = 0; li < lines.length; li++) {
+            var line = lines[li];
+            if (line.indexOf('data: ') === 0) {
+              var payload = line.slice(6).trim();
+              if (payload === '[DONE]' || payload === '') continue;
+              try {
+                var parsed = JSON.parse(payload);
+                var chunk = parsed.text || parsed.content || parsed.delta || '';
+                if (chunk && typeof chunk === 'string') {
+                  for (var ci = 0; ci < chunk.length; ci++) charQueue.push(chunk[ci]);
+                }
+              } catch (e) {
+                if (payload) {
+                  for (var ci = 0; ci < payload.length; ci++) charQueue.push(payload[ci]);
+                }
+              }
+            }
+          }
+          processStream();
+        }).catch(function(err) {
+          console.error('[ProfitBot] Stream error:', err);
+          streamDone = true;
+        });
+      }
+
+      processStream();
     }
 
     function sendMessage(text) {
       var trimmed = text.trim();
       if (!trimmed || state.loading) return;
-      
-      state.messages.push({
-        role: 'user',
-        content: trimmed,
-        createdAt: new Date().toISOString()
-      });
+
+      state.messages.push({ id: null, _localId: nextLocalId(), role: 'user', content: trimmed, createdAt: new Date().toISOString() });
       state.showStarterPrompts = false;
       state.loading = true;
       renderMessages();
-      
-      if (input) input.value = '';
       updateStarterPrompts();
-      scrollToBottom();
+      inputEl.disabled = true;
+      sendBtn.disabled = true;
+      requestAnimationFrame(function() { scrollToBottom(true); });
 
-      // Get conversation ID
+      dispatchEvent('profitbot:message-sent', { message: trimmed });
+
+      /* Restart polling */
+      startPolling();
+
+      /* Get conversation ID and send */
       var conversationId = null;
       fetch(base + '/api/widgets/' + widgetId + '/conversation?session_id=' + encodeURIComponent(sessionId))
         .then(function(r) { return r.json(); })
         .then(function(data) {
           if (data.conversationId) conversationId = data.conversationId;
-          
-          // Save user message
+          /* Save user message */
           if (conversationId) {
             fetch(base + '/api/widgets/' + widgetId + '/messages/save', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                conversationId: conversationId,
-                role: 'user',
-                content: trimmed
-              })
+              body: JSON.stringify({ conversationId: conversationId, role: 'user', content: trimmed })
             }).catch(function() {});
           }
-          
-          // Send to n8n or direct chat
-          var useN8n = !!(config.n8nWebhookUrl && config.n8nWebhookUrl.trim());
-          if (useN8n) {
-            sendToN8n(trimmed, conversationId);
-          } else {
-            sendToDirectChat(trimmed);
-          }
+          doSend(trimmed, conversationId);
         })
         .catch(function() {
-          // Continue without conversation ID
-          var useN8n = !!(config.n8nWebhookUrl && config.n8nWebhookUrl.trim());
-          if (useN8n) {
-            sendToN8n(trimmed, null);
-          } else {
-            sendToDirectChat(trimmed);
-          }
+          doSend(trimmed, null);
         });
+    }
+
+    function doSend(message, conversationId) {
+      var useN8n = !!(config.n8nWebhookUrl && config.n8nWebhookUrl.trim());
+
+      if (useN8n) {
+        sendToN8n(message, conversationId);
+      } else {
+        sendToDirectChat(message);
+      }
+    }
+
+    function buildSystemPrompt() {
+      if (config.agentSystemPrompt && config.agentSystemPrompt.trim()) {
+        return config.agentSystemPrompt.trim();
+      }
+      var bot = config.bot || {};
+      var parts = [];
+      if (bot.role && bot.role.trim()) parts.push(bot.role.trim());
+      if (bot.tone && bot.tone.trim()) parts.push('Tone: ' + bot.tone.trim());
+      if (bot.instructions && bot.instructions.trim()) parts.push(bot.instructions.trim());
+      return parts.length > 0 ? parts.join('\n\n') : null;
     }
 
     function sendToN8n(message, conversationId) {
       var n8nUrl = config.n8nWebhookUrl;
       if (!n8nUrl) {
-        state.loading = false;
-        addBotMessage(config.window?.customErrorMessage || 'Error: n8n webhook not configured');
+        finishSend(config.window.customErrorMessage || 'Error: n8n webhook not configured');
         return;
       }
-
-      var body = {
-        message: message,
-        sessionId: sessionId,
-        widgetId: widgetId
-      };
+      var body = { message: message, sessionId: sessionId, widgetId: widgetId };
       if (conversationId) body.conversationId = conversationId;
       if (config.agentId) body.agentId = config.agentId;
-
-      // Build system prompt
-      var systemPrompt = null;
-      if (config.agentSystemPrompt && config.agentSystemPrompt.trim()) {
-        systemPrompt = config.agentSystemPrompt.trim();
-      } else {
-        var bot = config.bot || {};
-        var parts = [];
-        if (bot.role && bot.role.trim()) parts.push(bot.role.trim());
-        if (bot.tone && bot.tone.trim()) parts.push('Tone: ' + bot.tone.trim());
-        if (bot.instructions && bot.instructions.trim()) parts.push(bot.instructions.trim());
-        if (parts.length > 0) systemPrompt = parts.join('\n\n');
-      }
+      var systemPrompt = buildSystemPrompt();
       if (systemPrompt) body.systemPrompt = systemPrompt;
 
       fetch(n8nUrl, {
@@ -505,39 +1362,36 @@ const EMBED_SCRIPT = String.raw`
         .then(function(res) {
           var contentType = res.headers.get('content-type') || '';
           if (res.ok && res.body && !contentType.includes('application/json')) {
-            // Streaming response
-            handleStreamingResponse(res, function(content, checkoutPreview) {
+            /* Streaming response */
+            handleStreamingResponse(res, function(content) {
               state.loading = false;
-              if (content) {
-                addBotMessage(content, checkoutPreview);
-              } else {
-                addBotMessage(config.window?.customErrorMessage || 'Error: No response received');
+              inputEl.disabled = false;
+              sendBtn.disabled = false;
+              inputEl.focus();
+              if (!content) {
+                /* Replace empty streaming message with error */
+                var lastMsg = state.messages[state.messages.length - 1];
+                if (lastMsg && lastMsg.role === 'bot' && !lastMsg.content) {
+                  lastMsg.content = config.window.customErrorMessage || 'Error: No response';
+                  state.renderedIds = {};
+                  renderMessages(true);
+                }
               }
               startPolling();
+              /* Sync with database after delay */
+              setTimeout(function() { fetchMessages(); }, 2000);
             });
           } else {
-            // JSON response
-            return res.json();
+            return res.json().then(function(data) {
+              var reply = extractReply(data);
+              var checkoutPreview = extractCheckoutPreview(data);
+              finishSend(reply || config.window.customErrorMessage, checkoutPreview);
+            });
           }
-        })
-        .then(function(data) {
-          if (!data) return;
-          state.loading = false;
-          var reply = data.output || data.message || data.reply || data.text || data.content || '';
-          var checkoutPreview = data.checkoutPreview;
-          if (typeof reply === 'object' && reply.content) reply = reply.content;
-          if (reply && typeof reply === 'string' && reply.trim()) {
-            addBotMessage(reply.trim(), checkoutPreview);
-          } else {
-            addBotMessage(config.window?.customErrorMessage || 'Error: Invalid response');
-          }
-          startPolling();
         })
         .catch(function(err) {
           console.error('[ProfitBot] n8n error:', err);
-          state.loading = false;
-          addBotMessage(config.window?.customErrorMessage || 'Error: Failed to send message');
-          startPolling();
+          finishSend(config.window.customErrorMessage || 'Error: Failed to send message');
         });
     }
 
@@ -545,537 +1399,83 @@ const EMBED_SCRIPT = String.raw`
       fetch(base + '/api/widgets/' + widgetId + '/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: message,
-          sessionId: sessionId
-        })
+        body: JSON.stringify({ message: message, sessionId: sessionId })
       })
         .then(function(res) { return res.json(); })
         .then(function(data) {
-          state.loading = false;
           if (data.error) {
-            addBotMessage(config.window?.customErrorMessage || 'Error: ' + (data.error || 'Failed to send message'));
+            finishSend(config.window.customErrorMessage || 'Error: ' + data.error);
           } else {
-            // Direct chat returns message directly or in response
             var reply = data.message || data.content || data.reply || '';
-            if (reply) {
-              addBotMessage(reply);
-            }
+            finishSend(reply || config.window.customErrorMessage);
           }
-          startPolling();
         })
         .catch(function(err) {
           console.error('[ProfitBot] Chat error:', err);
-          state.loading = false;
-          addBotMessage(config.window?.customErrorMessage || 'Error: Failed to send message');
-          startPolling();
+          finishSend(config.window.customErrorMessage || 'Error: Failed to send message');
         });
     }
 
-    function handleStreamingResponse(res, callback) {
-      var reader = res.body.getReader();
-      var decoder = new TextDecoder();
-      var buffer = '';
-      var content = '';
-      var checkoutPreview = null;
-
-      function processChunk() {
-        reader.read().then(function(result) {
-          if (result.done) {
-            if (content.trim()) {
-              callback(content.trim(), checkoutPreview);
-            } else {
-              callback(config.window?.customErrorMessage || 'Error: No response received', null);
-            }
-            return;
-          }
-          buffer += decoder.decode(result.value, { stream: true });
-          var lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-          
-          lines.forEach(function(line) {
-            if (line.startsWith('data: ')) {
-              var payload = line.slice(6).trim();
-              if (payload === '[DONE]' || payload === '') return;
-              try {
-                var parsed = JSON.parse(payload);
-                var chunk = parsed.text || parsed.content || parsed.delta || '';
-                if (chunk && typeof chunk === 'string') {
-                  content += chunk;
-                  // Update streaming message
-                  var lastMsg = state.messages[state.messages.length - 1];
-                  if (lastMsg && lastMsg.role === 'bot' && !lastMsg.id) {
-                    lastMsg.content = content;
-                    renderMessages();
-                  }
-                }
-                if (parsed.checkoutPreview) {
-                  checkoutPreview = parsed.checkoutPreview;
-                }
-              } catch (e) {
-                if (payload) {
-                  content += payload;
-                  var lastMsg = state.messages[state.messages.length - 1];
-                  if (lastMsg && lastMsg.role === 'bot' && !lastMsg.id) {
-                    lastMsg.content = content;
-                    renderMessages();
-                  }
-                }
-              }
-            }
-          });
-          
-          processChunk();
-        }).catch(function(err) {
-          console.error('[ProfitBot] Stream error:', err);
-          callback(content.trim() || config.window?.customErrorMessage || 'Error: Stream failed', checkoutPreview);
-        });
+    function extractReply(data) {
+      var raw = data.output || data.message || data.reply || data.text || data.content || '';
+      /* Handle nested message objects */
+      if (data && typeof data === 'object' && 'success' in data && 'message' in data && typeof data.message === 'object') {
+        if (data.message && data.message.content) return data.message.content;
       }
-      
-      processChunk();
+      if (typeof raw === 'string' && raw.trim().indexOf('{') === 0) {
+        try {
+          var parsed = JSON.parse(raw);
+          if (parsed && parsed.content) return parsed.content;
+          if (parsed && parsed.message && parsed.message.content) return parsed.message.content;
+        } catch (e) {}
+      }
+      if (raw && typeof raw === 'object') {
+        if (raw.content) return raw.content;
+        if (raw.message && raw.message.content) return raw.message.content;
+      }
+      return typeof raw === 'string' ? raw : (raw ? JSON.stringify(raw) : '');
     }
 
-    function addBotMessage(content, checkoutPreview) {
-      if (!content && !checkoutPreview) return;
-      var lastMsg = state.messages[state.messages.length - 1];
-      if (lastMsg && lastMsg.role === 'bot' && !lastMsg.id) {
-        // Update existing streaming message
-        lastMsg.content = content || '';
-        lastMsg.checkoutPreview = checkoutPreview;
-        lastMsg.createdAt = new Date().toISOString();
-      } else {
-        // Add new message
-        state.messages.push({
-          role: 'bot',
-          content: content || '',
-          checkoutPreview: checkoutPreview,
-          createdAt: new Date().toISOString()
-        });
+    function extractCheckoutPreview(data) {
+      var preview = data.checkoutPreview;
+      if (preview && typeof preview === 'object' && Array.isArray(preview.lineItemsUI) && preview.summary && typeof preview.checkoutUrl === 'string') {
+        return preview;
+      }
+      return null;
+    }
+
+    function finishSend(reply, checkoutPreview) {
+      state.loading = false;
+      inputEl.disabled = false;
+      sendBtn.disabled = false;
+      inputEl.focus();
+      if (reply) {
+        state.messages.push({ id: null, _localId: nextLocalId(), role: 'bot', content: reply, checkoutPreview: checkoutPreview || undefined, createdAt: new Date().toISOString() });
       }
       renderMessages();
       startPolling();
+      /* Sync after delay */
+      setTimeout(function() { fetchMessages(); }, 2000);
     }
 
-    // Initial load
+    /* ===== INIT ===== */
     fetchMessages(true);
     startPolling();
-    updateWelcomeMessage();
     updateStarterPrompts();
+    dispatchEvent('profitbot:ready');
 
-    // Handle form submit
-    var form = chatWindow.querySelector('.profitbot-input-area');
-    if (form) {
-      form.addEventListener('submit', function(e) {
-        e.preventDefault();
-        if (input && input.value) {
-          sendMessage(input.value);
-        }
-      });
-    }
-
-    // Handle mobile resize
-    window.addEventListener('resize', function() {
-      var wasMobile = state.isMobile;
-      state.isMobile = window.innerWidth <= 768;
-      if (state.isMobile !== wasMobile) {
-        updateWidget();
-      }
-    });
-
-    // Handle Escape key
+    /* Keyboard */
     document.addEventListener('keydown', function(e) {
-      if (e.key === 'Escape' && state.isOpen) {
-        state.isOpen = false;
-        updateWidget();
-      }
+      if (e.key === 'Escape' && state.isOpen) closeChat();
     });
 
-    // Listen for Shopify context (if available)
-    window.addEventListener('message', function(e) {
-      if (e.data && typeof e.data === 'object' && e.data.type && e.data.type.startsWith('shopify-')) {
-        state.shopifyContext = e.data.data || null;
-      }
+    /* Resize */
+    window.addEventListener('resize', function() {
+      state.isMobile = window.innerWidth <= 768;
     });
-
-    // Request Shopify context
-    if (window.parent && window.parent !== window) {
-      window.parent.postMessage({
-        type: 'profitbot-context-request',
-        widgetId: widgetId,
-        sessionId: sessionId
-      }, '*');
-    }
   }
 
-  function createBubble(config, onClick) {
-    var bubble = document.createElement('button');
-    bubble.className = 'profitbot-bubble';
-    bubble.type = 'button';
-    bubble.setAttribute('aria-label', 'Open chat');
-    
-    var bubbleConfig = config.bubble || {};
-    var size = bubbleConfig.bubbleSizePx || 60;
-    var bgColor = bubbleConfig.backgroundColor || '#3b82f6';
-    var borderRadius = bubbleConfig.borderRadiusStyle === 'circle' ? '50%' : 
-                      bubbleConfig.borderRadiusStyle === 'rounded' ? '16px' : '0';
-    var rightPos = bubbleConfig.rightPositionPx || 20;
-    var bottomPos = bubbleConfig.bottomPositionPx || 20;
-    
-    bubble.style.cssText = [
-      'position: fixed',
-      'bottom: ' + bottomPos + 'px',
-      'right: ' + rightPos + 'px',
-      'width: ' + size + 'px',
-      'height: ' + size + 'px',
-      'background-color: ' + bgColor,
-      'border-radius: ' + borderRadius,
-      'border: none',
-      'cursor: pointer',
-      'z-index: 2147483647',
-      'box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25), 0 4px 8px rgba(0, 0, 0, 0.15)',
-      'display: flex',
-      'align-items: center',
-      'justify-content: center',
-      'transition: transform 0.2s',
-      'pointer-events: auto'
-    ].join('; ');
-
-    // Add icon
-    if (bubbleConfig.customIconUrl) {
-      var img = document.createElement('img');
-      img.src = bubbleConfig.customIconUrl;
-      img.style.cssText = 'width: ' + (bubbleConfig.customIconSize || 50) + '%; height: ' + (bubbleConfig.customIconSize || 50) + '%; object-fit: contain; pointer-events: none;';
-      img.onerror = function() {
-        // Fallback to default icon
-        bubble.innerHTML = '';
-        addDefaultIcon(bubble, bubbleConfig.colorOfInternalIcons || '#ffffff');
-      };
-      bubble.appendChild(img);
-    } else {
-      addDefaultIcon(bubble, bubbleConfig.colorOfInternalIcons || '#ffffff');
-    }
-
-    bubble.addEventListener('click', onClick);
-    return bubble;
-  }
-
-  function addDefaultIcon(container, color) {
-    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', '0 0 24 24');
-    svg.setAttribute('width', '50%');
-    svg.setAttribute('height', '50%');
-    svg.style.fill = color;
-    svg.style.pointerEvents = 'none';
-    var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', 'M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z');
-    svg.appendChild(path);
-    container.appendChild(svg);
-  }
-
-  function createTooltip(config, onClick) {
-    var tooltipConfig = config.tooltip || {};
-    if (!tooltipConfig.displayTooltip) return null;
-
-    var tooltip = document.createElement('div');
-    tooltip.className = 'profitbot-tooltip';
-    tooltip.setAttribute('role', 'button');
-    tooltip.setAttribute('tabindex', '0');
-    
-    var message = tooltipConfig.message || 'Hi! How can I help?';
-    tooltip.textContent = message;
-    
-    tooltip.style.cssText = [
-      'position: fixed',
-      'bottom: ' + ((config.bubble?.bottomPositionPx || 20) + (config.bubble?.bubbleSizePx || 60) + 12) + 'px',
-      'right: ' + ((config.bubble?.rightPositionPx || 20) + (config.bubble?.bubbleSizePx || 60) + 12) + 'px',
-      'background-color: ' + (tooltipConfig.backgroundColor || '#ffffff'),
-      'color: ' + (tooltipConfig.textColor || '#111827'),
-      'font-size: ' + (tooltipConfig.fontSizePx || 14) + 'px',
-      'padding: 12px 16px',
-      'border-radius: 10px',
-      'box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15)',
-      'max-width: 220px',
-      'cursor: pointer',
-      'z-index: 2147483646',
-      'pointer-events: auto'
-    ].join('; ');
-
-    tooltip.addEventListener('click', onClick);
-    tooltip.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') onClick();
-    });
-
-    // Auto-hide after delay
-    if (tooltipConfig.autoHideTooltip && tooltipConfig.autoHideDelaySeconds > 0) {
-      setTimeout(function() {
-        if (tooltip && tooltip.parentNode) {
-          tooltip.style.display = 'none';
-        }
-      }, tooltipConfig.autoHideDelaySeconds * 1000);
-    }
-
-    return tooltip;
-  }
-
-  function createChatWindow(config, widgetId, state, onClose) {
-    var win = document.createElement('div');
-    win.className = 'profitbot-chat-window';
-    
-    var winConfig = config.window || {};
-    var width = winConfig.widthPx || 400;
-    var height = winConfig.heightPx || 600;
-    var bgColor = winConfig.backgroundColor || '#ffffff';
-    var borderRadius = winConfig.borderRadiusStyle === 'rounded' ? '12px' : '0';
-    var bubbleSize = config.bubble?.bubbleSizePx || 60;
-    var bottomPos = config.bubble?.bottomPositionPx || 20;
-    
-    win.style.cssText = [
-      'position: fixed',
-      'bottom: ' + (bubbleSize + bottomPos + 12) + 'px',
-      'right: ' + (config.bubble?.rightPositionPx || 20) + 'px',
-      'width: ' + width + 'px',
-      'height: ' + height + 'px',
-      'max-height: calc(100vh - ' + (bubbleSize + bottomPos + 32) + 'px)',
-      'background-color: ' + bgColor,
-      'border-radius: ' + borderRadius,
-      'box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-      'z-index: 2147483646',
-      'display: flex',
-      'flex-direction: column',
-      'overflow: hidden',
-      'pointer-events: auto'
-    ].join('; ');
-
-    // Header
-    if (winConfig.showTitleSection) {
-      var header = document.createElement('div');
-      header.className = 'profitbot-chat-header';
-      header.style.cssText = [
-        'background-color: ' + (winConfig.headerBackgroundColor || '#f3f4f6'),
-        'color: ' + (winConfig.headerTextColor || '#111827'),
-        'padding: 12px 16px',
-        'display: flex',
-        'align-items: center',
-        'gap: 8px',
-        'border-radius: ' + borderRadius + ' ' + borderRadius + ' 0 0',
-        'flex-shrink: 0'
-      ].join('; ');
-      
-      if (winConfig.titleAvatarUrl) {
-        var avatar = document.createElement('img');
-        avatar.src = winConfig.titleAvatarUrl;
-        avatar.style.cssText = 'width: 32px; height: 32px; border-radius: 50%; object-fit: contain;';
-        header.appendChild(avatar);
-      }
-      
-      var title = document.createElement('span');
-      title.textContent = winConfig.title || 'Chat';
-      title.style.cssText = 'flex: 1; font-weight: 600; font-size: 14px;';
-      header.appendChild(title);
-
-      var closeBtn = document.createElement('button');
-      closeBtn.innerHTML = '&times;';
-      closeBtn.type = 'button';
-      closeBtn.className = 'profitbot-close-btn';
-      closeBtn.style.cssText = 'background: none; border: none; font-size: 24px; cursor: pointer; color: inherit; padding: 0; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; line-height: 1;';
-      closeBtn.addEventListener('click', onClose);
-      header.appendChild(closeBtn);
-      
-      win.appendChild(header);
-    }
-
-    // Messages area
-    var messagesArea = document.createElement('div');
-    messagesArea.className = 'profitbot-messages';
-    messagesArea.style.cssText = [
-      'flex: 1',
-      'overflow-y: auto',
-      'padding: 16px',
-      'display: flex',
-      'flex-direction: column',
-      'gap: 12px',
-      'min-height: 0'
-    ].join('; ');
-    win.appendChild(messagesArea);
-
-    // Welcome message area (for initial state)
-    var welcomeArea = document.createElement('div');
-    welcomeArea.className = 'profitbot-welcome';
-    welcomeArea.style.display = 'none';
-    messagesArea.appendChild(welcomeArea);
-
-    // Starter prompts
-    var starterPromptsArea = document.createElement('div');
-    starterPromptsArea.className = 'profitbot-starter-prompts';
-    starterPromptsArea.style.cssText = [
-      'padding: 12px 16px',
-      'display: flex',
-      'flex-wrap: wrap',
-      'gap: 8px',
-      'border-top: 1px solid #e5e7eb',
-      'flex-shrink: 0'
-    ].join('; ');
-    win.appendChild(starterPromptsArea);
-
-    // Input area
-    var inputArea = document.createElement('form');
-    inputArea.className = 'profitbot-input-area';
-    inputArea.style.cssText = [
-      'padding: 12px 16px',
-      'border-top: 1px solid ' + (winConfig.sectionBorderColor || '#e5e7eb'),
-      'display: flex',
-      'gap: 8px',
-      'flex-shrink: 0',
-      'background-color: ' + bgColor
-    ].join('; ');
-
-    var input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'profitbot-input';
-    input.placeholder = winConfig.inputPlaceholder || 'Type your query';
-    input.autocomplete = 'off';
-    input.style.cssText = [
-      'flex: 1',
-      'padding: 8px 12px',
-      'border: 1px solid ' + (winConfig.inputBorderColor || '#d1d5db'),
-      'border-radius: 8px',
-      'outline: none',
-      'font-size: ' + (winConfig.fontSizePx || 14) + 'px',
-      'background-color: ' + (winConfig.inputBackgroundColor || '#ffffff'),
-      'color: ' + (winConfig.inputTextColor || '#111827')
-    ].join('; ');
-
-    var sendBtn = document.createElement('button');
-    sendBtn.type = 'submit';
-    sendBtn.className = 'profitbot-send-btn';
-    sendBtn.innerHTML = '&#9650;';
-    sendBtn.style.cssText = [
-      'width: 40px',
-      'height: 40px',
-      'border-radius: 50%',
-      'background-color: ' + (winConfig.sendButtonBackgroundColor || '#3b82f6'),
-      'color: ' + (winConfig.sendButtonIconColor || '#ffffff'),
-      'border: none',
-      'cursor: pointer',
-      'display: flex',
-      'align-items: center',
-      'justify-content: center',
-      'font-size: 18px',
-      'flex-shrink: 0'
-    ].join('; ');
-
-    inputArea.appendChild(input);
-    inputArea.appendChild(sendBtn);
-    win.appendChild(inputArea);
-
-    // Footer
-    if (winConfig.footerText) {
-      var footer = document.createElement('div');
-      footer.className = 'profitbot-footer';
-      footer.textContent = winConfig.footerText;
-      footer.style.cssText = [
-        'padding: 8px 16px',
-        'text-align: center',
-        'font-size: 11px',
-        'color: ' + (winConfig.footerTextColor || '#6b7280'),
-        'background-color: ' + (winConfig.footerBackgroundColor || bgColor),
-        'border-top: 1px solid ' + (winConfig.sectionBorderColor || '#e5e7eb'),
-        'flex-shrink: 0'
-      ].join('; ');
-      win.appendChild(footer);
-    }
-
-    return win;
-  }
-
-  function getUserMessageStyle(config) {
-    var bubbleConfig = config.bubble || {};
-    return [
-      'background-color: ' + (bubbleConfig.backgroundColor || '#3b82f6'),
-      'color: ' + (bubbleConfig.colorOfInternalIcons || '#ffffff'),
-      'padding: 12px 16px',
-      'border-radius: ' + ((config.window?.messageBorderRadius || 12) + 'px'),
-      'max-width: 85%',
-      'align-self: flex-end',
-      'word-wrap: break-word'
-    ].join('; ');
-  }
-
-  function getBotMessageStyle(config) {
-    var botConfig = config.window?.botMessageSettings || {};
-    return [
-      'background-color: ' + (botConfig.backgroundColor || '#f3f4f6'),
-      'color: ' + (botConfig.textColor || '#111827'),
-      'padding: 12px 16px',
-      'border-radius: ' + ((config.window?.messageBorderRadius || 12) + 'px'),
-      'max-width: 85%',
-      'align-self: flex-start',
-      'word-wrap: break-word'
-    ].join('; ');
-  }
-
-  function getWidgetCSS(config) {
-    var winConfig = config.window || {};
-    var fontSize = winConfig.fontSizePx || 14;
-    var bubbleBg = (config.bubble && config.bubble.backgroundColor) ? config.bubble.backgroundColor : '#3b82f6';
-    var winBg = winConfig.backgroundColor || '#ffffff';
-    var botText = (winConfig.botMessageSettings && winConfig.botMessageSettings.textColor) ? winConfig.botMessageSettings.textColor : '#111827';
-    var starterBg = winConfig.starterPromptBackgroundColor || '#f9fafb';
-    var starterHoverBg = winConfig.starterPromptBackgroundColor ? winConfig.starterPromptBackgroundColor : '#f3f4f6';
-    var starterText = winConfig.starterPromptTextColor || '#374151';
-    var starterFontSize = Math.max(11, (winConfig.starterPromptFontSizePx || 14) - 3);
-    
-    return '.profitbot-widget-wrapper {' +
-      'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;' +
-      'font-size: ' + fontSize + 'px;' +
-      'line-height: 1.5;' +
-      'color: #111827;' +
-      '--profitbot-primary: ' + bubbleBg + ';' +
-      '--profitbot-bg: ' + winBg + ';' +
-      '--profitbot-text: ' + botText + ';' +
-      '}' +
-      '.profitbot-bubble { transition: transform 0.2s ease-out, box-shadow 0.2s ease-out; }' +
-      '.profitbot-bubble:hover { transform: scale(1.05); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3), 0 6px 12px rgba(0, 0, 0, 0.2) !important; }' +
-      '.profitbot-bubble.open { transform: scale(0.95); }' +
-      '.profitbot-chat-window { animation: profitbot-slide-up 0.3s ease-out; }' +
-      '@keyframes profitbot-slide-up { from { opacity: 0; transform: translateY(20px) scale(0.95); } to { opacity: 1; transform: translateY(0) scale(1); } }' +
-      '.profitbot-messages { scrollbar-width: thin; scrollbar-color: #d1d5db transparent; }' +
-      '.profitbot-messages::-webkit-scrollbar { width: 6px; }' +
-      '.profitbot-messages::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }' +
-      '.profitbot-message { word-wrap: break-word; overflow-wrap: break-word; }' +
-      '.profitbot-message a { color: inherit; text-decoration: underline; }' +
-      '.profitbot-message a.chat-cta-button { display: inline-block; margin-top: 8px; padding: 8px 16px; background: rgba(255, 255, 255, 0.25); border: 1px solid rgba(255, 255, 255, 0.4); border-radius: 8px; font-weight: 600; text-decoration: none; }' +
-      '.profitbot-typing-dots { display: flex; gap: 4px; align-items: center; }' +
-      '.profitbot-typing-dots span { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.4; animation: profitbot-typing-bounce 1.4s ease-in-out infinite both; }' +
-      '.profitbot-typing-dots span:nth-child(1) { animation-delay: 0s; }' +
-      '.profitbot-typing-dots span:nth-child(2) { animation-delay: 0.2s; }' +
-      '.profitbot-typing-dots span:nth-child(3) { animation-delay: 0.4s; }' +
-      '@keyframes profitbot-typing-bounce { 0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; } 40% { transform: scale(1); opacity: 1; } }' +
-      '.profitbot-starter-prompt { padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 6px; background: ' + starterBg + '; color: ' + starterText + '; font-size: ' + starterFontSize + 'px; cursor: pointer; transition: all 0.2s; }' +
-      '.profitbot-starter-prompt:hover { background: ' + starterHoverBg + '; transform: scale(1.02); }' +
-      '.profitbot-checkout-preview { margin-top: 12px; }' +
-      '.profitbot-checkout-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.15); }' +
-      '.profitbot-checkout-header h3 { font-size: 18px; font-weight: 700; margin: 0; color: #22c55e; }' +
-      '.profitbot-line-item { display: flex; gap: 16px; margin-bottom: 28px; }' +
-      '.profitbot-image-wrap { position: relative; width: 80px; height: 80px; border-radius: 8px; background: rgba(255, 255, 255, 0.1); overflow: hidden; flex-shrink: 0; }' +
-      '.profitbot-image-wrap img { width: 100%; height: 100%; object-fit: cover; }' +
-      '.profitbot-qty-badge { position: absolute; top: -8px; right: -8px; background: #374151; color: #fff; font-size: 13px; font-weight: 700; padding: 6px 10px; border-radius: 6px; min-width: 28px; text-align: center; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); }' +
-      '.profitbot-product-name { font-weight: 700; font-size: 16px; margin-bottom: 4px; color: #22c55e; }' +
-      '.profitbot-product-variant { font-size: 14px; opacity: 0.85; margin-bottom: 10px; }' +
-      '.profitbot-price-row { display: flex; gap: 40px; margin-top: 6px; }' +
-      '.profitbot-price-col { display: flex; flex-direction: column; gap: 4px; }' +
-      '.profitbot-price-label { font-size: 12px; opacity: 0.7; font-weight: 500; }' +
-      '.profitbot-price-value { font-size: 16px; font-weight: 700; }' +
-      '.profitbot-checkout-summary { margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, 0.2); }' +
-      '.profitbot-summary-row { display: flex; justify-content: space-between; padding: 4px 0; }' +
-      '.profitbot-summary-total { margin-top: 8px; font-size: 1.05em; }' +
-      '.profitbot-summary-footer { font-size: 0.85em; opacity: 0.8; margin-top: 8px; }' +
-      '.profitbot-cta-button { display: inline-block; margin-top: 16px; padding: 12px 24px; background: rgba(255, 255, 255, 0.25); border: 1px solid rgba(255, 255, 255, 0.4); border-radius: 8px; font-weight: 600; text-decoration: none; color: inherit; transition: all 0.15s; }' +
-      '.profitbot-cta-button:hover { background: rgba(255, 255, 255, 0.35); border-color: rgba(255, 255, 255, 0.6); }' +
-      '@media (max-width: 768px) { .profitbot-chat-window { bottom: 0 !important; right: 0 !important; width: 100% !important; height: 100% !important; max-height: 100vh !important; border-radius: 0 !important; } .profitbot-bubble.open { display: none; } }';
-  }
-
-  // Initialize when DOM is ready
+  /* ===== 10. INIT ===== */
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initWidget);
   } else {
