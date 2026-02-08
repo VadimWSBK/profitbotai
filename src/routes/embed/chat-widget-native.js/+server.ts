@@ -1,6 +1,6 @@
 /**
  * Native embed script - fully functional widget without iframe
- * Uses Shadow DOM for CSS isolation.
+ * Uses scoped CSS (data-profitbot-id attribute) for CSS isolation instead of Shadow DOM.
  * Includes: chat, messages, polling, streaming with character buffer,
  * checkout previews, tooltips, avatars, copy-to-clipboard, scroll FAB,
  * reduced-motion support, mobile full-screen with safe areas, etc.
@@ -347,7 +347,20 @@ const EMBED_SCRIPT = String.raw`
   }
 
   /* ===== 5. CSS GENERATOR ===== */
-  function getWidgetCSS(config) {
+  function getWidgetCSS(config, scopeId) {
+    // Scope all selectors to the widget container to avoid conflicts
+    var scope = scopeId ? '[data-profitbot-id="' + scopeId + '"]' : '';
+    var scopeSelector = function(selector) {
+      // Handle :host and other special selectors
+      if (selector.indexOf(':host') >= 0) {
+        return selector.replace(':host', scope || ':host');
+      }
+      // Scope regular selectors
+      if (selector.indexOf('.') === 0 || selector.indexOf('#') === 0) {
+        return scope + ' ' + selector;
+      }
+      return selector;
+    };
     var b = config.bubble || {};
     var w = config.window || {};
     var t = config.tooltip || {};
@@ -383,26 +396,37 @@ const EMBED_SCRIPT = String.raw`
     var avatarSize = w.avatarSize || 40;
     var avatarRadius = w.avatarBorderRadius || 25;
 
+    // Scope all selectors to the widget container
+    var scope = scopeId ? '[data-profitbot-id="' + scopeId + '"]' : '';
+    
+    function scopeSelector(sel) {
+      if (!scope) return sel;
+      // Don't scope keyframes, media queries, or global resets
+      if (sel.indexOf('@') === 0 || sel.indexOf('*') === 0) return sel;
+      // Scope class and ID selectors
+      return scope + ' ' + sel;
+    }
+    
     return [
-      /* Reset & wrapper */
-      '*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }',
-      ':host { all: initial; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-size: ' + fontSize + 'px; line-height: 1.5; color: #111827; }',
-      '.pb-wrapper { position: fixed; z-index: 2147483647; right: ' + bubbleRight + 'px; bottom: ' + bubbleBottom + 'px; display: flex; flex-direction: column; align-items: flex-end; pointer-events: none; }',
+      /* Reset & wrapper - scoped to widget */
+      scope + ' *, ' + scope + ' *::before, ' + scope + ' *::after { box-sizing: border-box; margin: 0; padding: 0; }',
+      scope + ' { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-size: ' + fontSize + 'px; line-height: 1.5; color: #111827; }',
+      scopeSelector('.pb-wrapper') + ' { position: fixed; z-index: 2147483647; right: ' + bubbleRight + 'px; bottom: ' + bubbleBottom + 'px; display: flex; flex-direction: column; align-items: flex-end; pointer-events: none; }',
 
       /* Bubble */
-      '.pb-bubble { pointer-events: auto; width: ' + bubbleSize + 'px; height: ' + bubbleSize + 'px; background-color: ' + bubbleBg + '; border-radius: ' + bubbleRadius + '; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 24px rgba(0,0,0,0.25), 0 4px 8px rgba(0,0,0,0.15); transition: transform 0.2s ease-out, box-shadow 0.2s ease-out; position: relative; z-index: 20; flex-shrink: 0; outline: none; }',
-      '.pb-bubble:hover { transform: scale(1.05); box-shadow: 0 12px 32px rgba(0,0,0,0.3), 0 6px 12px rgba(0,0,0,0.2); }',
-      '.pb-bubble.pb-open { transform: scale(0.95); }',
-      '.pb-bubble-pulse { animation: pb-pulse 2s ease-in-out 3; }',
+      scopeSelector('.pb-bubble') + ' { pointer-events: auto; width: ' + bubbleSize + 'px; height: ' + bubbleSize + 'px; background-color: ' + bubbleBg + '; border-radius: ' + bubbleRadius + '; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 24px rgba(0,0,0,0.25), 0 4px 8px rgba(0,0,0,0.15); transition: transform 0.2s ease-out, box-shadow 0.2s ease-out; position: relative; z-index: 20; flex-shrink: 0; outline: none; }',
+      scopeSelector('.pb-bubble:hover') + ' { transform: scale(1.05); box-shadow: 0 12px 32px rgba(0,0,0,0.3), 0 6px 12px rgba(0,0,0,0.2); }',
+      scopeSelector('.pb-bubble.pb-open') + ' { transform: scale(0.95); }',
+      scopeSelector('.pb-bubble-pulse') + ' { animation: pb-pulse 2s ease-in-out 3; }',
       '@keyframes pb-pulse { 0%,100% { box-shadow: 0 8px 24px rgba(0,0,0,0.25), 0 4px 8px rgba(0,0,0,0.15), 0 0 0 0 rgba(0,0,0,0.15); } 50% { box-shadow: 0 8px 24px rgba(0,0,0,0.25), 0 4px 8px rgba(0,0,0,0.15), 0 0 0 8px rgba(0,0,0,0); } }',
 
       /* Tooltip */
-      '.pb-tooltip { pointer-events: auto; position: absolute; bottom: ' + (bubbleSize + 12) + 'px; right: ' + (bubbleSize + 12) + 'px; background-color: ' + (t.backgroundColor || '#ffffff') + '; color: ' + (t.textColor || '#111827') + '; font-size: ' + (t.fontSizePx || 14) + 'px; padding: 12px 16px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-width: 220px; cursor: pointer; z-index: 19; white-space: normal; animation: pb-fade-in 0.2s ease-out; }',
-      '.pb-tooltip-hidden { opacity: 0; pointer-events: none; transition: opacity 0.3s; }',
+      scopeSelector('.pb-tooltip') + ' { pointer-events: auto; position: absolute; bottom: ' + (bubbleSize + 12) + 'px; right: ' + (bubbleSize + 12) + 'px; background-color: ' + (t.backgroundColor || '#ffffff') + '; color: ' + (t.textColor || '#111827') + '; font-size: ' + (t.fontSizePx || 14) + 'px; padding: 12px 16px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-width: 220px; cursor: pointer; z-index: 19; white-space: normal; animation: pb-fade-in 0.2s ease-out; }',
+      scopeSelector('.pb-tooltip-hidden') + ' { opacity: 0; pointer-events: none; transition: opacity 0.3s; }',
 
       /* Chat window */
-      '.pb-window { pointer-events: auto; position: absolute; bottom: ' + (bubbleSize + 12) + 'px; right: 0; width: ' + (w.widthPx || 400) + 'px; height: ' + (w.heightPx || 600) + 'px; max-height: calc(100vh - ' + (bubbleSize + bubbleBottom + 32) + 'px); background-color: ' + winBg + '; border-radius: ' + winRadius + '; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); display: flex; flex-direction: column; overflow: hidden; z-index: 18; animation: pb-window-in ' + dur(250) + 'ms cubic-bezier(0.33,1,0.68,1) both; }',
-      '.pb-window.pb-closing { animation: pb-window-out ' + dur(180) + 'ms cubic-bezier(0.33,1,0.68,1) both; }',
+      scopeSelector('.pb-window') + ' { pointer-events: auto; position: absolute; bottom: ' + (bubbleSize + 12) + 'px; right: 0; width: ' + (w.widthPx || 400) + 'px; height: ' + (w.heightPx || 600) + 'px; max-height: calc(100vh - ' + (bubbleSize + bubbleBottom + 32) + 'px); background-color: ' + winBg + '; border-radius: ' + winRadius + '; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); display: flex; flex-direction: column; overflow: hidden; z-index: 18; animation: pb-window-in ' + dur(250) + 'ms cubic-bezier(0.33,1,0.68,1) both; }',
+      scopeSelector('.pb-window.pb-closing') + ' { animation: pb-window-out ' + dur(180) + 'ms cubic-bezier(0.33,1,0.68,1) both; }',
       '@keyframes pb-window-in { from { opacity: 0; transform: translateY(12px) scale(0.95); transform-origin: bottom right; } to { opacity: 1; transform: translateY(0) scale(1); } }',
       '@keyframes pb-window-out { from { opacity: 1; transform: translateY(0) scale(1); } to { opacity: 0; transform: translateY(8px) scale(0.96); } }',
 
@@ -553,17 +577,17 @@ const EMBED_SCRIPT = String.raw`
 
       /* Mobile full-screen */
       '@media (max-width: 768px) {',
-      '  .pb-wrapper { right: ' + bubbleRight + 'px; bottom: ' + bubbleBottom + 'px; }',
-      '  .pb-window { position: fixed !important; inset: 0 !important; width: 100% !important; height: 100% !important; max-height: 100dvh !important; border-radius: 0 !important; padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); padding-top: env(safe-area-inset-top); }',
-      '  .pb-header { border-radius: 0 !important; }',
-      '  .pb-input-area { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }',
-      '  .pb-bubble.pb-open { display: none !important; }',
-      '  .pb-backdrop { display: block; position: fixed; inset: 0; background: rgba(0,0,0,0.3); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); z-index: 17; pointer-events: auto; animation: pb-fade-in 0.2s ease-out; }',
-      '  .pb-tooltip { display: none !important; }',
+      '  ' + scopeSelector('.pb-wrapper') + ' { right: ' + bubbleRight + 'px; bottom: ' + bubbleBottom + 'px; }',
+      '  ' + scopeSelector('.pb-window') + ' { position: fixed !important; inset: 0 !important; width: 100% !important; height: 100% !important; max-height: 100dvh !important; border-radius: 0 !important; padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); padding-top: env(safe-area-inset-top); }',
+      '  ' + scopeSelector('.pb-header') + ' { border-radius: 0 !important; }',
+      '  ' + scopeSelector('.pb-input-area') + ' { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }',
+      '  ' + scopeSelector('.pb-bubble.pb-open') + ' { display: none !important; }',
+      '  ' + scopeSelector('.pb-backdrop') + ' { display: block; position: fixed; inset: 0; background: rgba(0,0,0,0.3); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); z-index: 17; pointer-events: auto; animation: pb-fade-in 0.2s ease-out; }',
+      '  ' + scopeSelector('.pb-tooltip') + ' { display: none !important; }',
       '}',
 
       /* Desktop hide tooltip on mobile */
-      t.hideTooltipOnMobile ? '@media (max-width: 768px) { .pb-tooltip { display: none !important; } }' : '',
+      t.hideTooltipOnMobile ? '@media (max-width: 768px) { ' + scopeSelector('.pb-tooltip') + ' { display: none !important; } }' : '',
 
       /* Reduced motion */
       '@media (prefers-reduced-motion: reduce) {',
@@ -571,7 +595,27 @@ const EMBED_SCRIPT = String.raw`
       '  .pb-bubble, .pb-send-btn, .pb-starter-btn, .pb-msg-row, .pb-msg-row-user { animation: none !important; transition-duration: 0.01ms !important; }',
       '  .pb-window { animation-duration: 0.01ms !important; }',
       '}'
-    ].join('\n');
+    ];
+    
+    // Scope all CSS rules that aren't already scoped (keyframes, media queries, etc.)
+    return cssArray.map(function(rule) {
+      // Don't modify keyframes, media queries, or already-scoped rules
+      if (rule.indexOf('@') === 0 || rule.indexOf(scope) === 0 || !scope) {
+        return rule;
+      }
+      // Scope class selectors that start with .pb-
+      if (rule.indexOf('.pb-') >= 0) {
+        // Extract the selector part (before {)
+        var parts = rule.split('{');
+        if (parts.length === 2) {
+          var selector = parts[0].trim();
+          var styles = parts[1];
+          // Scope the selector
+          return scopeSelector(selector) + ' {' + styles;
+        }
+      }
+      return rule;
+    }).join('\n');
   }
 
   /* ===== 6. COMPONENT BUILDERS ===== */
@@ -907,16 +951,27 @@ const EMBED_SCRIPT = String.raw`
     console.log('[ProfitBot] renderWidget called');
     var config = widgetData.config;
     var sessionId = getSessionId();
-    console.log('[ProfitBot] Creating shadow DOM...');
-    var shadow = container.attachShadow({ mode: 'open' });
-
-    /* Inject CSS */
-    var css = getWidgetCSS(config);
-    console.log('[ProfitBot] Injecting CSS, length:', css.length);
+    
+    // Use unique ID for scoping CSS to avoid conflicts
+    var widgetUniqueId = 'profitbot-' + widgetId.replace(/[^a-z0-9]/gi, '-');
+    container.setAttribute('data-profitbot-id', widgetUniqueId);
+    
+    /* Inject CSS into document head with scoped selectors */
+    var css = getWidgetCSS(config, widgetUniqueId);
+    console.log('[ProfitBot] Injecting CSS into document head, length:', css.length);
+    
+    // Check if style already exists (prevent duplicates)
+    var existingStyleId = 'profitbot-style-' + widgetUniqueId;
+    var existingStyle = document.getElementById(existingStyleId);
+    if (existingStyle) {
+      existingStyle.remove();
+    }
+    
     var styleEl = document.createElement('style');
+    styleEl.id = existingStyleId;
     styleEl.textContent = css;
-    shadow.appendChild(styleEl);
-    console.log('[ProfitBot] CSS injected. Style element:', styleEl, 'Parent:', styleEl.parentNode);
+    document.head.appendChild(styleEl);
+    console.log('[ProfitBot] CSS injected into document head');
     
     // Verify CSS values
     var b = config.bubble || {};
@@ -928,14 +983,6 @@ const EMBED_SCRIPT = String.raw`
       bubbleRight: bubbleRight + 'px',
       bubbleBottom: bubbleBottom + 'px'
     });
-    
-    // Check if CSS contains expected values
-    if (css.indexOf('width: ' + bubbleSize + 'px') === -1) {
-      console.error('[ProfitBot] CSS missing bubble width!');
-    }
-    if (css.indexOf('right: ' + bubbleRight + 'px') === -1) {
-      console.error('[ProfitBot] CSS missing wrapper right position!');
-    }
 
     /* State */
     var state = {
@@ -962,8 +1009,8 @@ const EMBED_SCRIPT = String.raw`
 
     /* Main wrapper */
     var wrapper = el('div', { className: 'pb-wrapper' });
-    console.log('[ProfitBot] Appending wrapper to shadow DOM');
-    shadow.appendChild(wrapper);
+    console.log('[ProfitBot] Appending wrapper to container');
+    container.appendChild(wrapper);
     
     // Force wrapper to have inline styles as fallback (in case CSS doesn't load)
     var b = config.bubble || {};
@@ -1026,7 +1073,7 @@ const EMBED_SCRIPT = String.raw`
       bottom: wrapper.style.bottom
     });
     console.log('[ProfitBot] Container in DOM:', container.parentNode ? 'YES' : 'NO');
-    console.log('[ProfitBot] Shadow root:', shadow);
+    console.log('[ProfitBot] Container element:', container);
     
     // Immediate check of computed styles
     setTimeout(function() {
@@ -1661,8 +1708,8 @@ const EMBED_SCRIPT = String.raw`
     
     // Verify bubble is in DOM and styles are applied
     setTimeout(function() {
-      var bubbleEl = shadow.querySelector('.pb-bubble');
-      var wrapperEl = shadow.querySelector('.pb-wrapper');
+      var bubbleEl = container.querySelector('.pb-bubble');
+      var wrapperEl = container.querySelector('.pb-wrapper');
       
       if (wrapperEl) {
         var wrapperStyles = window.getComputedStyle(wrapperEl);
@@ -1722,11 +1769,12 @@ const EMBED_SCRIPT = String.raw`
         
         if (rect.width === 0 || rect.height === 0) {
           console.error('[ProfitBot] ⚠️ Bubble has no dimensions! CSS may not be applied.');
-          console.error('[ProfitBot] Style element in shadow:', shadow.querySelector('style'));
-          console.error('[ProfitBot] CSS content length:', shadow.querySelector('style')?.textContent?.length || 0);
+          var styleEl = document.getElementById(existingStyleId);
+          console.error('[ProfitBot] Style element in head:', styleEl);
+          console.error('[ProfitBot] CSS content length:', styleEl?.textContent?.length || 0);
           
           // Check what CSS rules are actually applied
-          var styleSheet = shadow.querySelector('style')?.sheet;
+          var styleSheet = styleEl?.sheet;
           if (styleSheet) {
             try {
               var rules = styleSheet.cssRules || styleSheet.rules;
