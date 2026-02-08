@@ -23,21 +23,36 @@ const EMBED_SCRIPT = String.raw`
         break;
       }
     }
+    // If still not found, try finding any script with the native.js path
+    if (!script) {
+      var allScripts = document.querySelectorAll('script[src*="chat-widget-native.js"]');
+      if (allScripts.length > 0) {
+        script = allScripts[allScripts.length - 1]; // Use the last one if multiple
+      }
+    }
   }
   if (!script) {
-    console.warn('[ProfitBot] Could not find script tag. Ensure the script tag includes data-widget-id attribute.');
+    console.error('[ProfitBot] Could not find script tag. Ensure the script tag includes data-widget-id attribute.');
     return;
   }
   var widgetId = script.getAttribute('data-widget-id');
   if (!widgetId || widgetId === 'YOUR_WIDGET_ID') {
-    console.warn('[ProfitBot] Missing or invalid data-widget-id.');
+    console.error('[ProfitBot] Missing or invalid data-widget-id. Found:', widgetId);
     return;
   }
   var src = script.getAttribute('src') || '';
   var base = src.replace(/\/embed\/chat-widget-native\.js.*$/, '');
-  if (!base) return;
+  if (!base) {
+    console.error('[ProfitBot] Could not determine base URL from script src:', src);
+    return;
+  }
+  console.log('[ProfitBot] Initializing widget:', widgetId, 'Base URL:', base);
+  // Prevent duplicate initialization
   if (!window.__profitbot_widget_loaded) window.__profitbot_widget_loaded = {};
-  if (window.__profitbot_widget_loaded[widgetId]) return;
+  if (window.__profitbot_widget_loaded[widgetId]) {
+    console.warn('[ProfitBot] Widget already loaded:', widgetId);
+    return;
+  }
   window.__profitbot_widget_loaded[widgetId] = true;
 
   /* ===== 2. UTILITIES ===== */
@@ -790,25 +805,58 @@ const EMBED_SCRIPT = String.raw`
 
   /* ===== 7. WIDGET CONTROLLER ===== */
   function initWidget() {
-    if (!document.body) { setTimeout(initWidget, 10); return; }
+    if (!document.body) { 
+      setTimeout(initWidget, 10); 
+      return; 
+    }
+
+    // Prevent duplicate initialization
+    if (document.getElementById('profitbot-widget-' + widgetId)) {
+      console.warn('[ProfitBot] Widget already initialized for:', widgetId);
+      return;
+    }
 
     var container = document.createElement('div');
     container.id = 'profitbot-widget-' + widgetId;
     container.setAttribute('data-profitbot-widget', widgetId);
-    document.body.appendChild(container);
+    
+    try {
+      document.body.appendChild(container);
+    } catch (e) {
+      console.error('[ProfitBot] Failed to append container:', e);
+      return;
+    }
 
-    fetch(base + '/api/widgets/' + encodeURIComponent(widgetId))
+    var widgetUrl = base + '/api/widgets/' + encodeURIComponent(widgetId);
+    console.log('[ProfitBot] Loading widget:', widgetId, 'from:', widgetUrl);
+
+    fetch(widgetUrl, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json'
+      },
+      credentials: 'omit'
+    })
       .then(function(res) {
-        if (!res.ok) throw new Error('Widget not found');
+        if (!res.ok) {
+          throw new Error('Widget not found: ' + res.status + ' ' + res.statusText);
+        }
         return res.json();
       })
       .then(function(data) {
-        if (!data || !data.config) throw new Error('Invalid config');
+        if (!data || !data.config) {
+          throw new Error('Invalid config: missing data or config');
+        }
+        console.log('[ProfitBot] Widget config loaded, rendering...');
         renderWidget(container, data);
       })
       .catch(function(err) {
         console.error('[ProfitBot] Failed to load widget:', err);
-        container.remove();
+        console.error('[ProfitBot] Widget ID:', widgetId);
+        console.error('[ProfitBot] Base URL:', base);
+        if (container && container.parentNode) {
+          container.remove();
+        }
       });
   }
 
