@@ -34,6 +34,8 @@ function isPublicPath(pathname: string, method: string): boolean {
 	if (/^\/api\/conversations\/[^/]+\/messages\/save$/.test(pathname)) return method === 'POST';
 	// Allow anonymous GET for conversation id (widget sends widgetId + conversationId to n8n)
 	if (/^\/api\/widgets\/[^/]+\/conversation$/.test(pathname)) return method === 'GET';
+	// Allow anonymous GET for visitor info (widget fetches visitor name)
+	if (/^\/api\/widgets\/[^/]+\/visitor$/.test(pathname)) return method === 'GET';
 	// Allow anonymous GET only for quote form config (embed form page); PUT/DELETE require auth (form builder save)
 	if (/^\/api\/forms\/[^/]+$/.test(pathname)) return method === 'GET';
 	// Allow anonymous POST for quote form submit (embed form submission)
@@ -41,6 +43,17 @@ function isPublicPath(pathname: string, method: string): boolean {
 	// Allow anonymous GET for quote download redirect (short link in chat → fresh signed URL)
 	if (pathname === '/api/quote/download') return method === 'GET';
 	return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'));
+}
+
+function isWidgetApiPath(pathname: string): boolean {
+	return (
+		/^\/api\/widgets\/[^/]+$/.test(pathname) ||
+		/^\/api\/widgets\/[^/]+\/chat$/.test(pathname) ||
+		/^\/api\/widgets\/[^/]+\/messages$/.test(pathname) ||
+		/^\/api\/widgets\/[^/]+\/messages\/save$/.test(pathname) ||
+		/^\/api\/widgets\/[^/]+\/conversation$/.test(pathname) ||
+		/^\/api\/widgets\/[^/]+\/visitor$/.test(pathname)
+	);
 }
 
 export const handle: Handle = async ({ event, resolve }) => {
@@ -104,9 +117,34 @@ export const handle: Handle = async ({ event, resolve }) => {
 		}
 	}
 
-	return resolve(event, {
+	// Handle CORS for widget API endpoints (needed for embedding on external sites like Shopify)
+	if (isWidgetApiPath(pathname)) {
+		// Handle preflight OPTIONS request
+		if (method === 'OPTIONS') {
+			return new Response(null, {
+				status: 204,
+				headers: {
+					'Access-Control-Allow-Origin': '*',
+					'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+					'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+					'Access-Control-Max-Age': '86400'
+				}
+			});
+		}
+	}
+
+	const response = await resolve(event, {
 		filterSerializedResponseHeaders(name) {
 			return name.toLowerCase() === 'content-range';
 		}
 	});
+
+	// Add CORS headers to widget API responses
+	if (isWidgetApiPath(pathname)) {
+		response.headers.set('Access-Control-Allow-Origin', '*');
+		response.headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+		response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+	}
+
+	return response;
 };
