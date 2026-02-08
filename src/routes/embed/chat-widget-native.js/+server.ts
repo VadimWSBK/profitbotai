@@ -577,6 +577,12 @@ const EMBED_SCRIPT = String.raw`
   /* ===== 6. COMPONENT BUILDERS ===== */
   function createBubble(config, onClick) {
     var b = config.bubble || {};
+    console.log('[ProfitBot] Creating bubble with config:', {
+      backgroundColor: b.backgroundColor,
+      bubbleSizePx: b.bubbleSizePx,
+      rightPositionPx: b.rightPositionPx,
+      bottomPositionPx: b.bottomPositionPx
+    });
     var btn = el('button', { type: 'button', className: 'pb-bubble pb-bubble-pulse', 'aria-label': 'Open chat' });
 
     if (b.customIconUrl) {
@@ -861,12 +867,16 @@ const EMBED_SCRIPT = String.raw`
   }
 
   function renderWidget(container, widgetData) {
+    console.log('[ProfitBot] renderWidget called');
     var config = widgetData.config;
     var sessionId = getSessionId();
+    console.log('[ProfitBot] Creating shadow DOM...');
     var shadow = container.attachShadow({ mode: 'open' });
 
     /* Inject CSS */
-    shadow.appendChild(el('style', { textContent: getWidgetCSS(config) }));
+    var css = getWidgetCSS(config);
+    console.log('[ProfitBot] Injecting CSS, length:', css.length);
+    shadow.appendChild(el('style', { textContent: css }));
 
     /* State */
     var state = {
@@ -893,6 +903,7 @@ const EMBED_SCRIPT = String.raw`
 
     /* Main wrapper */
     var wrapper = el('div', { className: 'pb-wrapper' });
+    console.log('[ProfitBot] Appending wrapper to shadow DOM');
     shadow.appendChild(wrapper);
 
     /* Backdrop (mobile only) */
@@ -925,6 +936,11 @@ const EMBED_SCRIPT = String.raw`
     if (tooltip) bottomRow.appendChild(tooltip);
     bottomRow.appendChild(bubble);
     wrapper.appendChild(bottomRow);
+    console.log('[ProfitBot] Bubble appended to wrapper. Bubble element:', bubble);
+    console.log('[ProfitBot] Bubble classes:', bubble.className);
+    console.log('[ProfitBot] Wrapper element:', wrapper);
+    console.log('[ProfitBot] Container in DOM:', container.parentNode ? 'YES' : 'NO');
+    console.log('[ProfitBot] Shadow root:', shadow);
 
     /* Fetch visitor name */
     fetch(base + '/api/widgets/' + widgetId + '/visitor?session_id=' + encodeURIComponent(sessionId))
@@ -1523,10 +1539,30 @@ const EMBED_SCRIPT = String.raw`
     }
 
     /* ===== INIT ===== */
+    console.log('[ProfitBot] Widget initialization complete. Starting message fetch...');
     fetchMessages(true);
     startPolling();
     updateStarterPrompts();
     dispatchEvent('profitbot:ready');
+    console.log('[ProfitBot] Widget ready! Bubble should be visible at bottom-right.');
+    
+    // Verify bubble is in DOM
+    setTimeout(function() {
+      var bubbleEl = shadow.querySelector('.pb-bubble');
+      if (bubbleEl) {
+        console.log('[ProfitBot] ✓ Bubble found in DOM');
+        var rect = bubbleEl.getBoundingClientRect();
+        console.log('[ProfitBot] Bubble position:', { 
+          top: rect.top, 
+          left: rect.left, 
+          width: rect.width, 
+          height: rect.height,
+          visible: rect.width > 0 && rect.height > 0
+        });
+      } else {
+        console.error('[ProfitBot] ✗ Bubble NOT found in DOM!');
+      }
+    }, 500);
 
     /* Keyboard */
     document.addEventListener('keydown', function(e) {
