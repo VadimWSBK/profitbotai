@@ -408,13 +408,54 @@ const EMBED_SCRIPT = String.raw`
     }
     
     return [
-      /* Reset & wrapper - scoped to widget */
-      scope + ' *, ' + scope + ' *::before, ' + scope + ' *::after { box-sizing: border-box; margin: 0; padding: 0; }',
-      scope + ' { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-size: ' + fontSize + 'px; line-height: 1.5; color: #111827; }',
-      scopeSelector('.pb-wrapper') + ' { position: fixed; z-index: 2147483647; right: ' + bubbleRight + 'px; bottom: ' + bubbleBottom + 'px; display: flex; flex-direction: column; align-items: flex-end; pointer-events: none; }',
+      /* Aggressive CSS reset to prevent host page interference */
+      scope + ' *, ' + scope + ' *::before, ' + scope + ' *::after { ' +
+        'box-sizing: border-box !important; ' +
+        'margin: 0 !important; ' +
+        'padding: 0 !important; ' +
+        'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important; ' +
+        'line-height: 1.5 !important; ' +
+        ' }',
+      scope + ' { ' +
+        'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important; ' +
+        'font-size: ' + fontSize + 'px !important; ' +
+        'line-height: 1.5 !important; ' +
+        'color: #111827 !important; ' +
+        'all: initial !important; ' +
+        'display: block !important; ' +
+        ' }',
+      scopeSelector('.pb-wrapper') + ' { ' + 
+        important('position', 'fixed') + 
+        important('z-index', '2147483647') + 
+        important('right', bubbleRight + 'px') + 
+        important('bottom', bubbleBottom + 'px') + 
+        important('display', 'flex') + 
+        important('flex-direction', 'column') + 
+        important('align-items', 'flex-end') + 
+        important('pointer-events', 'none') + 
+        ' }',
 
-      /* Bubble */
-      scopeSelector('.pb-bubble') + ' { pointer-events: auto; width: ' + bubbleSize + 'px; height: ' + bubbleSize + 'px; background-color: ' + bubbleBg + '; border-radius: ' + bubbleRadius + '; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 24px rgba(0,0,0,0.25), 0 4px 8px rgba(0,0,0,0.15); transition: transform 0.2s ease-out, box-shadow 0.2s ease-out; position: relative; z-index: 20; flex-shrink: 0; outline: none; }',
+      /* Bubble - with !important for maximum specificity */
+      scopeSelector('.pb-bubble') + ' { ' + 
+        important('pointer-events', 'auto') +
+        important('width', bubbleSize + 'px') +
+        important('height', bubbleSize + 'px') +
+        important('min-width', bubbleSize + 'px') +
+        important('min-height', bubbleSize + 'px') +
+        important('background-color', bubbleBg) +
+        important('border-radius', bubbleRadius) +
+        important('border', 'none') +
+        important('cursor', 'pointer') +
+        important('display', 'flex') +
+        important('align-items', 'center') +
+        important('justify-content', 'center') +
+        ' box-shadow: 0 8px 24px rgba(0,0,0,0.25), 0 4px 8px rgba(0,0,0,0.15) !important; ' +
+        ' transition: transform 0.2s ease-out, box-shadow 0.2s ease-out !important; ' +
+        important('position', 'relative') +
+        important('z-index', '20') +
+        important('flex-shrink', '0') +
+        important('outline', 'none') +
+        ' }',
       scopeSelector('.pb-bubble:hover') + ' { transform: scale(1.05); box-shadow: 0 12px 32px rgba(0,0,0,0.3), 0 6px 12px rgba(0,0,0,0.2); }',
       scopeSelector('.pb-bubble.pb-open') + ' { transform: scale(0.95); }',
       scopeSelector('.pb-bubble-pulse') + ' { animation: pb-pulse 2s ease-in-out 3; }',
@@ -424,8 +465,24 @@ const EMBED_SCRIPT = String.raw`
       scopeSelector('.pb-tooltip') + ' { pointer-events: auto; position: absolute; bottom: ' + (bubbleSize + 12) + 'px; right: ' + (bubbleSize + 12) + 'px; background-color: ' + (t.backgroundColor || '#ffffff') + '; color: ' + (t.textColor || '#111827') + '; font-size: ' + (t.fontSizePx || 14) + 'px; padding: 12px 16px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-width: 220px; cursor: pointer; z-index: 19; white-space: normal; animation: pb-fade-in 0.2s ease-out; }',
       scopeSelector('.pb-tooltip-hidden') + ' { opacity: 0; pointer-events: none; transition: opacity 0.3s; }',
 
-      /* Chat window */
-      scopeSelector('.pb-window') + ' { pointer-events: auto; position: absolute; bottom: ' + (bubbleSize + 12) + 'px; right: 0; width: ' + (w.widthPx || 400) + 'px; height: ' + (w.heightPx || 600) + 'px; max-height: calc(100vh - ' + (bubbleSize + bubbleBottom + 32) + 'px); background-color: ' + winBg + '; border-radius: ' + winRadius + '; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); display: flex; flex-direction: column; overflow: hidden; z-index: 18; animation: pb-window-in ' + dur(250) + 'ms cubic-bezier(0.33,1,0.68,1) both; }',
+      /* Chat window - with !important */
+      scopeSelector('.pb-window') + ' { ' +
+        important('pointer-events', 'auto') +
+        important('position', 'absolute') +
+        important('bottom', (bubbleSize + 12) + 'px') +
+        important('right', '0') +
+        important('width', (w.widthPx || 400) + 'px') +
+        important('height', (w.heightPx || 600) + 'px') +
+        important('max-height', 'calc(100vh - ' + (bubbleSize + bubbleBottom + 32) + 'px)') +
+        important('background-color', winBg) +
+        important('border-radius', winRadius) +
+        ' box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25) !important; ' +
+        important('display', 'flex') +
+        important('flex-direction', 'column') +
+        important('overflow', 'hidden') +
+        important('z-index', '18') +
+        ' animation: pb-window-in ' + dur(250) + 'ms cubic-bezier(0.33,1,0.68,1) both !important; ' +
+        ' }',
       scopeSelector('.pb-window.pb-closing') + ' { animation: pb-window-out ' + dur(180) + 'ms cubic-bezier(0.33,1,0.68,1) both; }',
       '@keyframes pb-window-in { from { opacity: 0; transform: translateY(12px) scale(0.95); transform-origin: bottom right; } to { opacity: 1; transform: translateY(0) scale(1); } }',
       '@keyframes pb-window-out { from { opacity: 1; transform: translateY(0) scale(1); } to { opacity: 0; transform: translateY(8px) scale(0.96); } }',
@@ -597,25 +654,71 @@ const EMBED_SCRIPT = String.raw`
       '}'
     ];
     
-    // Scope all CSS rules that aren't already scoped (keyframes, media queries, etc.)
-    return cssArray.map(function(rule) {
-      // Don't modify keyframes, media queries, or already-scoped rules
-      if (rule.indexOf('@') === 0 || rule.indexOf(scope) === 0 || !scope) {
+    // Process CSS array: scope ALL selectors and add !important to ALL properties
+    var processedCSS = cssArray.map(function(rule) {
+      // Don't modify keyframes, media queries
+      if (rule.indexOf('@keyframes') === 0) {
         return rule;
       }
-      // Scope class selectors that start with .pb-
-      if (rule.indexOf('.pb-') >= 0) {
-        // Extract the selector part (before {)
-        var parts = rule.split('{');
-        if (parts.length === 2) {
-          var selector = parts[0].trim();
-          var styles = parts[1];
-          // Scope the selector
-          return scopeSelector(selector) + ' {' + styles;
+      
+      // Handle media queries - scope selectors inside them
+      if (rule.indexOf('@media') === 0) {
+        // Extract media query and content
+        var mediaMatch = rule.match(/^(@media[^{]+)\{([^}]+)\}/);
+        if (mediaMatch) {
+          var mediaQuery = mediaMatch[1];
+          var content = mediaMatch[2];
+          // Scope all .pb- selectors in the content
+          content = content.replace(/\.pb-[\w-]+/g, function(match) {
+            return scope ? (scope + ' ' + match) : match;
+          });
+          // Add !important to all properties in media query
+          content = content.replace(/([^:;!]+):\s*([^;!]+)(;|$)/g, function(match, prop, val, end) {
+            if (prop.trim() && val.trim() && match.indexOf('!important') === -1) {
+              return prop.trim() + ': ' + val.trim() + ' !important' + end;
+            }
+            return match;
+          });
+          return mediaQuery + '{' + content + '}';
         }
+        return rule;
+      }
+      
+      // Skip if already has scope or is a reset rule
+      if (rule.indexOf(scope) === 0 && scope) {
+        return rule;
+      }
+      
+      // Process all other rules
+      var parts = rule.split('{');
+      if (parts.length === 2) {
+        var selector = parts[0].trim();
+        var styles = parts[1];
+        
+        // Skip if not a .pb- selector (unless it's a reset)
+        if (selector.indexOf('.pb-') === -1 && selector.indexOf(scope) === -1 && scope) {
+          return rule;
+        }
+        
+        // Scope the selector if it's a .pb- class
+        var scopedSelector = selector.indexOf('.pb-') >= 0 ? scopeSelector(selector) : selector;
+        
+        // Add !important to ALL properties that don't already have it
+        styles = styles.replace(/([a-z-]+)\s*:\s*([^;!]+)(;|$)/gi, function(match, prop, val, end) {
+          // Skip if already has !important or is a keyframe/animation property
+          if (match.indexOf('!important') >= 0 || prop === 'animation' || prop === 'transition') {
+            return match;
+          }
+          // Add !important to all other properties
+          return prop + ': ' + val.trim() + ' !important' + end;
+        });
+        
+        return scopedSelector + ' {' + styles;
       }
       return rule;
-    }).join('\n');
+    });
+    
+    return processedCSS.join('\n');
   }
 
   /* ===== 6. COMPONENT BUILDERS ===== */
@@ -959,6 +1062,7 @@ const EMBED_SCRIPT = String.raw`
     /* Inject CSS into document head with scoped selectors */
     var css = getWidgetCSS(config, widgetUniqueId);
     console.log('[ProfitBot] Injecting CSS into document head, length:', css.length);
+    console.log('[ProfitBot] CSS preview (first 500 chars):', css.substring(0, 500));
     
     // Check if style already exists (prevent duplicates)
     var existingStyleId = 'profitbot-style-' + widgetUniqueId;
@@ -972,6 +1076,16 @@ const EMBED_SCRIPT = String.raw`
     styleEl.textContent = css;
     document.head.appendChild(styleEl);
     console.log('[ProfitBot] CSS injected into document head');
+    
+    // Verify CSS was injected
+    setTimeout(function() {
+      var injected = document.getElementById(existingStyleId);
+      if (injected && injected.sheet) {
+        console.log('[ProfitBot] ✓ CSS stylesheet loaded, rules:', injected.sheet.cssRules?.length || 0);
+      } else {
+        console.error('[ProfitBot] ✗ CSS stylesheet not found or not loaded!');
+      }
+    }, 100);
     
     // Verify CSS values
     var b = config.bubble || {};
