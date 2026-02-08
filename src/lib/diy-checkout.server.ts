@@ -180,9 +180,25 @@ export async function createDiyCheckoutForOwner(
 		applied_discount: appliedDiscount
 	});
 
-	// If variant is unavailable, retry without variant_id (custom line items)
-	// Note: This will result in an invoice link, not a checkout link, since we can't build a cart permalink without variant IDs
-	if (!result.ok && result.error?.includes('no longer available')) {
+	// If variant is unavailable/invalid (wrong ID, deleted, unpublished, etc.), retry without variant_id (custom line items).
+	// Shopify can return various messages: "no longer available", "could not be found", "variant not found", "unavailable", etc.
+	// Note: Retry yields an invoice link, not a cart permalink, but the customer can still complete purchase.
+	const variantErrorPatterns = [
+		'no longer available',
+		'not found',
+		'could not be found',
+		'unavailable',
+		'variant',
+		'invalid variant',
+		'does not exist',
+		'merchandise'
+	];
+	const isVariantError =
+		!result.ok &&
+		result.error &&
+		variantErrorPatterns.some((p) => String(result.error).toLowerCase().includes(p));
+	if (isVariantError) {
+		console.warn('[DIY Checkout] Draft order failed (likely variant issue), retrying without variant_id. Error:', result.error);
 		const retryResult = await createDraftOrder(config, {
 			email: email?.trim() || undefined,
 			line_items: lineItems.map((li) => ({
