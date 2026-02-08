@@ -577,13 +577,35 @@ const EMBED_SCRIPT = String.raw`
   /* ===== 6. COMPONENT BUILDERS ===== */
   function createBubble(config, onClick) {
     var b = config.bubble || {};
+    var bubbleSize = b.bubbleSizePx || 60;
+    var bubbleBg = b.backgroundColor || '#3b82f6';
+    var bubbleRadius = b.borderRadiusStyle === 'circle' ? '50%' : b.borderRadiusStyle === 'rounded' ? '16px' : '0';
+    
     console.log('[ProfitBot] Creating bubble with config:', {
       backgroundColor: b.backgroundColor,
       bubbleSizePx: b.bubbleSizePx,
       rightPositionPx: b.rightPositionPx,
-      bottomPositionPx: b.bottomPositionPx
+      bottomPositionPx: b.bottomPositionPx,
+      computedSize: bubbleSize + 'px',
+      computedBg: bubbleBg
     });
     var btn = el('button', { type: 'button', className: 'pb-bubble pb-bubble-pulse', 'aria-label': 'Open chat' });
+    
+    // Add inline styles as fallback to ensure bubble is visible
+    btn.style.width = bubbleSize + 'px';
+    btn.style.height = bubbleSize + 'px';
+    btn.style.backgroundColor = bubbleBg;
+    btn.style.borderRadius = bubbleRadius;
+    btn.style.display = 'flex';
+    btn.style.alignItems = 'center';
+    btn.style.justifyContent = 'center';
+    btn.style.pointerEvents = 'auto';
+    btn.style.cursor = 'pointer';
+    btn.style.border = 'none';
+    btn.style.position = 'relative';
+    btn.style.zIndex = '20';
+    btn.style.flexShrink = '0';
+    console.log('[ProfitBot] Bubble inline styles set as fallback');
 
     if (b.customIconUrl) {
       var img = el('img', {
@@ -876,7 +898,29 @@ const EMBED_SCRIPT = String.raw`
     /* Inject CSS */
     var css = getWidgetCSS(config);
     console.log('[ProfitBot] Injecting CSS, length:', css.length);
-    shadow.appendChild(el('style', { textContent: css }));
+    var styleEl = document.createElement('style');
+    styleEl.textContent = css;
+    shadow.appendChild(styleEl);
+    console.log('[ProfitBot] CSS injected. Style element:', styleEl, 'Parent:', styleEl.parentNode);
+    
+    // Verify CSS values
+    var b = config.bubble || {};
+    var bubbleSize = b.bubbleSizePx || 60;
+    var bubbleRight = b.rightPositionPx || 20;
+    var bubbleBottom = b.bottomPositionPx || 20;
+    console.log('[ProfitBot] Expected CSS values:', {
+      bubbleSize: bubbleSize + 'px',
+      bubbleRight: bubbleRight + 'px',
+      bubbleBottom: bubbleBottom + 'px'
+    });
+    
+    // Check if CSS contains expected values
+    if (css.indexOf('width: ' + bubbleSize + 'px') === -1) {
+      console.error('[ProfitBot] CSS missing bubble width!');
+    }
+    if (css.indexOf('right: ' + bubbleRight + 'px') === -1) {
+      console.error('[ProfitBot] CSS missing wrapper right position!');
+    }
 
     /* State */
     var state = {
@@ -905,6 +949,20 @@ const EMBED_SCRIPT = String.raw`
     var wrapper = el('div', { className: 'pb-wrapper' });
     console.log('[ProfitBot] Appending wrapper to shadow DOM');
     shadow.appendChild(wrapper);
+    
+    // Force wrapper to have inline styles as fallback (in case CSS doesn't load)
+    var b = config.bubble || {};
+    var bubbleRight = b.rightPositionPx || 20;
+    var bubbleBottom = b.bottomPositionPx || 20;
+    wrapper.style.position = 'fixed';
+    wrapper.style.right = bubbleRight + 'px';
+    wrapper.style.bottom = bubbleBottom + 'px';
+    wrapper.style.zIndex = '2147483647';
+    wrapper.style.display = 'flex';
+    wrapper.style.flexDirection = 'column';
+    wrapper.style.alignItems = 'flex-end';
+    wrapper.style.pointerEvents = 'none';
+    console.log('[ProfitBot] Wrapper inline styles set as fallback');
 
     /* Backdrop (mobile only) */
     var backdrop = el('div', { className: 'pb-backdrop' });
@@ -1546,11 +1604,41 @@ const EMBED_SCRIPT = String.raw`
     dispatchEvent('profitbot:ready');
     console.log('[ProfitBot] Widget ready! Bubble should be visible at bottom-right.');
     
-    // Verify bubble is in DOM
+    // Verify bubble is in DOM and styles are applied
     setTimeout(function() {
       var bubbleEl = shadow.querySelector('.pb-bubble');
+      var wrapperEl = shadow.querySelector('.pb-wrapper');
+      
+      if (wrapperEl) {
+        var wrapperStyles = window.getComputedStyle(wrapperEl);
+        console.log('[ProfitBot] Wrapper computed styles:', {
+          position: wrapperStyles.position,
+          right: wrapperStyles.right,
+          bottom: wrapperStyles.bottom,
+          display: wrapperStyles.display,
+          zIndex: wrapperStyles.zIndex
+        });
+        var wrapperRect = wrapperEl.getBoundingClientRect();
+        console.log('[ProfitBot] Wrapper position:', {
+          top: wrapperRect.top,
+          left: wrapperRect.left,
+          width: wrapperRect.width,
+          height: wrapperRect.height
+        });
+      } else {
+        console.error('[ProfitBot] ✗ Wrapper NOT found in DOM!');
+      }
+      
       if (bubbleEl) {
         console.log('[ProfitBot] ✓ Bubble found in DOM');
+        var bubbleStyles = window.getComputedStyle(bubbleEl);
+        console.log('[ProfitBot] Bubble computed styles:', {
+          width: bubbleStyles.width,
+          height: bubbleStyles.height,
+          backgroundColor: bubbleStyles.backgroundColor,
+          position: bubbleStyles.position,
+          display: bubbleStyles.display
+        });
         var rect = bubbleEl.getBoundingClientRect();
         console.log('[ProfitBot] Bubble position:', { 
           top: rect.top, 
@@ -1559,10 +1647,16 @@ const EMBED_SCRIPT = String.raw`
           height: rect.height,
           visible: rect.width > 0 && rect.height > 0
         });
+        
+        if (rect.width === 0 || rect.height === 0) {
+          console.error('[ProfitBot] ⚠️ Bubble has no dimensions! CSS may not be applied.');
+          console.error('[ProfitBot] Style element in shadow:', shadow.querySelector('style'));
+          console.error('[ProfitBot] CSS content length:', shadow.querySelector('style')?.textContent?.length || 0);
+        }
       } else {
         console.error('[ProfitBot] ✗ Bubble NOT found in DOM!');
       }
-    }, 500);
+    }, 1000);
 
     /* Keyboard */
     document.addEventListener('keydown', function(e) {
