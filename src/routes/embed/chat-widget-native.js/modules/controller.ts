@@ -442,6 +442,12 @@ export const controller = String.raw`
         messagesArea.appendChild(typingIndicatorEl);
       }
 
+      /* Always sync starter prompts visibility with message state */
+      if (state.messages.length > 0) {
+        state.showStarterPrompts = false;
+        if (startersArea) startersArea.style.display = 'none';
+      }
+
       requestAnimationFrame(function() { scrollToBottom(); });
     }
 
@@ -567,15 +573,8 @@ export const controller = String.raw`
         })
         .catch(function(err) {
           console.error('[ProfitBot] Error fetching messages:', err);
-          console.error('[ProfitBot] Error details - widgetId:', widgetId, 'sessionId:', sessionId, 'base:', base);
           state.messagesLoading = false;
-          // Retry once after a short delay if this was a force refresh
-          if (forceRefresh) {
-            console.log('[ProfitBot] Retrying message fetch after 1 second...');
-            setTimeout(function() {
-              fetchMessages(true);
-            }, 1000);
-          }
+          renderMessages();
         });
     }
 
@@ -967,8 +966,30 @@ export const controller = String.raw`
         state.messages.push({ id: null, _localId: nextLocalId(), role: 'bot', content: reply, checkoutPreview: checkoutPreview || undefined, createdAt: new Date().toISOString() });
       }
       renderMessages();
-      // Sync with database once after response to reconcile local messages with stored ones
-      setTimeout(function() { fetchMessages(true); }, 2000);
+      // Silent sync: replace local state with DB data but skip DOM rebuild if message count matches
+      // This assigns real IDs to local messages without any visual flash
+      setTimeout(function() { silentSync(); }, 2000);
+    }
+
+    function silentSync() {
+      if (!widgetId || !sessionId || sessionId === 'preview') return;
+      var url = base + '/api/widgets/' + widgetId + '/messages?session_id=' + encodeURIComponent(sessionId);
+      fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' }, credentials: 'omit' })
+        .then(function(res) { return res.ok ? res.json() : null; })
+        .then(function(data) {
+          if (!data) return;
+          var list = Array.isArray(data.messages) ? data.messages : [];
+          // Only update state data (assign real IDs) — don't touch the DOM if content hasn't changed
+          if (list.length >= state.messages.length) {
+            state.messages = list.map(function(m) {
+              return { id: m.id, _localId: nextLocalId(), role: m.role === 'user' ? 'user' : 'bot', content: m.content, avatarUrl: m.avatarUrl, checkoutPreview: m.checkoutPreview, createdAt: m.createdAt };
+            });
+            state.lastMessageCount = list.length;
+          }
+          state.agentTyping = !!data.agentTyping;
+          state.agentAvatarUrl = data.agentAvatarUrl || null;
+        })
+        .catch(function() {});
     }
 
     /* ===== INIT ===== */
