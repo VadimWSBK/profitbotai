@@ -592,38 +592,24 @@ const EMBED_SCRIPT = String.raw`
     var btn = el('button', { type: 'button', className: 'pb-bubble pb-bubble-pulse', 'aria-label': 'Open chat' });
     
     // Add inline styles as fallback to ensure bubble is visible
-    // Set inline styles using both methods to ensure they stick
-    var inlineStyle = 'width: ' + bubbleSize + 'px !important; ' +
-                      'height: ' + bubbleSize + 'px !important; ' +
-                      'background-color: ' + bubbleBg + ' !important; ' +
-                      'border-radius: ' + bubbleRadius + ' !important; ' +
-                      'display: flex !important; ' +
-                      'align-items: center !important; ' +
-                      'justify-content: center !important; ' +
-                      'pointer-events: auto !important; ' +
-                      'cursor: pointer !important; ' +
-                      'border: none !important; ' +
-                      'position: relative !important; ' +
-                      'z-index: 20 !important; ' +
-                      'flex-shrink: 0 !important; ' +
-                      'box-shadow: 0 8px 24px rgba(0,0,0,0.25), 0 4px 8px rgba(0,0,0,0.15) !important;';
-    btn.setAttribute('style', inlineStyle);
-    
-    // Also set via style object for compatibility
-    btn.style.width = bubbleSize + 'px';
-    btn.style.height = bubbleSize + 'px';
-    btn.style.backgroundColor = bubbleBg;
-    btn.style.borderRadius = bubbleRadius;
-    btn.style.display = 'flex';
-    btn.style.alignItems = 'center';
-    btn.style.justifyContent = 'center';
-    btn.style.pointerEvents = 'auto';
-    btn.style.cursor = 'pointer';
-    btn.style.border = 'none';
-    btn.style.position = 'relative';
-    btn.style.zIndex = '20';
-    btn.style.flexShrink = '0';
-    btn.style.boxShadow = '0 8px 24px rgba(0,0,0,0.25), 0 4px 8px rgba(0,0,0,0.15)';
+    // Use setProperty with 'important' flag - this is the most reliable method
+    btn.style.setProperty('width', bubbleSize + 'px', 'important');
+    btn.style.setProperty('height', bubbleSize + 'px', 'important');
+    btn.style.setProperty('min-width', bubbleSize + 'px', 'important');
+    btn.style.setProperty('min-height', bubbleSize + 'px', 'important');
+    btn.style.setProperty('background-color', bubbleBg, 'important');
+    btn.style.setProperty('border-radius', bubbleRadius, 'important');
+    btn.style.setProperty('display', 'flex', 'important');
+    btn.style.setProperty('align-items', 'center', 'important');
+    btn.style.setProperty('justify-content', 'center', 'important');
+    btn.style.setProperty('pointer-events', 'auto', 'important');
+    btn.style.setProperty('cursor', 'pointer', 'important');
+    btn.style.setProperty('border', 'none', 'important');
+    btn.style.setProperty('position', 'relative', 'important');
+    btn.style.setProperty('z-index', '20', 'important');
+    btn.style.setProperty('flex-shrink', '0', 'important');
+    btn.style.setProperty('box-shadow', '0 8px 24px rgba(0,0,0,0.25), 0 4px 8px rgba(0,0,0,0.15)', 'important');
+    btn.style.setProperty('outline', 'none', 'important');
     
     console.log('[ProfitBot] Bubble inline styles set as fallback');
     console.log('[ProfitBot] Bubble element after styles:', btn);
@@ -983,26 +969,15 @@ const EMBED_SCRIPT = String.raw`
     var b = config.bubble || {};
     var bubbleRight = b.rightPositionPx || 20;
     var bubbleBottom = b.bottomPositionPx || 20;
-    // Set wrapper styles with !important to ensure they apply
-    var wrapperStyle = 'position: fixed !important; ' +
-                        'right: ' + bubbleRight + 'px !important; ' +
-                        'bottom: ' + bubbleBottom + 'px !important; ' +
-                        'z-index: 2147483647 !important; ' +
-                        'display: flex !important; ' +
-                        'flex-direction: column !important; ' +
-                        'align-items: flex-end !important; ' +
-                        'pointer-events: none !important;';
-    wrapper.setAttribute('style', wrapperStyle);
-    
-    // Also set via style object
-    wrapper.style.position = 'fixed';
-    wrapper.style.right = bubbleRight + 'px';
-    wrapper.style.bottom = bubbleBottom + 'px';
-    wrapper.style.zIndex = '2147483647';
-    wrapper.style.display = 'flex';
-    wrapper.style.flexDirection = 'column';
-    wrapper.style.alignItems = 'flex-end';
-    wrapper.style.pointerEvents = 'none';
+    // Use setProperty with 'important' flag for wrapper
+    wrapper.style.setProperty('position', 'fixed', 'important');
+    wrapper.style.setProperty('right', bubbleRight + 'px', 'important');
+    wrapper.style.setProperty('bottom', bubbleBottom + 'px', 'important');
+    wrapper.style.setProperty('z-index', '2147483647', 'important');
+    wrapper.style.setProperty('display', 'flex', 'important');
+    wrapper.style.setProperty('flex-direction', 'column', 'important');
+    wrapper.style.setProperty('align-items', 'flex-end', 'important');
+    wrapper.style.setProperty('pointer-events', 'none', 'important');
     console.log('[ProfitBot] Wrapper inline styles set as fallback');
     console.log('[ProfitBot] Wrapper style attribute:', wrapper.getAttribute('style'));
 
@@ -1060,8 +1035,24 @@ const EMBED_SCRIPT = String.raw`
         width: computed.width,
         height: computed.height,
         display: computed.display,
-        position: computed.position
+        position: computed.position,
+        backgroundColor: computed.backgroundColor
       });
+      console.log('[ProfitBot] Bubble actual style attribute:', bubble.getAttribute('style'));
+      console.log('[ProfitBot] Bubble style.cssText:', bubble.style.cssText);
+      
+      // If styles aren't applying, try forcing them again
+      if (computed.width === '0px' || computed.height === '0px') {
+        console.warn('[ProfitBot] Styles not applied, forcing re-application...');
+        var b = config.bubble || {};
+        var bubbleSize = b.bubbleSizePx || 60;
+        bubble.style.setProperty('width', bubbleSize + 'px', 'important');
+        bubble.style.setProperty('height', bubbleSize + 'px', 'important');
+        bubble.style.setProperty('display', 'flex', 'important');
+        bubble.style.setProperty('min-width', bubbleSize + 'px', 'important');
+        bubble.style.setProperty('min-height', bubbleSize + 'px', 'important');
+        console.log('[ProfitBot] Forced styles re-applied');
+      }
     }, 100);
 
     /* Fetch visitor name */
@@ -1680,15 +1671,32 @@ const EMBED_SCRIPT = String.raw`
           right: wrapperStyles.right,
           bottom: wrapperStyles.bottom,
           display: wrapperStyles.display,
-          zIndex: wrapperStyles.zIndex
+          zIndex: wrapperStyles.zIndex,
+          visibility: wrapperStyles.visibility,
+          opacity: wrapperStyles.opacity
         });
         var wrapperRect = wrapperEl.getBoundingClientRect();
         console.log('[ProfitBot] Wrapper position:', {
           top: wrapperRect.top,
           left: wrapperRect.left,
           width: wrapperRect.width,
-          height: wrapperRect.height
+          height: wrapperRect.height,
+          visible: wrapperRect.width > 0 && wrapperRect.height > 0
         });
+        
+        // If wrapper has no dimensions, fix it
+        if (wrapperRect.width === 0 || wrapperRect.height === 0) {
+          console.warn('[ProfitBot] Wrapper has no dimensions, forcing...');
+          var b = config.bubble || {};
+          var bubbleRight = b.rightPositionPx || 20;
+          var bubbleBottom = b.bottomPositionPx || 20;
+          wrapperEl.style.setProperty('position', 'fixed', 'important');
+          wrapperEl.style.setProperty('right', bubbleRight + 'px', 'important');
+          wrapperEl.style.setProperty('bottom', bubbleBottom + 'px', 'important');
+          wrapperEl.style.setProperty('display', 'flex', 'important');
+          wrapperEl.style.setProperty('visibility', 'visible', 'important');
+          wrapperEl.style.setProperty('opacity', '1', 'important');
+        }
       } else {
         console.error('[ProfitBot] ✗ Wrapper NOT found in DOM!');
       }
@@ -1716,6 +1724,40 @@ const EMBED_SCRIPT = String.raw`
           console.error('[ProfitBot] ⚠️ Bubble has no dimensions! CSS may not be applied.');
           console.error('[ProfitBot] Style element in shadow:', shadow.querySelector('style'));
           console.error('[ProfitBot] CSS content length:', shadow.querySelector('style')?.textContent?.length || 0);
+          
+          // Check what CSS rules are actually applied
+          var styleSheet = shadow.querySelector('style')?.sheet;
+          if (styleSheet) {
+            try {
+              var rules = styleSheet.cssRules || styleSheet.rules;
+              console.log('[ProfitBot] CSS rules count:', rules?.length || 0);
+              for (var i = 0; i < Math.min(rules?.length || 0, 10); i++) {
+                if (rules[i].selectorText && rules[i].selectorText.indexOf('pb-bubble') >= 0) {
+                  console.log('[ProfitBot] Bubble CSS rule:', rules[i].selectorText, rules[i].style.cssText);
+                }
+              }
+            } catch (e) {
+              console.error('[ProfitBot] Could not read CSS rules:', e);
+            }
+          }
+          
+          // Try one more time to force styles
+          var b = config.bubble || {};
+          var bubbleSize = b.bubbleSizePx || 60;
+          bubble.style.setProperty('width', bubbleSize + 'px', 'important');
+          bubble.style.setProperty('height', bubbleSize + 'px', 'important');
+          bubble.style.setProperty('min-width', bubbleSize + 'px', 'important');
+          bubble.style.setProperty('min-height', bubbleSize + 'px', 'important');
+          bubble.style.setProperty('display', 'flex', 'important');
+          
+          // Force a reflow
+          void bubble.offsetHeight;
+          
+          var newRect = bubble.getBoundingClientRect();
+          console.log('[ProfitBot] After force re-apply, bubble rect:', {
+            width: newRect.width,
+            height: newRect.height
+          });
         }
       } else {
         console.error('[ProfitBot] ✗ Bubble NOT found in DOM!');
