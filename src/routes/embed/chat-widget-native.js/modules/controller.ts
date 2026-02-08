@@ -521,6 +521,14 @@ export const controller = String.raw`
         .then(function(data) {
           console.log('[ProfitBot] Messages fetched successfully, count:', Array.isArray(data.messages) ? data.messages.length : 0);
           var list = Array.isArray(data.messages) ? data.messages : [];
+          // Dedupe by id in case API returns the same message twice
+          var seenIds = {};
+          list = list.filter(function(m) {
+            if (!m.id) return true;
+            if (seenIds[m.id]) return false;
+            seenIds[m.id] = true;
+            return true;
+          });
 
           if (forceRefresh || state.messages.length === 0) {
             state.messages = list.map(function(m) {
@@ -534,17 +542,31 @@ export const controller = String.raw`
               renderMessages();
             }
           } else if (list.length > state.messages.length) {
-            var existingIds = {};
+            // If we have any local (unsaved) messages, server list is source of truth — replace to avoid duplicates
+            var hasLocalMessages = false;
             for (var j = 0; j < state.messages.length; j++) {
-              if (state.messages[j].id) existingIds[state.messages[j].id] = true;
+              if (!state.messages[j].id) { hasLocalMessages = true; break; }
             }
-            var newMsgs = list.filter(function(m) { return m.id && !existingIds[m.id]; }).map(function(m) {
-              return { id: m.id, _localId: nextLocalId(), role: m.role === 'user' ? 'user' : 'bot', content: m.content, avatarUrl: m.avatarUrl, checkoutPreview: m.checkoutPreview, createdAt: m.createdAt };
-            });
-            if (newMsgs.length > 0) {
-              state.messages = state.messages.concat(newMsgs);
-              state.showStarterPrompts = false; // Hide starter prompts when new messages arrive
-              renderMessages();
+            if (hasLocalMessages) {
+              state.messages = list.map(function(m) {
+                return { id: m.id, _localId: nextLocalId(), role: m.role === 'user' ? 'user' : 'bot', content: m.content, avatarUrl: m.avatarUrl, checkoutPreview: m.checkoutPreview, createdAt: m.createdAt };
+              });
+              state.showStarterPrompts = false;
+              state.renderedIds = {};
+              renderMessages(true);
+            } else {
+              var existingIds = {};
+              for (var j = 0; j < state.messages.length; j++) {
+                if (state.messages[j].id) existingIds[state.messages[j].id] = true;
+              }
+              var newMsgs = list.filter(function(m) { return m.id && !existingIds[m.id]; }).map(function(m) {
+                return { id: m.id, _localId: nextLocalId(), role: m.role === 'user' ? 'user' : 'bot', content: m.content, avatarUrl: m.avatarUrl, checkoutPreview: m.checkoutPreview, createdAt: m.createdAt };
+              });
+              if (newMsgs.length > 0) {
+                state.messages = state.messages.concat(newMsgs);
+                state.showStarterPrompts = false; // Hide starter prompts when new messages arrive
+                renderMessages();
+              }
             }
           } else if (list.length === state.messages.length && list.length > 0) {
             /* Content may have changed (e.g. checkout preview added) */
@@ -986,6 +1008,13 @@ export const controller = String.raw`
         .then(function(data) {
           if (!data) return;
           var list = Array.isArray(data.messages) ? data.messages : [];
+          var seenIds = {};
+          list = list.filter(function(m) {
+            if (!m.id) return true;
+            if (seenIds[m.id]) return false;
+            seenIds[m.id] = true;
+            return true;
+          });
           // Only update state data (assign real IDs) — don't touch the DOM if content hasn't changed
           if (list.length >= state.messages.length) {
             state.messages = list.map(function(m) {
