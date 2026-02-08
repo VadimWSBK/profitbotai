@@ -35,14 +35,14 @@ export const GET: RequestHandler = async (event) => {
 			? ((data.n8n_webhook_url as string)?.trim() || (env.N8N_CHAT_WEBHOOK_URL ?? '').trim() || '')
 			: '';
 
-		// When widget has an agent, use agent's chat backend and system prompt. Use admin so anon embed can read agent.
+		// When widget has an agent, use agent's chat backend and bot config. Use admin so anon embed can read agent.
 		const agentId = (config.agentId as string)?.trim();
-		let agentSystemPrompt: string | undefined;
+		let agentBot: { role: string; tone: string; instructions: string } | undefined;
 		if (agentId) {
 			const admin = getSupabaseAdmin();
 			const { data: agentRow } = await admin
 				.from('agents')
-				.select('chat_backend, n8n_webhook_url, system_prompt, bot_role, bot_tone, bot_instructions')
+				.select('chat_backend, n8n_webhook_url, bot_role, bot_tone, bot_instructions')
 				.eq('id', agentId)
 				.single();
 			if (agentRow) {
@@ -54,17 +54,12 @@ export const GET: RequestHandler = async (event) => {
 					// Direct LLM: clear n8n URL so the embed never routes to n8n
 					n8nUrl = '';
 				}
-				// System prompt for n8n: always combine Role + Tone + Additional instructions; append system_prompt if set
-				const role = (agentRow.bot_role as string)?.trim();
-				const tone = (agentRow.bot_tone as string)?.trim();
-				const instructions = (agentRow.bot_instructions as string)?.trim();
-				const sp = (agentRow.system_prompt as string)?.trim();
-				const parts: string[] = [];
-				if (role) parts.push(role);
-				if (tone) parts.push(`Tone: ${tone}`);
-				if (instructions) parts.push(instructions);
-				if (sp) parts.push(sp);
-				if (parts.length > 0) agentSystemPrompt = parts.join('\n\n');
+				// Pass Role + Tone + Instructions as the bot config (rules come from RAG)
+				agentBot = {
+					role: (agentRow.bot_role as string) ?? '',
+					tone: (agentRow.bot_tone as string) ?? '',
+					instructions: (agentRow.bot_instructions as string) ?? ''
+				};
 			}
 		}
 
@@ -78,7 +73,7 @@ export const GET: RequestHandler = async (event) => {
 				bubble: config.bubble ?? {},
 				tooltip: config.tooltip ?? {},
 				window: config.window ?? {},
-				bot: config.bot ?? {},
+				bot: agentBot ?? config.bot ?? {},
 				chatBackend,
 				llmProvider: config.llmProvider ?? '',
 				llmModel: config.llmModel ?? '',
@@ -88,8 +83,7 @@ export const GET: RequestHandler = async (event) => {
 				n8nWebhookUrl: n8nUrl,
 				webhookTriggers: (config.webhookTriggers as unknown[]) ?? [],
 				agentId: (config.agentId as string) ?? '',
-				agentAutonomy: Boolean(config.agentAutonomy),
-				...(agentSystemPrompt !== undefined && { agentSystemPrompt })
+				agentAutonomy: Boolean(config.agentAutonomy)
 			},
 			n8nWebhookUrl: n8nUrl,
 			createdAt: data.created_at,

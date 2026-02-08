@@ -841,9 +841,8 @@ export const controller = String.raw`
     }
 
     function buildSystemPrompt() {
-      if (config.agentSystemPrompt && config.agentSystemPrompt.trim()) {
-        return config.agentSystemPrompt.trim();
-      }
+      // Send only Role + Tone as the system prompt.
+      // All other rules/instructions are stored in RAG and retrieved per-query server-side.
       var bot = config.bot || {};
       var parts = [];
       if (bot.role && bot.role.trim()) parts.push(bot.role.trim());
