@@ -198,7 +198,7 @@ export const controller = String.raw`
     });
 
     /* Bottom row: tooltip + bubble */
-    var bottomRow = el('div', { style: { display: 'flex', flexDirection: 'row', alignItems: 'flex-end', gap: '8px', position: 'relative', zIndex: '10' } });
+    var bottomRow = el('div', { style: { display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '12px', position: 'relative', zIndex: '10' } });
     if (tooltip) bottomRow.appendChild(tooltip);
     bottomRow.appendChild(bubble);
     wrapper.appendChild(bottomRow);
