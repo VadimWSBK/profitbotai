@@ -166,7 +166,7 @@ export const cssgenerator = String.raw`
       '@keyframes pb-fly-right { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }',
 
       /* Bubbles */
-      '.pb-msg { padding: 12px 16px; border-radius: ' + msgRadius + 'px; max-width: 95%; word-wrap: break-word; overflow-wrap: break-word; position: relative; }',
+      '.pb-msg { padding: 12px 16px; border-radius: ' + msgRadius + 'px; max-width: 100%; word-wrap: break-word; overflow-wrap: break-word; position: relative; }',
       '.pb-msg-bot { background-color: ' + botBg + '; color: ' + botText + '; align-self: flex-start; }',
       '.pb-msg-user { background-color: ' + bubbleBg + '; color: ' + (b.colorOfInternalIcons || '#ffffff') + '; align-self: flex-end; }',
       '.pb-msg-content { min-width: 0; overflow-x: auto; overflow-y: visible; max-width: 100%; }',
@@ -176,7 +176,7 @@ export const cssgenerator = String.raw`
       '.pb-avatar-placeholder { width: ' + avatarSize + 'px; height: ' + avatarSize + 'px; border-radius: ' + avatarRadius + 'px; background-color: ' + botBg + '; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }',
 
       /* Timestamps */
-      '.pb-timestamp { font-size: 0.7rem; opacity: 0.6; margin-top: 4px; padding: 0 4px; user-select: none; line-height: 1.2; }',
+      '.pb-timestamp { font-size: 0.85rem; opacity: 0.7; margin-top: 4px; padding: 0 4px; user-select: none; line-height: 1.3; }',
 
       /* Copy button */
       '.pb-copy-btn { position: absolute; top: 8px; right: 8px; background: none; border: none; cursor: pointer; opacity: 0; transition: opacity 0.2s; padding: 2px; border-radius: 4px; color: inherit; display: flex; align-items: center; justify-content: center; }',

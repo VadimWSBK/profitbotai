@@ -175,7 +175,7 @@ export const components = String.raw`
       }
     }
 
-    var col = el('div', { style: { display: 'flex', flexDirection: 'column', maxWidth: '95%', minWidth: '0' } });
+    var col = el('div', { style: { display: 'flex', flexDirection: 'column', maxWidth: '90%', minWidth: '0' } });
 
     var bubble = el('div', { className: 'pb-msg ' + (isBot ? 'pb-msg-bot' : 'pb-msg-user') });
 
