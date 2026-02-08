@@ -143,7 +143,10 @@ export const controller = String.raw`
       localIdCounter: 0,
       isStreaming: false,
       streamingMsgId: null,
-      scrollFabEl: null
+      scrollFabEl: null,
+      pollingActive: false,
+      pollingAttempts: 0,
+      maxPollingAttempts: 10 // Stop polling after 10 attempts (30 seconds) if no new messages
     };
 
     function nextLocalId() { return ++state.localIdCounter; }
@@ -270,7 +273,8 @@ export const controller = String.raw`
       chatWin.classList.remove('pb-closing');
       inputEl.focus();
       fetchMessages(true);
-      startPolling();
+      // Don't start continuous polling - only poll when messages are sent
+      // Initial fetchMessages(true) loads existing messages
       dispatchEvent('profitbot:chat-opened');
     }
 
@@ -446,6 +450,7 @@ export const controller = String.raw`
       var prompts = (config.window && config.window.starterPrompts) || [];
       var filtered = prompts.filter(function(p) { return p && p.trim(); });
       // Hide starter prompts if there are any messages (chat has been initiated)
+      // This includes user messages, bot messages, or any message at all
       if (state.messages.length > 0) {
         state.showStarterPrompts = false;
         startersArea.style.display = 'none';
@@ -547,6 +552,15 @@ export const controller = String.raw`
 
           state.agentTyping = !!data.agentTyping;
           state.agentAvatarUrl = data.agentAvatarUrl || null;
+          
+          // If we received new messages, reset polling attempts (keep polling)
+          // If no new messages and we've been polling, we'll stop after max attempts
+          var hadNewMessages = list.length > state.lastMessageCount;
+          if (hadNewMessages) {
+            state.pollingAttempts = 0; // Reset counter - new messages mean we should keep polling
+            console.log('[ProfitBot] New messages received, resetting polling counter');
+          }
+          
           state.lastMessageCount = list.length;
           state.messagesLoading = false;
           updateStarterPrompts();
@@ -573,16 +587,34 @@ export const controller = String.raw`
         console.log('[ProfitBot] Polling paused - streaming in progress');
         return;
       }
+      // Reset polling attempts when starting fresh
+      state.pollingAttempts = 0;
+      state.pollingActive = true;
+      console.log('[ProfitBot] Starting smart polling (will stop after ' + state.maxPollingAttempts + ' attempts if no new messages)');
+      
       state.pollTimer = setInterval(function() { 
         // Double-check streaming state before each poll
-        if (!state.isStreaming) {
-          fetchMessages(); 
+        if (state.isStreaming) {
+          return;
         }
+        // Stop polling if we've exceeded max attempts
+        if (state.pollingAttempts >= state.maxPollingAttempts) {
+          console.log('[ProfitBot] Stopping polling - no new messages after ' + state.maxPollingAttempts + ' attempts');
+          stopPolling();
+          return;
+        }
+        state.pollingAttempts++;
+        fetchMessages(); 
       }, 3000);
     }
 
     function stopPolling() {
-      if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+      if (state.pollTimer) { 
+        clearInterval(state.pollTimer); 
+        state.pollTimer = null; 
+        state.pollingActive = false;
+        state.pollingAttempts = 0;
+      }
     }
 
     function handleRefresh(btn) {
@@ -610,7 +642,7 @@ export const controller = String.raw`
       setTimeout(function() {
         if (svgIcon) svgIcon.classList.remove('pb-spin');
         btn.disabled = false;
-        startPolling();
+        // Don't start continuous polling after refresh - only poll when messages are sent
       }, 2000);
     }
 
@@ -743,6 +775,10 @@ export const controller = String.raw`
       state.messages.push({ id: null, _localId: nextLocalId(), role: 'user', content: trimmed, createdAt: new Date().toISOString() });
       state.showStarterPrompts = false;
       state.loading = true;
+      // Hide starter prompts immediately when message is sent
+      if (startersArea) {
+        startersArea.style.display = 'none';
+      }
       renderMessages();
       updateStarterPrompts();
       inputEl.disabled = true;
@@ -751,7 +787,8 @@ export const controller = String.raw`
 
       dispatchEvent('profitbot:message-sent', { message: trimmed });
 
-      /* Restart polling */
+      /* Start polling to check for responses (human agent replies or delayed bot responses) */
+      /* Polling will automatically stop after maxPollingAttempts if no new messages */
       startPolling();
 
       /* Get conversation ID and send */
@@ -849,9 +886,9 @@ export const controller = String.raw`
                   renderMessages(true);
                 }
               }
-              startPolling();
-              /* Sync with database after delay */
-              setTimeout(function() { fetchMessages(); }, 2000);
+              // Don't restart polling here - streaming already delivered the response
+              // Only sync with database once after streaming completes
+              setTimeout(function() { fetchMessages(true); }, 2000);
             });
           } else {
             return res.json().then(function(data) {
@@ -925,9 +962,10 @@ export const controller = String.raw`
         state.messages.push({ id: null, _localId: nextLocalId(), role: 'bot', content: reply, checkoutPreview: checkoutPreview || undefined, createdAt: new Date().toISOString() });
       }
       renderMessages();
-      startPolling();
-      /* Sync after delay */
-      setTimeout(function() { fetchMessages(); }, 2000);
+      // Don't start continuous polling - only poll when actively waiting for a response
+      // If this was a direct chat response, we already have it, so no need to poll
+      // Only sync with database once after response
+      setTimeout(function() { fetchMessages(true); }, 2000);
     }
 
     /* ===== INIT ===== */
