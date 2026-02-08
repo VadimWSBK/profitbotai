@@ -545,10 +545,21 @@ export const controller = String.raw`
             }
           } else if (list.length > state.messages.length) {
             var existingIds = {};
+            var existingContent = {};
             for (var j = 0; j < state.messages.length; j++) {
               if (state.messages[j].id) existingIds[state.messages[j].id] = true;
+              // Also track by role+content to catch local messages with id:null
+              var key = state.messages[j].role + '::' + (state.messages[j].content || '');
+              existingContent[key] = true;
             }
-            var newMsgs = list.filter(function(m) { return m.id && !existingIds[m.id]; }).map(function(m) {
+            var newMsgs = list.filter(function(m) {
+              if (m.id && existingIds[m.id]) return false;
+              // Fallback: skip if a local message already has same role+content
+              var role = m.role === 'user' ? 'user' : 'bot';
+              var key = role + '::' + (m.content || '');
+              if (existingContent[key]) return false;
+              return true;
+            }).map(function(m) {
               return { id: m.id, _localId: nextLocalId(), role: m.role === 'user' ? 'user' : 'bot', content: m.content, avatarUrl: m.avatarUrl, checkoutPreview: m.checkoutPreview, createdAt: m.createdAt };
             });
             if (newMsgs.length > 0) {
@@ -802,9 +813,12 @@ export const controller = String.raw`
 
       dispatchEvent('profitbot:message-sent', { message: trimmed });
 
-      /* Start polling to check for responses (human agent replies or delayed bot responses) */
-      /* Polling will automatically stop after maxPollingAttempts if no new messages */
-      startPolling();
+      /* NOTE: Don't start polling here — wait until after the bot response arrives.
+         Starting polling before the response causes duplicate messages because
+         fetchMessages() sees server-saved messages as "new" (they have real IDs)
+         while local messages have id:null and aren't matched by dedup logic.
+         Polling is started in finishSend() / streaming onDone to catch
+         subsequent human agent replies or delayed bot responses. */
 
       /* Get conversation ID and send */
       var conversationId = null;
@@ -903,9 +917,12 @@ export const controller = String.raw`
                   renderMessages(true);
                 }
               }
-              // Don't restart polling here - streaming already delivered the response
-              // Only sync with database once after streaming completes
-              setTimeout(function() { fetchMessages(true); }, 2000);
+              // Sync with database after streaming completes, then start polling
+              // for subsequent human agent replies
+              setTimeout(function() {
+                fetchMessages(true);
+                startPolling();
+              }, 2000);
             });
           } else {
             return res.json().then(function(data) {
@@ -984,7 +1001,11 @@ export const controller = String.raw`
       renderMessages();
       // Silent sync: replace local state with DB data but skip DOM rebuild if message count matches
       // This assigns real IDs to local messages without any visual flash
-      setTimeout(function() { silentSync(); }, 2000);
+      // After sync completes, start polling for subsequent human agent replies
+      setTimeout(function() {
+        silentSync();
+        startPolling();
+      }, 2000);
     }
 
     function silentSync() {
