@@ -9,14 +9,6 @@ export const components = String.raw`
     var bubbleBg = b.backgroundColor || '#3b82f6';
     var bubbleRadius = b.borderRadiusStyle === 'circle' ? '50%' : b.borderRadiusStyle === 'rounded' ? '16px' : '0';
     
-    console.log('[ProfitBot] Creating bubble with config:', {
-      backgroundColor: b.backgroundColor,
-      bubbleSizePx: b.bubbleSizePx,
-      rightPositionPx: b.rightPositionPx,
-      bottomPositionPx: b.bottomPositionPx,
-      computedSize: bubbleSize + 'px',
-      computedBg: bubbleBg
-    });
     var btn = el('button', { type: 'button', className: 'pb-bubble pb-bubble-pulse', 'aria-label': 'Open chat' });
     
     // Add inline styles as fallback to ensure bubble is visible
@@ -39,12 +31,6 @@ export const components = String.raw`
     btn.style.setProperty('box-shadow', '0 8px 24px rgba(0,0,0,0.25), 0 4px 8px rgba(0,0,0,0.15)', 'important');
     btn.style.setProperty('outline', 'none', 'important');
     
-    console.log('[ProfitBot] Bubble inline styles set as fallback');
-    console.log('[ProfitBot] Bubble element after styles:', btn);
-    console.log('[ProfitBot] Bubble style attribute:', btn.getAttribute('style'));
-    console.log('[ProfitBot] Bubble style.width:', btn.style.width);
-    console.log('[ProfitBot] Bubble style.height:', btn.style.height);
-
     if (b.customIconUrl) {
       var img = el('img', {
         src: b.customIconUrl,

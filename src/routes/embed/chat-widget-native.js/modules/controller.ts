@@ -27,7 +27,6 @@ export const controller = String.raw`
     }
 
     var widgetUrl = base + '/api/widgets/' + encodeURIComponent(widgetId);
-    console.log('[ProfitBot] Loading widget:', widgetId, 'from:', widgetUrl);
 
     fetch(widgetUrl, {
       method: 'GET',
@@ -46,7 +45,6 @@ export const controller = String.raw`
         if (!data || !data.config) {
           throw new Error('Invalid config: missing data or config');
         }
-        console.log('[ProfitBot] Widget config loaded, rendering...');
         renderWidget(container, data);
       })
       .catch(function(err) {
@@ -60,7 +58,6 @@ export const controller = String.raw`
   }
 
   function renderWidget(container, widgetData) {
-    console.log('[ProfitBot] renderWidget called');
     var config = widgetData.config;
     var sessionId = getSessionId();
     
@@ -70,27 +67,20 @@ export const controller = String.raw`
     
     /* Inject CSS into document head with scoped selectors */
     var css = getWidgetCSS(config, widgetUniqueId);
-    console.log('[ProfitBot] CSS type:', typeof css);
-    console.log('[ProfitBot] CSS is array:', Array.isArray(css));
     if (typeof css !== 'string') {
       console.error('[ProfitBot] CSS is not a string! Type:', typeof css, 'Value:', css);
       // Try to convert if it's an array
       if (Array.isArray(css)) {
         css = css.join('\n');
-        console.log('[ProfitBot] Converted array to string, new length:', css.length);
       } else {
         console.error('[ProfitBot] Cannot convert CSS to string, aborting widget render');
         return;
       }
     }
-    console.log('[ProfitBot] Injecting CSS into document head, length:', css.length);
     if (css.length < 1000) {
       console.warn('[ProfitBot] ⚠️ CSS is very short (' + css.length + ' chars), might be incomplete!');
-      console.log('[ProfitBot] Full CSS:', css);
-    } else {
-      console.log('[ProfitBot] CSS preview (first 500 chars):', css.substring(0, 500));
     }
-    
+
     // Check if style already exists (prevent duplicates)
     var existingStyleId = 'profitbot-style-' + widgetUniqueId;
     var existingStyle = document.getElementById(existingStyleId);
@@ -102,13 +92,12 @@ export const controller = String.raw`
     styleEl.id = existingStyleId;
     styleEl.textContent = css;
     document.head.appendChild(styleEl);
-    console.log('[ProfitBot] CSS injected into document head');
-    
+
     // Verify CSS was injected
     setTimeout(function() {
       var injected = document.getElementById(existingStyleId);
       if (injected && injected.sheet) {
-        console.log('[ProfitBot] ✓ CSS stylesheet loaded, rules:', injected.sheet.cssRules?.length || 0);
+        // CSS stylesheet loaded successfully
       } else {
         console.error('[ProfitBot] ✗ CSS stylesheet not found or not loaded!');
       }
@@ -119,12 +108,6 @@ export const controller = String.raw`
     var bubbleSize = b.bubbleSizePx || 60;
     var bubbleRight = b.rightPositionPx || 20;
     var bubbleBottom = b.bottomPositionPx || 20;
-    console.log('[ProfitBot] Expected CSS values:', {
-      bubbleSize: bubbleSize + 'px',
-      bubbleRight: bubbleRight + 'px',
-      bubbleBottom: bubbleBottom + 'px'
-    });
-
     /* State */
     var state = {
       isOpen: false,
@@ -153,7 +136,6 @@ export const controller = String.raw`
 
     /* Main wrapper */
     var wrapper = el('div', { className: 'pb-wrapper' });
-    console.log('[ProfitBot] Appending wrapper to container');
     container.appendChild(wrapper);
     
     // Force wrapper to have inline styles as fallback (in case CSS doesn't load)
@@ -169,8 +151,6 @@ export const controller = String.raw`
     wrapper.style.setProperty('flex-direction', 'column', 'important');
     wrapper.style.setProperty('align-items', 'flex-end', 'important');
     wrapper.style.setProperty('pointer-events', 'none', 'important');
-    console.log('[ProfitBot] Wrapper inline styles set as fallback');
-    console.log('[ProfitBot] Wrapper style attribute:', wrapper.getAttribute('style'));
 
     /* Backdrop (mobile only) */
     var backdrop = el('div', { className: 'pb-backdrop' });
@@ -202,36 +182,11 @@ export const controller = String.raw`
     if (tooltip) bottomRow.appendChild(tooltip);
     bottomRow.appendChild(bubble);
     wrapper.appendChild(bottomRow);
-    console.log('[ProfitBot] Bubble appended to wrapper. Bubble element:', bubble);
-    console.log('[ProfitBot] Bubble classes:', bubble.className);
-    console.log('[ProfitBot] Bubble inline styles after append:', {
-      width: bubble.style.width,
-      height: bubble.style.height,
-      backgroundColor: bubble.style.backgroundColor,
-      display: bubble.style.display
-    });
-    console.log('[ProfitBot] Wrapper element:', wrapper);
-    console.log('[ProfitBot] Wrapper inline styles:', {
-      position: wrapper.style.position,
-      right: wrapper.style.right,
-      bottom: wrapper.style.bottom
-    });
-    console.log('[ProfitBot] Container in DOM:', container.parentNode ? 'YES' : 'NO');
-    console.log('[ProfitBot] Container element:', container);
-    
+
     // Immediate check of computed styles
     setTimeout(function() {
       var computed = window.getComputedStyle(bubble);
-      console.log('[ProfitBot] Immediate computed styles:', {
-        width: computed.width,
-        height: computed.height,
-        display: computed.display,
-        position: computed.position,
-        backgroundColor: computed.backgroundColor
-      });
-      console.log('[ProfitBot] Bubble actual style attribute:', bubble.getAttribute('style'));
-      console.log('[ProfitBot] Bubble style.cssText:', bubble.style.cssText);
-      
+
       // If styles aren't applying, try forcing them again
       if (computed.width === '0px' || computed.height === '0px') {
         console.warn('[ProfitBot] Styles not applied, forcing re-application...');
@@ -242,7 +197,6 @@ export const controller = String.raw`
         bubble.style.setProperty('display', 'flex', 'important');
         bubble.style.setProperty('min-width', bubbleSize + 'px', 'important');
         bubble.style.setProperty('min-height', bubbleSize + 'px', 'important');
-        console.log('[ProfitBot] Forced styles re-applied');
       }
     }, 100);
 
@@ -513,8 +467,7 @@ export const controller = String.raw`
       if (forceRefresh) state.messagesLoading = true;
 
       var url = base + '/api/widgets/' + widgetId + '/messages?session_id=' + encodeURIComponent(sessionId);
-      console.log('[ProfitBot] Fetching messages from:', url);
-      
+
       fetch(url, {
         method: 'GET',
         headers: {
@@ -529,8 +482,10 @@ export const controller = String.raw`
           return res.json();
         })
         .then(function(data) {
-          console.log('[ProfitBot] Messages fetched successfully, count:', Array.isArray(data.messages) ? data.messages.length : 0);
           var list = Array.isArray(data.messages) ? data.messages : [];
+
+          // Clear messagesLoading before rendering so the spinner is removed
+          state.messagesLoading = false;
 
           if (forceRefresh || state.messages.length === 0) {
             state.messages = list.map(function(m) {
@@ -596,11 +551,9 @@ export const controller = String.raw`
           var hadNewMessages = list.length > state.lastMessageCount;
           if (hadNewMessages) {
             state.pollingAttempts = 0; // Reset counter - new messages mean we should keep polling
-            console.log('[ProfitBot] New messages received, resetting polling counter');
           }
           
           state.lastMessageCount = list.length;
-          state.messagesLoading = false;
           updateStarterPrompts();
         })
         .catch(function(err) {
@@ -615,14 +568,12 @@ export const controller = String.raw`
       if (!widgetId || !sessionId || sessionId === 'preview') return;
       // Don't poll while streaming to avoid race conditions
       if (state.isStreaming) {
-        console.log('[ProfitBot] Polling paused - streaming in progress');
         return;
       }
       // Reset polling attempts when starting fresh
       state.pollingAttempts = 0;
       state.pollingActive = true;
-      console.log('[ProfitBot] Starting smart polling (will stop after ' + state.maxPollingAttempts + ' attempts if no new messages)');
-      
+
       state.pollTimer = setInterval(function() { 
         // Double-check streaming state before each poll
         if (state.isStreaming) {
@@ -630,7 +581,6 @@ export const controller = String.raw`
         }
         // Stop polling if we've exceeded max attempts
         if (state.pollingAttempts >= state.maxPollingAttempts) {
-          console.log('[ProfitBot] Stopping polling - no new messages after ' + state.maxPollingAttempts + ' attempts');
           stopPolling();
           return;
         }
@@ -650,10 +600,8 @@ export const controller = String.raw`
 
     function handleRefresh(btn) {
       if (state.messagesLoading) {
-        console.log('[ProfitBot] Refresh already in progress, skipping...');
         return;
       }
-      console.log('[ProfitBot] Refresh triggered. Session ID:', sessionId);
       state.messagesLoading = true;
       state.messages = [];
       state.renderedIds = {};
@@ -666,7 +614,6 @@ export const controller = String.raw`
       // Ensure we have a valid sessionId before fetching
       if (!sessionId || sessionId === 'preview') {
         sessionId = getSessionId();
-        console.log('[ProfitBot] Refreshed sessionId:', sessionId);
       }
       
       fetchMessages(true);
@@ -879,7 +826,6 @@ export const controller = String.raw`
       // 2. Set Content-Type: text/event-stream header
       // 3. Send SSE format: data: {"token":"Hello"} data: {"token":"world"} data: {"done":true}
       // 4. Note: Streaming works best on self-hosted n8n. n8n Cloud may buffer responses behind Cloudflare
-      console.log('[ProfitBot] Calling n8n webhook directly (bypassing Vercel):', n8nUrl);
       var body = { message: message, sessionId: sessionId, widgetId: widgetId };
       if (conversationId) body.conversationId = conversationId;
       if (config.agentId) body.agentId = config.agentId;
@@ -899,7 +845,6 @@ export const controller = String.raw`
           var isStreaming = res.ok && res.body && (isSSE || !contentType.includes('application/json'));
           
           if (isStreaming) {
-            console.log('[ProfitBot] n8n streaming response detected. Content-Type:', contentType);
             // Stop polling while streaming to avoid race conditions
             stopPolling();
             /* Streaming response from n8n (direct call, not proxied through Vercel) */
@@ -1030,8 +975,6 @@ export const controller = String.raw`
     }
 
     /* ===== INIT ===== */
-    console.log('[ProfitBot] Widget initialization complete. Session ID:', sessionId);
-    console.log('[ProfitBot] Starting initial message fetch...');
     // Small delay to ensure DOM is fully ready and sessionId is set
     // Only fetch messages initially, don't start polling until chat is opened
     setTimeout(function() {
@@ -1040,8 +983,7 @@ export const controller = String.raw`
     }, 100);
     updateStarterPrompts();
     dispatchEvent('profitbot:ready');
-    console.log('[ProfitBot] Widget ready! Bubble should be visible at bottom-right.');
-    
+
     // Verify bubble is in DOM and styles are applied
     setTimeout(function() {
       var bubbleEl = container.querySelector('.pb-bubble');
@@ -1049,24 +991,8 @@ export const controller = String.raw`
       
       if (wrapperEl) {
         var wrapperStyles = window.getComputedStyle(wrapperEl);
-        console.log('[ProfitBot] Wrapper computed styles:', {
-          position: wrapperStyles.position,
-          right: wrapperStyles.right,
-          bottom: wrapperStyles.bottom,
-          display: wrapperStyles.display,
-          zIndex: wrapperStyles.zIndex,
-          visibility: wrapperStyles.visibility,
-          opacity: wrapperStyles.opacity
-        });
         var wrapperRect = wrapperEl.getBoundingClientRect();
-        console.log('[ProfitBot] Wrapper position:', {
-          top: wrapperRect.top,
-          left: wrapperRect.left,
-          width: wrapperRect.width,
-          height: wrapperRect.height,
-          visible: wrapperRect.width > 0 && wrapperRect.height > 0
-        });
-        
+
         // If wrapper has no dimensions, fix it
         if (wrapperRect.width === 0 || wrapperRect.height === 0) {
           console.warn('[ProfitBot] Wrapper has no dimensions, forcing...');
@@ -1085,24 +1011,9 @@ export const controller = String.raw`
       }
       
       if (bubbleEl) {
-        console.log('[ProfitBot] ✓ Bubble found in DOM');
         var bubbleStyles = window.getComputedStyle(bubbleEl);
-        console.log('[ProfitBot] Bubble computed styles:', {
-          width: bubbleStyles.width,
-          height: bubbleStyles.height,
-          backgroundColor: bubbleStyles.backgroundColor,
-          position: bubbleStyles.position,
-          display: bubbleStyles.display
-        });
         var rect = bubbleEl.getBoundingClientRect();
-        console.log('[ProfitBot] Bubble position:', { 
-          top: rect.top, 
-          left: rect.left, 
-          width: rect.width, 
-          height: rect.height,
-          visible: rect.width > 0 && rect.height > 0
-        });
-        
+
         if (rect.width === 0 || rect.height === 0) {
           console.error('[ProfitBot] ⚠️ Bubble has no dimensions! CSS may not be applied.');
           var styleEl = document.getElementById(existingStyleId);
@@ -1114,12 +1025,6 @@ export const controller = String.raw`
           if (styleSheet) {
             try {
               var rules = styleSheet.cssRules || styleSheet.rules;
-              console.log('[ProfitBot] CSS rules count:', rules?.length || 0);
-              for (var i = 0; i < Math.min(rules?.length || 0, 10); i++) {
-                if (rules[i].selectorText && rules[i].selectorText.indexOf('pb-bubble') >= 0) {
-                  console.log('[ProfitBot] Bubble CSS rule:', rules[i].selectorText, rules[i].style.cssText);
-                }
-              }
             } catch (e) {
               console.error('[ProfitBot] Could not read CSS rules:', e);
             }
@@ -1138,10 +1043,6 @@ export const controller = String.raw`
           void bubble.offsetHeight;
           
           var newRect = bubble.getBoundingClientRect();
-          console.log('[ProfitBot] After force re-apply, bubble rect:', {
-            width: newRect.width,
-            height: newRect.height
-          });
         }
       } else {
         console.error('[ProfitBot] ✗ Bubble NOT found in DOM!');
