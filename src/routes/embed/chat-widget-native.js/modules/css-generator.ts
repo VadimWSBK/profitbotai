@@ -166,7 +166,7 @@ export const cssgenerator = String.raw`
       '@keyframes pb-fly-right { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }',
 
       /* Bubbles */
-      '.pb-msg { padding: 12px 16px; border-radius: ' + msgRadius + 'px; max-width: 85%; word-wrap: break-word; overflow-wrap: break-word; position: relative; }',
+      '.pb-msg { padding: 12px 16px; border-radius: ' + msgRadius + 'px; max-width: 95%; word-wrap: break-word; overflow-wrap: break-word; position: relative; }',
       '.pb-msg-bot { background-color: ' + botBg + '; color: ' + botText + '; align-self: flex-start; }',
       '.pb-msg-user { background-color: ' + bubbleBg + '; color: ' + (b.colorOfInternalIcons || '#ffffff') + '; align-self: flex-end; }',
       '.pb-msg-content { min-width: 0; overflow-x: auto; overflow-y: visible; max-width: 100%; }',
