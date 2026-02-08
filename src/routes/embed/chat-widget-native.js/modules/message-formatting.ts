@@ -103,6 +103,21 @@ export const messageformatting = String.raw`
     return html;
   }
 
+  function formatBoldAndEscape(text) {
+    if (!text || typeof text !== 'string') return '';
+    var out = '';
+    var re = /\*\*([^*]+)\*\*/g;
+    var last = 0;
+    var m;
+    while ((m = re.exec(text)) !== null) {
+      out += escapeHtml(text.slice(last, m.index));
+      out += '<strong>' + escapeHtml(m[1]) + '</strong>';
+      last = re.lastIndex;
+    }
+    out += escapeHtml(text.slice(last));
+    return out;
+  }
+
   function formatMessageWithLinks(text) {
     if (!text || typeof text !== 'string') return '';
     var parts = [];
@@ -130,7 +145,7 @@ export const messageformatting = String.raw`
     matches.sort(function(a,b){return a.index - b.index;});
     for (var i = 0; i < matches.length; i++) {
       var match = matches[i];
-      parts.push(escapeHtml(text.slice(lastIndex, match.index)));
+      parts.push(formatBoldAndEscape(text.slice(lastIndex, match.index)));
       var url = match.url;
       if (match.type === 'image') {
         parts.push('<img src="' + escapeHtml(url) + '" alt="' + escapeHtml(match.alt) + '" class="pb-msg-image" loading="lazy" />');
@@ -142,7 +157,7 @@ export const messageformatting = String.raw`
       }
       lastIndex = match.end;
     }
-    parts.push(escapeHtml(text.slice(lastIndex)));
+    parts.push(formatBoldAndEscape(text.slice(lastIndex)));
     return parts.join('').replace(/\n/g, '<br />');
   }
 

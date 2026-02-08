@@ -979,12 +979,14 @@ export const controller = String.raw`
             seenIds[m.id] = true;
             return true;
           });
-          // Only update state data (assign real IDs) — don't touch the DOM if content hasn't changed
+          // Update state (real IDs + checkoutPreview from API) and re-render so structured checkout block shows
           if (list.length >= state.messages.length) {
             state.messages = list.map(function(m) {
               return { id: m.id, _localId: nextLocalId(), role: m.role === 'user' ? 'user' : 'bot', content: m.content, avatarUrl: m.avatarUrl, checkoutPreview: m.checkoutPreview, createdAt: m.createdAt };
             });
             state.lastMessageCount = list.length;
+            state.renderedIds = {};
+            renderMessages(true);
           }
           state.agentTyping = !!data.agentTyping;
           state.agentAvatarUrl = data.agentAvatarUrl || null;

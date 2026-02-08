@@ -635,6 +635,7 @@ export const POST: RequestHandler = async (event) => {
 		try {
 			const text = await runGenerate(llmProvider, llmModel, apiKey);
 			await clearAiTyping();
+			let checkoutPreview: { lineItemsUI: unknown[]; summary: Record<string, unknown>; checkoutUrl: string } | null = null;
 			// Persist assistant message
 			if (text) {
 				const { data: inserted, error: insertErr } = await supabase
@@ -643,7 +644,7 @@ export const POST: RequestHandler = async (event) => {
 					.select('id')
 					.single();
 				if (insertErr) console.error('Failed to persist assistant message:', insertErr);
-				// Link latest checkout preview to this message
+				// Link latest checkout preview to this message and return it so embed shows product breakdown immediately
 				if (inserted?.id) {
 					const { data: previewRow } = await adminSupabaseForTyping
 						.from('widget_checkout_previews')
@@ -658,10 +659,32 @@ export const POST: RequestHandler = async (event) => {
 							.from('widget_checkout_previews')
 							.update({ message_id: inserted.id })
 							.eq('id', previewRow.id);
+						const { data: preview } = await adminSupabaseForTyping
+							.from('widget_checkout_previews')
+							.select('line_items_ui, summary, checkout_url')
+							.eq('message_id', inserted.id)
+							.single();
+						if (
+							preview &&
+							Array.isArray(preview.line_items_ui) &&
+							preview.line_items_ui.length > 0 &&
+							typeof preview.checkout_url === 'string' &&
+							preview.checkout_url.trim()
+						) {
+							checkoutPreview = {
+								lineItemsUI: preview.line_items_ui,
+								summary: preview.summary != null && typeof preview.summary === 'object' ? preview.summary : {},
+								checkoutUrl: preview.checkout_url.trim()
+							};
+						}
 					}
 				}
 			}
-			return json({ message: text, output: text });
+			return json({
+				message: text,
+				output: text,
+				...(checkoutPreview && { checkoutPreview })
+			});
 		} catch (primaryErr) {
 			if (llmFallbackProvider && llmFallbackModel) {
 				let fallbackKey: string | null = null;
