@@ -41,11 +41,14 @@ const EMBED_SCRIPT = String.raw`
     iframe.setAttribute('scrolling', 'no');
     
     // Position iframe only where widget is (not full viewport)
+    // Need enough space for tooltip (left) + bubble (right) + chat window padding
     if (isMobile) {
       iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:100px;height:100px;border:none;z-index:2147483647;background:transparent;overflow:visible;pointer-events:auto;';
     } else {
-      // Desktop: only cover widget area, start small
-      iframe.style.cssText = 'position:fixed;bottom:20px;right:20px;width:400px;height:600px;border:none;z-index:2147483647;background:transparent;pointer-events:auto;overflow:visible;max-width:calc(100vw - 40px);max-height:calc(100vh - 40px);';
+      // Desktop: need space for tooltip (~250px) + bubble (~100px) + chat window with padding (~500px)
+      // Position from right edge but allow content to extend left
+      // Use larger dimensions and ensure overflow is visible
+      iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:900px;height:900px;border:none;z-index:2147483647;background:transparent;pointer-events:auto;overflow:visible;';
     }
 
     try {
@@ -66,18 +69,18 @@ const EMBED_SCRIPT = String.raw`
           iframe.style.bottom = '0';
           iframe.style.right = '0';
         } else {
-          // Desktop: expand to fit chat window
-          iframe.style.width = '450px';
-          iframe.style.height = '700px';
+          // Desktop: expand to fit chat window (keep wide enough for tooltip + chat)
+          iframe.style.width = '900px';
+          iframe.style.height = '900px';
         }
       } else if (e.data.type === 'chat-closed') {
         if (isMobile) {
           iframe.style.width = '100px';
           iframe.style.height = '100px';
         } else {
-          // Desktop: shrink back to bubble size
-          iframe.style.width = '120px';
-          iframe.style.height = '120px';
+          // Desktop: keep wide enough for tooltip + bubble
+          iframe.style.width = '500px';
+          iframe.style.height = '250px';
         }
       }
     });
@@ -90,7 +93,7 @@ const EMBED_SCRIPT = String.raw`
       if (isMobile && !wasMobile) {
         iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:100px;height:100px;border:none;z-index:2147483647;background:transparent;overflow:visible;pointer-events:auto;';
       } else if (!isMobile && wasMobile) {
-        iframe.style.cssText = 'position:fixed;bottom:20px;right:20px;width:400px;height:600px;border:none;z-index:2147483647;background:transparent;pointer-events:auto;overflow:visible;max-width:calc(100vw - 40px);max-height:calc(100vh - 40px);';
+        iframe.style.cssText = 'position:fixed;bottom:0;right:0;width:900px;height:900px;border:none;z-index:2147483647;background:transparent;pointer-events:auto;overflow:visible;';
       }
     });
   }

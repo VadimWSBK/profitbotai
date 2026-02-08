@@ -65,7 +65,7 @@
 	:global(html), :global(body) {
 		background: transparent !important;
 		background-color: transparent !important;
-		overflow: hidden !important;
+		overflow: visible !important;
 		margin: 0;
 		padding: 0;
 		width: 100%;

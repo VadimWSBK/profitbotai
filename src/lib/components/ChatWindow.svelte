@@ -646,9 +646,9 @@
 		width: {win.widthPx}px;
 		height: {win.heightPx}px;
 		background-color: {win.backgroundColor};
-		border-radius: {winRadius};
+		border-radius: {winRadius} !important;
 		font-size: {win.fontSizePx}px;
-		box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+		box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25) !important;
 	"
 	role="dialog"
 	aria-label="Chat"
@@ -1029,6 +1029,12 @@
 			transition-duration: 0.01ms !important;
 		}
 	}
+	/* Ensure rounded corners and shadow are preserved on desktop */
+	.chat-window.chat-window--desktop-size {
+		border-radius: inherit !important;
+		box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25) !important;
+	}
+	
 	.chat-window .overflow-y-auto::-webkit-scrollbar {
 		width: 6px;
 	}

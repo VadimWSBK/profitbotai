@@ -330,6 +330,8 @@
 		/* Add padding to make shadow visible on all sides */
 		padding: 20px;
 		margin-left: 20px;
+		/* Ensure bubble stays visible below chat window */
+		z-index: 1 !important;
 	}
 
 	.widget-preview-wrapper .chat-window-container--desktop :global(.chat-window) {
@@ -412,6 +414,19 @@
 		/* Hide bubble when chat is open on mobile (chat window has close button) */
 		.widget-preview-wrapper .bubble-preview.bubble-open {
 			display: none !important;
+		}
+	}
+	
+	/* Desktop: ensure bubble stays visible when chat is open (below chat window) */
+	@media (min-width: 769px) {
+		.widget-preview-wrapper .bubble-preview.bubble-open {
+			display: flex !important;
+			position: relative !important;
+			z-index: 20 !important;
+		}
+		/* Ensure chat window container doesn't cover the bubble */
+		.widget-preview-wrapper .chat-window-container--desktop {
+			z-index: 1 !important;
 		}
 	}
 
