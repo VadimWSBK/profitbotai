@@ -492,7 +492,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 
 	tools.shopify_create_diy_checkout_link = tool({
 		description:
-			'Create a one-click checkout link for DIY product (NetZero buckets). Returns previewMarkdown—you MUST include it in your reply so the customer sees a preview (product table, amounts, discount if any) before the Buy now link. When customer asks for discount: pass discount_percent 10 first, 15 if they push for more.',
+			'Use this when the customer wants a DIY quote or to buy product themselves (supply-only). Creates a one-click checkout and makes the chat show a product table and GO TO CHECKOUT button in the same message. Call it with roof_size_sqm when you have their roof size (required for DIY quotes); the widget will display the breakdown and button. Optional: discount_percent (e.g. 10 or 15) if they ask for a discount; email to pre-fill checkout.',
 		inputSchema: z.object({
 			roof_size_sqm: z
 				.number()

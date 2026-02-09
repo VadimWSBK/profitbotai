@@ -11,6 +11,7 @@ import { generateQuoteForConversation } from '$lib/quote-pdf.server';
 import { getQuoteWorkflowForWidget, runQuoteWorkflow } from '$lib/run-workflow.server';
 import { getRelevantRulesForAgent } from '$lib/agent-rules.server';
 import { getProductPricingForOwner, formatProductPricingForAgent } from '$lib/product-pricing.server';
+import { getShopifyConfigForUser } from '$lib/shopify.server';
 import type { WebhookTrigger } from '$lib/widget-config';
 import { getPrimaryEmail } from '$lib/contact-email-jsonb';
 
@@ -374,19 +375,29 @@ export const POST: RequestHandler = async (event) => {
 			});
 
 			if (hasName && hasEmail && hasRoofSize) {
-				// If DIY: tell AI to calculate in chat, do NOT generate PDF
+				// If DIY: use checkout tool when Shopify connected so widget shows table + button; else calculate in chat
 				if (wantsDiy) {
-					triggerResult = {
-						...triggerResult,
-						webhookResult:
-							'The customer wants DIY. Calculate litres (roof size ÷ 2), buckets (15L $389.99, 10L $285.99, 5L $149.99), and total cost in chat. Do NOT use generate_quote or create a PDF.'
-					};
+					const adminSupabaseForQuote = getSupabaseAdmin();
+					const shopifyConnected = ownerId ? !!(await getShopifyConfigForUser(adminSupabaseForQuote, ownerId)) : false;
+					const roofSqm = effectiveRoofSize != null ? Math.round(Number(effectiveRoofSize) * 10) / 10 : null;
+					if (shopifyConnected && roofSqm != null && roofSqm >= 1) {
+						triggerResult = {
+							...triggerResult,
+							webhookResult: `The customer wants DIY and we have their roof size (${roofSqm} m²). You MUST call the shopify_create_diy_checkout_link tool with roof_size_sqm: ${roofSqm} so the chat shows the product table and GO TO CHECKOUT button in one message. Do not only calculate in chat—calling the tool is required. Do NOT use generate_quote or create a PDF for DIY.`
+						};
+					} else {
+						triggerResult = {
+							...triggerResult,
+							webhookResult:
+								'The customer wants DIY. Calculate litres (roof size ÷ 2), buckets (15L $389.99, 10L $285.99, 5L $149.99), and total cost in chat. Do NOT use generate_quote or create a PDF.'
+						};
+					}
 				} else if (!wantsDoneForYou && !wantsDiy) {
 					// Ambiguous: ask DIY vs Done For You before generating
 					triggerResult = {
 						...triggerResult,
 						webhookResult:
-							'We have name, email, and roof size. Ask: "Do you plan to do it yourself (DIY) or would you like us to coat the roof for you?" For DIY, calculate in chat. For Done For You, they will confirm and you can use generate_quote.'
+							'We have name, email, and roof size. Ask: "Do you plan to do it yourself (DIY) or would you like us to coat the roof for you?" For DIY, use shopify_create_diy_checkout_link (if available) so the chat shows the product table and checkout button. For Done For You, they will confirm and you can use generate_quote.'
 					};
 				} else {
 					// wantsDoneForYou: generate the PDF
