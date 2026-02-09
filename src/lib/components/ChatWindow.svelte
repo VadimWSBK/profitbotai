@@ -90,8 +90,9 @@
 	/** Parse short DIY quote line ("11x NetZero UltraTherm Roof Coating 15L") when no full preview. */
 	function tryParseShortDiyQuote(content: string): CheckoutPreview | null {
 		if (!content?.trim()) return null;
-		const diyIntro = /(?:Here is your DIY quote|DIY quote)\s*(?:for\s*[\d.]+\s*m²)?\s*[:.]\s*/i.test(content);
-		if (!diyIntro && !/\d+\s*x\s*.+?\s*(?:15|10|5)\s*L/i.test(content)) return null;
+		const diyIntro = /(?:Here is your DIY quote|DIY quote)\s*(?:for\s*[\d.]+\s*m[²2]?)?\s*[:.]\s*/i.test(content);
+		const hasLinePattern = /\d+\s*x\s*.+?\s*(?:15|10|5)\s*L/i.test(content);
+		if (!diyIntro && !hasLinePattern) return null;
 		const defaultPrices: Record<number, string> = { 15: '389.99', 10: '285.99', 5: '149.99' };
 		const lineItemsUI: CheckoutPreview['lineItemsUI'] = [];
 		// Match "11x Product Name 15L" or "1x NetZero UltraTherm 5L"

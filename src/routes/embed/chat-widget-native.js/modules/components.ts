@@ -167,9 +167,9 @@ export const components = String.raw`
 
     if (isBot) {
       var content = el('div', { className: 'pb-msg-content' });
-      var preview = msg.checkoutPreview || tryParseCheckoutFromText(msg.content);
+      var preview = msg.checkoutPreview || tryParseCheckoutFromText(msg.content) || tryParseShortDiyQuote(msg.content);
       if (preview && (!preview.lineItemsUI || preview.lineItemsUI.length === 0) && msg.content) {
-        var parsed = tryParseCheckoutFromText(msg.content);
+        var parsed = tryParseCheckoutFromText(msg.content) || tryParseShortDiyQuote(msg.content);
         if (parsed && parsed.lineItemsUI && parsed.lineItemsUI.length > 0)
           preview = { lineItemsUI: parsed.lineItemsUI, summary: preview.summary || parsed.summary, checkoutUrl: preview.checkoutUrl || parsed.checkoutUrl };
       }
@@ -228,6 +228,39 @@ export const components = String.raw`
     ]);
     row.appendChild(dots);
     return row;
+  }
+
+  /** Parse short DIY quote ("14x NetZero UltraTherm Roof Coating 15L, 1x ... 10L") when no full preview. */
+  function tryParseShortDiyQuote(content) {
+    if (!content || typeof content !== 'string') return null;
+    var diyIntro = /(?:Here is your DIY quote|DIY quote)\s*(?:for\s*[\d.]+\s*m[²2]?)?\s*[:.]\s*/i.test(content);
+    var hasLinePattern = /\d+\s*x\s*.+?\s*(?:15|10|5)\s*L/i.test(content);
+    if (!diyIntro && !hasLinePattern) return null;
+    var defaultPrices = { 15: '389.99', 10: '285.99', 5: '149.99' };
+    var lineItemsUI = [];
+    var re = /(\d+)\s*x\s*(.+?)\s*(15|10|5)\s*L/gi;
+    var m;
+    while ((m = re.exec(content)) !== null) {
+      var qty = parseInt(m[1], 10);
+      var productName = (m[2] || '').trim().replace(/\s+/g, ' ') || 'Roof Coating';
+      var size = parseInt(m[3], 10);
+      if (qty < 1 || (size !== 15 && size !== 10 && size !== 5)) continue;
+      var unitPrice = defaultPrices[size] || '0';
+      var lineTotal = (qty * parseFloat(unitPrice)).toFixed(2);
+      lineItemsUI.push({ title: productName + ' ' + size + 'L', quantity: qty, unitPrice: unitPrice, lineTotal: lineTotal, imageUrl: null });
+    }
+    if (lineItemsUI.length === 0) return null;
+    var totalItems = lineItemsUI.reduce(function(s, i) { return s + i.quantity; }, 0);
+    var subtotalNum = lineItemsUI.reduce(function(s, i) { return s + parseFloat(i.lineTotal); }, 0);
+    var subtotal = subtotalNum.toFixed(2);
+    var checkoutUrl = '';
+    var linkMatch = content.match(/\[(?:GO\s+TO\s+CHECKOUT|Buy\s+now[^\]]*)\]\((https:\/\/[^)]+)\)/i);
+    if (linkMatch) checkoutUrl = linkMatch[2];
+    else {
+      var cartMatch = content.match(/(https:\/\/[^\s<>"']*(?:cart|checkout|myshopify\.com)[^\s<>"']*)/i);
+      if (cartMatch) checkoutUrl = cartMatch[1];
+    }
+    return { lineItemsUI: lineItemsUI, summary: { totalItems: totalItems, subtotal: subtotal, total: subtotal, currency: 'AUD' }, checkoutUrl: checkoutUrl };
   }
 
   /** Parse DIY checkout block from plain-text message when API did not attach checkoutPreview. */
