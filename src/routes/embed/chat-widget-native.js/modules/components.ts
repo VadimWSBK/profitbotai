@@ -168,6 +168,11 @@ export const components = String.raw`
     if (isBot) {
       var content = el('div', { className: 'pb-msg-content' });
       var preview = msg.checkoutPreview || tryParseCheckoutFromText(msg.content);
+      if (preview && (!preview.lineItemsUI || preview.lineItemsUI.length === 0) && msg.content) {
+        var parsed = tryParseCheckoutFromText(msg.content);
+        if (parsed && parsed.lineItemsUI && parsed.lineItemsUI.length > 0)
+          preview = { lineItemsUI: parsed.lineItemsUI, summary: preview.summary || parsed.summary, checkoutUrl: preview.checkoutUrl || parsed.checkoutUrl };
+      }
       if (preview) {
         var intro = stripCheckoutBlock(msg.content, preview.checkoutUrl).trim();
         if (intro) content.innerHTML = '<div style="margin-bottom:0.5em">' + formatMessage(intro) + '</div>';
@@ -239,6 +244,20 @@ export const components = String.raw`
       var unitPrice = (m[3] || '').replace(/,/g, '');
       var lineTotal = (m[4] || '').replace(/,/g, '');
       if (qty >= 1 && (unitPrice || lineTotal)) lineItemsUI.push({ title: title, quantity: qty, unitPrice: unitPrice, lineTotal: lineTotal, imageUrl: null });
+    }
+    if (lineItemsUI.length === 0) {
+      var defaultPrices = { 15: '389.99', 10: '285.99', 5: '149.99' };
+      var shortRe = /(\d+)\s*x\s*(\d+)\s*L(?:\s*bucket[s]?)?/gi;
+      while ((m = shortRe.exec(content)) !== null) {
+        var qty = parseInt(m[1], 10);
+        var size = parseInt(m[2], 10);
+        if (qty >= 1 && (size === 15 || size === 10 || size === 5)) {
+          var unit = defaultPrices[size] || '0';
+          var unitNum = parseFloat(unit);
+          var lineTotal = (qty * unitNum).toFixed(2);
+          lineItemsUI.push({ title: size + 'L bucket' + (qty !== 1 ? 's' : ''), quantity: qty, unitPrice: unit, lineTotal: lineTotal, imageUrl: null });
+        }
+      }
     }
     var totalItems = 0;
     var itemsMatch = content.match(/\bItems\s+(\d+)/i);

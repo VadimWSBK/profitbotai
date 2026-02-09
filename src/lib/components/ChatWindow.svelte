@@ -102,6 +102,20 @@
 			const lineTotal = (m[4] || '').replace(/,/g, '');
 			if (qty >= 1 && (unitPrice || lineTotal)) lineItemsUI.push({ title, quantity: qty, unitPrice, lineTotal, imageUrl: null, variant: null });
 		}
+		if (lineItemsUI.length === 0) {
+			const defaultPrices: Record<number, string> = { 15: '389.99', 10: '285.99', 5: '149.99' };
+			const shortRe = /(\d+)\s*x\s*(\d+)\s*L(?:\s*bucket[s]?)?/gi;
+			while ((m = shortRe.exec(content)) !== null) {
+				const qty = parseInt(m[1], 10);
+				const size = parseInt(m[2], 10);
+				if (qty >= 1 && (size === 15 || size === 10 || size === 5)) {
+					const unit = defaultPrices[size] ?? '0';
+					const unitNum = parseFloat(unit);
+					const lineTotal = (qty * unitNum).toFixed(2);
+					lineItemsUI.push({ title: `${size}L bucket${qty !== 1 ? 's' : ''}`, quantity: qty, unitPrice: unit, lineTotal, imageUrl: null, variant: null });
+				}
+			}
+		}
 		let totalItems = 0;
 		const itemsMatch = content.match(/\bItems\s+(\d+)/i);
 		if (itemsMatch) totalItems = parseInt(itemsMatch[1], 10);
@@ -134,6 +148,17 @@
 			summary: { totalItems: totalItems || lineItemsUI.reduce((s, i) => s + (i.quantity || 0), 0), subtotal: subtotal || total, total: total || subtotal, currency, discountPercent, discountAmount },
 			checkoutUrl
 		};
+	}
+
+	/** Use API preview or parsed; if preview has no line items, merge in parsed line items from content. */
+	function getEffectivePreview(msg: Message): CheckoutPreview | null {
+		const preview = msg.checkoutPreview ?? tryParseCheckoutFromText(msg.content);
+		if (!preview) return null;
+		if ((!preview.lineItemsUI || preview.lineItemsUI.length === 0) && msg.content) {
+			const parsed = tryParseCheckoutFromText(msg.content);
+			if (parsed?.lineItemsUI?.length) return { ...preview, lineItemsUI: parsed.lineItemsUI };
+		}
+		return preview;
 	}
 
 	let sessionId = $state('');
@@ -773,7 +798,7 @@
 			</div>
 		{:else}
 			{#each messages as msg, i (msg._localId)}
-				{@const preview = msg.checkoutPreview ?? tryParseCheckoutFromText(msg.content)}
+				{@const preview = getEffectivePreview(msg)}
 				{#if msg.role === 'bot'}
 					<div class="flex gap-2 items-start" in:fly={{ x: -12, duration: dur(280), easing: cubicOut }}>
 						{#if msg.avatarUrl}

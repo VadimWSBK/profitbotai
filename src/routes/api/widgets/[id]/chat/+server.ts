@@ -677,13 +677,11 @@ export const POST: RequestHandler = async (event) => {
 							.single();
 						if (
 							preview &&
-							Array.isArray(preview.line_items_ui) &&
-							preview.line_items_ui.length > 0 &&
 							typeof preview.checkout_url === 'string' &&
 							preview.checkout_url.trim()
 						) {
 							checkoutPreview = {
-								lineItemsUI: preview.line_items_ui,
+								lineItemsUI: Array.isArray(preview.line_items_ui) ? preview.line_items_ui : [],
 								summary: preview.summary != null && typeof preview.summary === 'object' ? preview.summary : {},
 								checkoutUrl: preview.checkout_url.trim()
 							};
