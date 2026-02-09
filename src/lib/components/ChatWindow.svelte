@@ -87,6 +87,50 @@
 		return before.replace(checkoutUrlPattern, '').trim() || cleaned;
 	}
 
+	/** Parse short DIY quote line ("11x NetZero UltraTherm Roof Coating 15L") when no full preview. */
+	function tryParseShortDiyQuote(content: string): CheckoutPreview | null {
+		if (!content?.trim()) return null;
+		const diyIntro = /(?:Here is your DIY quote|DIY quote)\s*(?:for\s*[\d.]+\s*m²)?\s*[:.]\s*/i.test(content);
+		if (!diyIntro && !/\d+\s*x\s*.+?\s*(?:15|10|5)\s*L/i.test(content)) return null;
+		const defaultPrices: Record<number, string> = { 15: '389.99', 10: '285.99', 5: '149.99' };
+		const lineItemsUI: CheckoutPreview['lineItemsUI'] = [];
+		// Match "11x Product Name 15L" or "1x NetZero UltraTherm 5L"
+		const re = /(\d+)\s*x\s*(.+?)\s*(15|10|5)\s*L/gi;
+		let m: RegExpExecArray | null;
+		while ((m = re.exec(content)) !== null) {
+			const qty = parseInt(m[1], 10);
+			const productName = (m[2] || '').trim().replace(/\s+/g, ' ') || 'Roof Coating';
+			const size = parseInt(m[3], 10);
+			if (qty < 1 || (size !== 15 && size !== 10 && size !== 5)) continue;
+			const unitPrice = defaultPrices[size] ?? '0';
+			const lineTotal = (qty * parseFloat(unitPrice)).toFixed(2);
+			lineItemsUI.push({
+				title: `${productName} ${size}L`,
+				quantity: qty,
+				unitPrice,
+				lineTotal,
+				imageUrl: null,
+				variant: null
+			});
+		}
+		if (lineItemsUI.length === 0) return null;
+		const totalItems = lineItemsUI.reduce((s, i) => s + i.quantity, 0);
+		const subtotalNum = lineItemsUI.reduce((s, i) => s + parseFloat(i.lineTotal), 0);
+		const subtotal = subtotalNum.toFixed(2);
+		let checkoutUrl = '';
+		const linkMatch = content.match(/\[(?:GO\s+TO\s+CHECKOUT|Buy\s+now[^\]]*)\]\((https:\/\/[^)]+)\)/i);
+		if (linkMatch) checkoutUrl = linkMatch[2];
+		else {
+			const cartMatch = content.match(/(https:\/\/[^\s<>"']*(?:cart|checkout|myshopify\.com)[^\s<>"']*)/i);
+			if (cartMatch) checkoutUrl = cartMatch[1];
+		}
+		return {
+			lineItemsUI,
+			summary: { totalItems, subtotal, total: subtotal, currency: 'AUD' },
+			checkoutUrl
+		};
+	}
+
 	/** Parse DIY checkout block from plain text when API did not attach checkoutPreview (embed fallback). */
 	function tryParseCheckoutFromText(content: string): CheckoutPreview | null {
 		if (!content?.trim()) return null;
@@ -150,12 +194,15 @@
 		};
 	}
 
-	/** Use API preview or parsed; if preview has no line items, merge in parsed line items from content. */
+	/** Use API preview or parsed; if preview has no line items, merge in parsed line items from content. Fallback to short DIY quote parse so we show structured view instead of plain 4-liner. */
 	function getEffectivePreview(msg: Message): CheckoutPreview | null {
-		const preview = msg.checkoutPreview ?? tryParseCheckoutFromText(msg.content);
+		const preview =
+			msg.checkoutPreview ??
+			tryParseCheckoutFromText(msg.content) ??
+			tryParseShortDiyQuote(msg.content);
 		if (!preview) return null;
 		if ((!preview.lineItemsUI || preview.lineItemsUI.length === 0) && msg.content) {
-			const parsed = tryParseCheckoutFromText(msg.content);
+			const parsed = tryParseCheckoutFromText(msg.content) ?? tryParseShortDiyQuote(msg.content);
 			if (parsed?.lineItemsUI?.length) return { ...preview, lineItemsUI: parsed.lineItemsUI };
 		}
 		return preview;
@@ -276,6 +323,31 @@
 	let pollingActive = $state(false);
 	let isRefreshing = $state(false);
 
+	/** Preserve local checkout preview when API returns same message without one (avoids revert after fetch/poll). */
+	function mergeCheckoutPreviews(
+		mappedList: Message[],
+		currentMessages: Message[]
+	): Message[] {
+		const byId = new Map<string, Message>();
+		for (const m of currentMessages) {
+			if (m.id && m.checkoutPreview) byId.set(m.id, m);
+		}
+		let out = mappedList.map((m) => {
+			const local = m.id ? byId.get(m.id) : undefined;
+			if (local?.checkoutPreview && !m.checkoutPreview)
+				return { ...m, checkoutPreview: local.checkoutPreview };
+			return m;
+		});
+		// Local bot message from addBotMessage has no id; preserve its preview for the latest bot message from API
+		const lastBotWithPreview = [...currentMessages].reverse().find((m) => m.role === 'bot' && m.checkoutPreview);
+		if (lastBotWithPreview?.checkoutPreview && out.length > 0) {
+			const lastIdx = out.length - 1;
+			if (out[lastIdx].role === 'bot' && !out[lastIdx].checkoutPreview)
+				out = [...out.slice(0, lastIdx), { ...out[lastIdx], checkoutPreview: lastBotWithPreview.checkoutPreview }];
+		}
+		return out;
+	}
+
 	async function fetchStoredMessages(forceRefresh = false) {
 		if (!widgetId || !sessionId || sessionId === 'preview') {
 			messagesLoading = false;
@@ -286,10 +358,12 @@
 			const res = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
 			const data = await res.json().catch(() => ({}));
 			const list = Array.isArray(data.messages) ? data.messages : [];
-			
+			const mappedList = list.map(mapMessage);
+			const mergedList = mergeCheckoutPreviews(mappedList, messages);
+
 			// On refresh or initial load, always load all messages from database
 			if (forceRefresh || messages.length === 0) {
-				messages = list.map(mapMessage);
+				messages = mergedList;
 				if (list.length > 0) {
 					showStarterPrompts = false;
 					requestAnimationFrame(() => scrollToBottom(true));
@@ -298,21 +372,20 @@
 				}
 			} else if (list.length > messages.length) {
 				// New messages found - update and sync (merge to preserve any unsaved local messages)
-				const mappedList = list.map(mapMessage);
 				const existingIds = new Set(messages.filter((m: Message) => m.id).map((m: Message) => m.id!));
-				const newMessages = mappedList.filter((m: Message) => m.id && !existingIds.has(m.id));
+				const newMessages = mergedList.filter((m: Message) => m.id && !existingIds.has(m.id));
 				if (newMessages.length > 0) {
 					// Append only new messages
 					messages = [...messages, ...newMessages];
 					requestAnimationFrame(() => scrollToBottom(true));
 				} else {
 					// Full sync if structure changed (e.g. checkout previews updated)
-					messages = mappedList;
+					messages = mergedList;
 					requestAnimationFrame(() => scrollToBottom(true));
 				}
 			} else if (list.length === messages.length && list.length > 0) {
-				// Same count but content might have changed (e.g. checkout previews) - sync
-				messages = list.map(mapMessage);
+				// Same count but content might have changed (e.g. checkout previews) - sync, preserve local previews
+				messages = mergedList;
 			}
 			if (list.length > 0 || data.agentTyping || data.agentAvatarUrl) {
 				agentTyping = !!data.agentTyping;
