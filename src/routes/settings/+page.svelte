@@ -13,10 +13,6 @@
 	let profileUploading = $state(false);
 	let fileInput: HTMLInputElement;
 
-	type ProductRow = { id?: string; name: string; sizeLitres: number; price: number; currency: string; coverageSqm: number; imageUrl: string; description: string; colors: string[] };
-	let products = $state<ProductRow[]>([]);
-	let productsSaving = $state(false);
-
 	type MCPKey = {
 		id: string;
 		name: string | null;
@@ -35,76 +31,19 @@
 	let errorMessage: string | null = $state(null);
 
 	async function load() {
-		const [keysRes, profileRes, productsRes, mcpKeysRes] = await Promise.all([
+		const [keysRes, profileRes, mcpKeysRes] = await Promise.all([
 			fetch('/api/settings/llm-keys'),
 			fetch('/api/settings/profile'),
-			fetch('/api/settings/product-pricing'),
 			fetch('/api/settings/mcp-keys')
 		]);
 		const keysData = await keysRes.json().catch(() => ({}));
 		const profileData = await profileRes.json().catch(() => ({}));
-		const productsData = await productsRes.json().catch(() => ({}));
 		const mcpKeysData = await mcpKeysRes.json().catch(() => ({}));
 		saved = (keysData.providers as string[]) ?? [];
 		displayName = profileData.displayName ?? '';
 		avatarUrl = profileData.avatarUrl ?? '';
 		mcpKeys = (mcpKeysData.keys as MCPKey[]) ?? [];
-		const raw = productsData.products ?? [];
-		products = raw.length > 0
-			? raw.map((p: { id?: string; name: string; sizeLitres: number; price: number; currency?: string; coverageSqm: number; imageUrl?: string | null; description?: string | null; colors?: string[] | null }) => ({
-					id: p.id,
-					name: p.name ?? '',
-					sizeLitres: Number(p.sizeLitres) ?? 0,
-					price: Number(p.price) ?? 0,
-					currency: p.currency ?? 'AUD',
-					coverageSqm: Number(p.coverageSqm) ?? 0,
-					imageUrl: p.imageUrl ?? '',
-					description: p.description ?? '',
-					colors: Array.isArray(p.colors) ? p.colors : []
-				}))
-			: [
-					{ name: 'NetZero UltraTherm 15L Bucket', sizeLitres: 15, price: 389.99, currency: 'AUD', coverageSqm: 2, imageUrl: '', description: '', colors: [] as string[] },
-					{ name: 'NetZero UltraTherm 10L Bucket', sizeLitres: 10, price: 285.99, currency: 'AUD', coverageSqm: 2, imageUrl: '', description: '', colors: [] as string[] },
-					{ name: 'NetZero UltraTherm 5L Bucket', sizeLitres: 5, price: 149.99, currency: 'AUD', coverageSqm: 2, imageUrl: '', description: '', colors: [] as string[] }
-				];
 		loaded = true;
-	}
-
-	async function saveProducts() {
-		productsSaving = true;
-		try {
-			const res = await fetch('/api/settings/product-pricing', {
-				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					products: products.map((p) => ({
-						name: p.name.trim(),
-						sizeLitres: p.sizeLitres,
-						price: p.price,
-						currency: p.currency || 'AUD',
-						coverageSqm: p.coverageSqm,
-						imageUrl: p.imageUrl.trim() || null,
-						description: p.description.trim() || null,
-						colors: p.colors.length > 0 ? p.colors : null
-					}))
-				})
-			});
-			const data = await res.json().catch(() => ({}));
-			if (!res.ok) throw new Error(data.error || 'Failed to save');
-			await load();
-		} catch (e) {
-			showError(e instanceof Error ? e.message : 'Failed to save products');
-		} finally {
-			productsSaving = false;
-		}
-	}
-
-	function addProduct() {
-		products = [...products, { name: '', sizeLitres: 5, price: 0, currency: 'AUD', coverageSqm: 2, imageUrl: '', description: '', colors: [] }];
-	}
-
-	function removeProduct(i: number) {
-		products = products.filter((_, idx) => idx !== i);
 	}
 
 	async function saveProfile() {
@@ -253,7 +192,7 @@
 
 <div class="max-w-2xl mx-auto">
 	<h1 class="text-2xl font-bold text-gray-900">Settings</h1>
-	<p class="text-gray-500 mt-1 mb-8">App and LLM API keys for Direct LLM chat.</p>
+	<p class="text-gray-500 mt-1 mb-8">App and LLM API keys for Direct LLM chat. Manage products and Shopify sync in <a href="/products" class="text-amber-600 hover:text-amber-700 underline">Products</a>.</p>
 
 	<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
 		<h2 class="text-lg font-semibold text-gray-900 mb-1">Profile</h2>
@@ -295,71 +234,6 @@
 		<button type="button" disabled={profileSaving} onclick={saveProfile} class="mt-4 px-4 py-2 bg-gray-100 hover:bg-gray-200 disabled:opacity-60 text-gray-800 font-medium rounded-lg transition-colors">
 			{profileSaving ? 'Saving…' : 'Save profile'}
 		</button>
-	</div>
-
-	<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
-		<h2 class="text-lg font-semibold text-gray-900 mb-1">Product pricing</h2>
-		<p class="text-gray-500 text-sm mb-4">
-			DIY bucket products used by the agent for quotes and checkout links. Prices and coverage are injected into the chat context.
-		</p>
-		<div class="space-y-4">
-			{#each products as product, i}
-				<div class="p-4 border border-gray-200 rounded-lg space-y-3">
-					<div class="flex justify-between items-center">
-						<span class="text-sm font-medium text-gray-600">Product {i + 1}</span>
-						<button type="button" onclick={() => removeProduct(i)} class="text-red-600 hover:text-red-700 text-sm">Remove</button>
-					</div>
-					<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-						<label class="col-span-2">
-							<span class="text-xs text-gray-500">Name</span>
-							<input type="text" bind:value={product.name} placeholder="e.g. NetZero 15L Bucket" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-						</label>
-						<label>
-							<span class="text-xs text-gray-500">Size (L)</span>
-							<input type="number" bind:value={product.sizeLitres} min="1" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-						</label>
-						<label>
-							<span class="text-xs text-gray-500">Coverage (sqm/L)</span>
-							<input type="number" bind:value={product.coverageSqm} min="0" step="0.1" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-						</label>
-						<label>
-							<span class="text-xs text-gray-500">Price</span>
-							<input type="number" bind:value={product.price} min="0" step="0.01" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-						</label>
-						<label>
-							<span class="text-xs text-gray-500">Currency</span>
-							<input type="text" bind:value={product.currency} placeholder="AUD" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-						</label>
-						<label class="col-span-2 sm:col-span-4">
-							<span class="text-xs text-gray-500">Image URL (optional)</span>
-							<input type="url" bind:value={product.imageUrl} placeholder="https://..." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-						</label>
-						<label class="col-span-2 sm:col-span-4">
-							<span class="text-xs text-gray-500">Description (optional)</span>
-							<textarea bind:value={product.description} placeholder="Product description…" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm resize-y"></textarea>
-						</label>
-						{#if product.colors.length > 0}
-							<div class="col-span-2 sm:col-span-4">
-								<span class="text-xs text-gray-500">Colors</span>
-								<div class="flex flex-wrap gap-1.5 mt-1">
-									{#each product.colors as color}
-										<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">{color}</span>
-									{/each}
-								</div>
-							</div>
-						{/if}
-					</div>
-				</div>
-			{/each}
-		</div>
-		<div class="flex gap-2 mt-4">
-			<button type="button" onclick={addProduct} class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">
-				Add product
-			</button>
-			<button type="button" disabled={productsSaving} onclick={saveProducts} class="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white font-medium rounded-lg transition-colors">
-				{productsSaving ? 'Saving…' : 'Save products'}
-			</button>
-		</div>
 	</div>
 
 	<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">

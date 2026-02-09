@@ -36,9 +36,6 @@
 	// Shopify OAuth
 	let shopifyShopDomain = $state('');
 	let shopifyConnecting = $state(false);
-	// Shopify sync products
-	let syncProductsLoading = $state(false);
-	let syncProductsResult = $state<{ synced: number } | null>(null);
 
 	async function load() {
 		try {
@@ -301,27 +298,6 @@
 			error = e instanceof Error ? e.message : 'Failed to sync received emails';
 		} finally {
 			syncReceivedLoading = false;
-		}
-	}
-
-	async function syncShopifyProducts() {
-		syncProductsLoading = true;
-		syncProductsResult = null;
-		error = null;
-		try {
-			const res = await fetch('/api/settings/integrations/shopify/sync-products', {
-				method: 'POST'
-			});
-			const data = await res.json().catch(() => ({}));
-			if (!res.ok) {
-				error = (data.error as string) ?? 'Failed to sync products';
-				return;
-			}
-			syncProductsResult = { synced: data.synced ?? 0 };
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to sync products';
-		} finally {
-			syncProductsLoading = false;
 		}
 	}
 
@@ -623,25 +599,9 @@
 													{configs.shopify?.apiVersion ? ` · API ${configs.shopify.apiVersion}` : ''}
 												</p>
 											</div>
-											<div>
-												<p class="text-sm font-medium text-gray-700 mb-2">Product pricing</p>
-												<p class="text-xs text-gray-500 mb-2">Sync product name, image, variant ID and price from your Shopify store into Product Pricing (used for quotes and checkout links).</p>
-												<div class="flex flex-wrap items-center gap-2">
-													<button
-														type="button"
-														disabled={syncProductsLoading}
-														onclick={syncShopifyProducts}
-														class="px-4 py-2 bg-gray-700 hover:bg-gray-800 disabled:opacity-60 text-white font-medium rounded-lg transition-colors text-sm"
-													>
-														{syncProductsLoading ? 'Syncing…' : 'Sync products'}
-													</button>
-													{#if syncProductsResult}
-														<span class="text-sm text-gray-500">
-															{syncProductsResult.synced} product(s) synced
-														</span>
-													{/if}
-												</div>
-											</div>
+											<p class="text-xs text-gray-500">
+												Sync products and manage pricing in <a href="/products" class="text-amber-600 hover:text-amber-700 underline">Products</a>.
+											</p>
 										</div>
 									{/if}
 								</div>

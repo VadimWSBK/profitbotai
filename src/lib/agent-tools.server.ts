@@ -7,16 +7,14 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { tool, type Tool } from 'ai';
 import { z } from 'zod';
-import { env } from '$env/dynamic/private';
 import { getPrimaryEmail, mergeEmailIntoList, emailsToJsonb } from '$lib/contact-email-jsonb';
 import { generateQuoteForConversation, type GenerateQuoteForConversationResult } from '$lib/quote-pdf.server';
 import { sendQuoteEmail, sendContactEmail } from '$lib/send-quote-email.server';
 import { AGENT_TOOL_IDS, type AgentToolId } from '$lib/agent-tools';
-import { getProductPricingForOwner } from '$lib/product-pricing.server';
+import { createDiyCheckoutForOwner } from '$lib/diy-checkout.server';
 import {
 	cancelOrder,
 	createDraftOrder,
-	getDiyProductImages,
 	getShopifyConfigForUser,
 	listRecentOrders,
 	refundOrderFull,
@@ -466,39 +464,15 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 		}
 	});
 
-	/** Calculate bucket counts from roof size using dynamic products (sorted by size desc). */
-	function calculateBucketsFromRoofSize(
-		roofSqm: number,
-		products: Array<{ sizeLitres: number }>
-	): { countsBySize: Record<number, number>; litres: number } {
-		const litres = Math.ceil(roofSqm / 2);
-		const sorted = [...products].sort((a, b) => b.sizeLitres - a.sizeLitres);
-		const countsBySize: Record<number, number> = {};
-		let remaining = litres;
-		for (const p of sorted) {
-			const size = p.sizeLitres;
-			countsBySize[size] = 0;
-			while (remaining >= size) {
-				countsBySize[size]++;
-				remaining -= size;
-			}
-		}
-		if (remaining > 0 && sorted.length > 0) {
-			const smallest = sorted[sorted.length - 1].sizeLitres;
-			countsBySize[smallest] = (countsBySize[smallest] ?? 0) + 1;
-		}
-		return { countsBySize, litres };
-	}
-
 	tools.shopify_create_diy_checkout_link = tool({
 		description:
-			'Use this when the customer wants a DIY quote or to buy product themselves (supply-only). Creates a one-click checkout and makes the chat show a product table and GO TO CHECKOUT button. Call it with roof_size_sqm when you have their roof size (required for DIY quotes). Optional: discount_percent 10, 15, or 20 to use fixed codes NZ10, NZ15, NZ20 in the checkout link; email to pre-fill checkout.',
+			'Use this when the customer wants a DIY quote or to buy product themselves (supply-only). Creates a one-click checkout (cart link, same as LRDIY calculator). The system uses the roof-kit calculator: from roof size in m² it computes sealant, thermal coating, sealer, geo-textile, rapid-cure, and bonus kit (brush/roller). Call with roof_size_sqm when you have their roof size. If the customer asks for a discount, pass discount_percent 10, 15, or 20 (NZ10, NZ15, NZ20).',
 		inputSchema: z.object({
 			roof_size_sqm: z
 				.number()
 				.min(1)
 				.optional()
-				.describe('Roof size in square metres. Used to calculate litres and bucket quantities (1L covers 2m²).'),
+				.describe('Roof size in square metres. Drives the roof-kit calculator (sealant, thermal, sealer, geo, rapid-cure, bonus kit).'),
 			count_15l: z.number().int().min(0).optional().describe('Number of 15L buckets (if not using roof_size_sqm).'),
 			count_10l: z.number().int().min(0).optional().describe('Number of 10L buckets (if not using roof_size_sqm).'),
 			count_5l: z.number().int().min(0).optional().describe('Number of 5L buckets (if not using roof_size_sqm).'),
@@ -517,128 +491,39 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 		) => {
 			const c = getContext(experimental_context);
 			if (!c) return { error: 'Missing context' };
-			const config = await getShopifyConfigForUser(admin, c.ownerId);
-			if (!config) return { error: 'Shopify is not connected. Connect Shopify in Settings → Integrations.' };
 
-			const products = await getProductPricingForOwner(c.ownerId);
-			if (!products.length) return { error: 'No product pricing configured. Add products in Settings → Product Pricing.' };
-
-			let countsBySize: Record<number, number> = {};
-			let litres = 0;
-
-			if (roof_size_sqm != null && roof_size_sqm >= 1) {
-				const calc = calculateBucketsFromRoofSize(Number(roof_size_sqm), products);
-				countsBySize = calc.countsBySize;
-				litres = calc.litres;
-			} else if (
-				(count_15l ?? 0) > 0 ||
-				(count_10l ?? 0) > 0 ||
-				(count_5l ?? 0) > 0
-			) {
-				const sorted = [...products].sort((a, b) => b.sizeLitres - a.sizeLitres);
-				const explicitCounts = [Math.max(0, count_15l ?? 0), Math.max(0, count_10l ?? 0), Math.max(0, count_5l ?? 0)];
-				sorted.forEach((p, i) => {
-					if (i < 3 && explicitCounts[i] > 0) countsBySize[p.sizeLitres] = explicitCounts[i];
-				});
-				litres = Object.entries(countsBySize).reduce((sum, [size, qty]) => sum + Number(size) * qty, 0);
-			} else {
-				return { error: 'Provide roof_size_sqm or at least one bucket count (count_15l, count_10l, count_5l).' };
-			}
-
-			// Resolve product images from Shopify (matches by title)
-			let imageBySize: Record<number, string> = {};
-			try {
-				imageBySize = await getDiyProductImages(config, products.map((p) => ({ size: p.sizeLitres, price: String(p.price), title: p.name })));
-			} catch {
-				// Ignore
-			}
-			if (!imageBySize[15] && env.DIY_PRODUCT_IMAGE_15L?.trim()) imageBySize[15] = env.DIY_PRODUCT_IMAGE_15L.trim();
-			if (!imageBySize[10] && env.DIY_PRODUCT_IMAGE_10L?.trim()) imageBySize[10] = env.DIY_PRODUCT_IMAGE_10L.trim();
-			if (!imageBySize[5] && env.DIY_PRODUCT_IMAGE_5L?.trim()) imageBySize[5] = env.DIY_PRODUCT_IMAGE_5L.trim();
-
-			const lineItems: Array<{ title: string; quantity: number; price: string; imageUrl?: string; variantId?: number }> = [];
-			for (const p of products) {
-				const qty = countsBySize[p.sizeLitres] ?? 0;
-				if (qty > 0) {
-					lineItems.push({
-						title: p.name,
-						quantity: qty,
-						price: p.price.toFixed(2),
-						imageUrl: p.imageUrl ?? imageBySize[p.sizeLitres],
-						variantId: p.shopifyVariantId ?? undefined
-					});
-				}
-			}
-			if (lineItems.length === 0) return { error: 'No items to add. Provide roof_size_sqm or bucket counts.' };
-
-			const currency = products[0]?.currency ?? 'AUD';
-			const subtotal = lineItems.reduce((sum, li) => sum + Number.parseFloat(li.price) * li.quantity, 0);
-			let appliedDiscount: { title: string; description: string; value_type: 'percentage'; value: string; amount: string } | undefined;
-			if (discount_percent != null && discount_percent >= 1 && discount_percent <= 20) {
-				const amount = Math.round((subtotal * discount_percent) / 100 * 100) / 100;
-				appliedDiscount = {
-					title: `${discount_percent}% off`,
-					description: `Chat discount - ${discount_percent}% off`,
-					value_type: 'percentage',
-					value: String(discount_percent),
-					amount: amount.toFixed(2)
-				};
-			}
-			const discountAmount = appliedDiscount ? Number.parseFloat(appliedDiscount.amount) : 0;
-			const total = Math.round((subtotal - discountAmount) * 100) / 100;
-
-			const noteParts = lineItems.map((li) => `${li.quantity}× ${li.title}`).join(', ');
-			const result = await createDraftOrder(config, {
-				email: email?.trim() || getPrimaryEmail(c.contact?.email)?.trim() || undefined,
-				line_items: lineItems.map((li) => ({
-					title: li.title,
-					quantity: li.quantity,
-					price: li.price,
-					variant_id: li.variantId
-				})),
-				note: `DIY quote: ${litres}L total (${noteParts})`,
-				tags: 'diy,chat',
-				currency,
-				applied_discount: appliedDiscount
+			const result = await createDiyCheckoutForOwner(admin, c.ownerId, {
+				roof_size_sqm: roof_size_sqm != null && roof_size_sqm >= 1 ? roof_size_sqm : undefined,
+				count_15l,
+				count_10l,
+				count_5l,
+				discount_percent,
+				email: email?.trim() || getPrimaryEmail(c.contact?.email)?.trim() || undefined
 			});
 
 			if (!result.ok) return { error: result.error ?? 'Failed to create checkout link' };
-			if (!result.checkoutUrl) return { error: 'Checkout link was not returned by Shopify.' };
 
-			const fmt = (n: number) => n.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-			const totalItems = lineItems.reduce((sum, li) => sum + li.quantity, 0);
+			const { checkoutUrl, lineItemsUI, summary } = result.data;
+			const totalItems = summary.totalItems;
+			const hasDiscount = summary.discountPercent != null;
+			const previewParts: string[] = [
+				'**Your Checkout Preview**',
+				'',
+				`**Items** ${totalItems}`,
+				...(hasDiscount ? [`**Discount** ${summary.discountPercent}% OFF`] : []),
+				'**Shipping** FREE',
+				'',
+				`**Subtotal** ${summary.subtotal} ${summary.currency}`,
+				...(hasDiscount && summary.discountAmount ? [`**Savings** -${summary.discountAmount} ${summary.currency}`] : []),
+				`**TOTAL** **${summary.total} ${summary.currency}**`,
+				'',
+				'_GST included_',
+				'',
+				'[GO TO CHECKOUT](' + checkoutUrl + ')'
+			];
+			const previewMarkdown = previewParts.filter(Boolean).join('\n');
+			const lineItemsText = lineItemsUI.map((li) => `${li.quantity}× ${li.title}`).join(', ');
 
-			// Data-driven UI: structured line items for frontend component (no markdown tables).
-			const lineItemsUI = lineItems.map((li) => {
-				const unitPrice = Number(li.price);
-				const quantity = li.quantity;
-				const lineTotal = unitPrice * quantity;
-				const variantMatch = li.title.match(/\d+\s*L\b/i);
-				const variant = variantMatch ? variantMatch[0].trim() : null;
-				return {
-					imageUrl: li.imageUrl ?? null,
-					title: li.title,
-					variant,
-					quantity,
-					unitPrice: fmt(unitPrice),
-					lineTotal: fmt(lineTotal)
-				};
-			});
-
-			const summary = {
-				totalItems,
-				subtotal: fmt(subtotal),
-				total: fmt(total),
-				currency,
-				...(appliedDiscount
-					? {
-							discountPercent: Number(appliedDiscount.value),
-							discountAmount: fmt(discountAmount)
-						}
-					: {})
-			};
-
-			// Persist structured preview so frontend can render component; message_id set in chat onFinish.
 			const { error: previewErr } = await admin
 				.from('widget_checkout_previews')
 				.insert({
@@ -646,40 +531,21 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 					widget_id: c.widgetId,
 					line_items_ui: lineItemsUI,
 					summary,
-					checkout_url: result.checkoutUrl
+					checkout_url: checkoutUrl
 				});
 			if (previewErr) console.error('Failed to save checkout preview:', previewErr);
 
-			// Fallback text for AI reply and for contexts without preview data (e.g. email, old messages).
-			const hasDiscount = !!appliedDiscount;
-			const previewParts: string[] = [
-				'**Your Checkout Preview**',
-				'',
-				`**Items** ${totalItems}`,
-				...(hasDiscount ? [`**Discount** ${appliedDiscount!.value}% OFF`] : []),
-				'**Shipping** FREE',
-				'',
-				`**Subtotal** $${fmt(subtotal)} ${currency}`,
-				...(hasDiscount ? [`**Savings** -$${fmt(discountAmount)} ${currency}`] : []),
-				`**TOTAL** **$${fmt(total)} ${currency}**`,
-				'',
-				'_GST included_',
-				'',
-				'[GO TO CHECKOUT](' + result.checkoutUrl + ')'
-			];
-			const previewMarkdown = previewParts.filter(Boolean).join('\n');
-
 			return {
 				success: true,
-				checkoutUrl: result.checkoutUrl,
-				discountPercent: appliedDiscount ? Number(appliedDiscount.value) : null,
-				subtotal,
-				discountAmount,
-				total,
-				lineItems: lineItems.map((li) => `${li.quantity}× ${li.title} ($${li.price} each)`),
+				checkoutUrl,
+				discountPercent: summary.discountPercent ?? null,
+				subtotal: summary.subtotal,
+				discountAmount: summary.discountAmount ?? null,
+				total: summary.total,
+				lineItems: lineItemsUI.map((li) => `${li.quantity}× ${li.title} (${li.unitPrice} each)`),
 				lineItemsUI,
 				previewMarkdown,
-				message: `Checkout link created. In your reply, write a short intro that includes the bucket breakdown so the customer sees what they're getting, e.g. "Here is your DIY quote for [X] m²: you need [N] x 15L and [M] x 10L NetZero UltraTherm." Use the exact quantities from the lineItems above (${lineItems.map((li) => `${li.quantity}× ${li.title}`).join(', ')}). Do NOT paste the full Items/Subtotal/TOTAL block—the widget will show the table. Do NOT add "Your total estimated cost...". Use "calculated" not "estimated".\n\n${previewMarkdown}`
+				message: `Checkout link created. In your reply, write a short intro that includes the product breakdown so the customer sees what they're getting, e.g. "Here is your DIY quote for [X] m²: ${lineItemsText}." Use the exact quantities from the lineItems. Do NOT paste the full Items/Subtotal/TOTAL block—the widget will show the table. Use "calculated" not "estimated".\n\n${previewMarkdown}`
 			};
 		}
 	});

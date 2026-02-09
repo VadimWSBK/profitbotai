@@ -15,7 +15,8 @@ export const GET: RequestHandler = async (event) => {
 
 /**
  * PUT /api/settings/product-pricing – replace all products for current user.
- * Body: { products: Array<{ name, sizeLitres, price, currency, coverageSqm, imageUrl?, shopifyProductId?, shopifyVariantId? }> }
+ * Body: { products: Array<{ name, sizeLitres, price, currency, coverageSqm, imageUrl?, shopifyProductId?, shopifyVariantId?, productHandle? }> }
+ * productHandle: roof-kit type (waterproof-sealant, protective-top-coat, sealer, geo-textile, rapid-cure-spray, brush-roller). Omit or null = sealant.
  */
 export const PUT: RequestHandler = async (event) => {
 	if (!event.locals.user) return json({ error: 'Unauthorized' }, { status: 401 });
@@ -32,6 +33,7 @@ export const PUT: RequestHandler = async (event) => {
 		shopifyProductId?: number | null;
 		shopifyVariantId?: number | null;
 		sortOrder?: number;
+		productHandle?: string | null;
 	}> };
 	try {
 		body = await event.request.json();
@@ -57,7 +59,7 @@ export const PUT: RequestHandler = async (event) => {
 	const rows = raw.map((p, i) => ({
 		created_by: userId,
 		name: String(p.name ?? '').trim() || `Product ${i + 1}`,
-		size_litres: Math.max(1, Math.min(999, Number(p.sizeLitres) || 1)),
+		size_litres: Math.max(0, Math.min(999, Number(p.sizeLitres) ?? 0)),
 		price: Math.max(0, Number(p.price) ?? 0),
 		currency: String(p.currency ?? 'AUD').trim() || 'AUD',
 		coverage_sqm: Math.max(0, Number(p.coverageSqm) ?? 0),
@@ -66,7 +68,8 @@ export const PUT: RequestHandler = async (event) => {
 		colors: Array.isArray(p.colors) && p.colors.length > 0 ? p.colors : null,
 		shopify_product_id: p.shopifyProductId != null && Number.isFinite(Number(p.shopifyProductId)) ? Number(p.shopifyProductId) : null,
 		shopify_variant_id: p.shopifyVariantId != null && Number.isFinite(Number(p.shopifyVariantId)) ? Number(p.shopifyVariantId) : null,
-		sort_order: i
+		sort_order: i,
+		product_handle: p.productHandle && String(p.productHandle).trim() ? String(p.productHandle).trim() : null
 	}));
 
 	const { error: insErr } = await supabase.from('product_pricing').insert(rows);

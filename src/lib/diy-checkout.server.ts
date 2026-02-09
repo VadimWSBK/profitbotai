@@ -1,16 +1,25 @@
 /**
- * Shared DIY checkout logic: create Shopify draft order and return structured preview.
- * Used by the agent tool (direct LLM) and by the n8n-callable API.
+ * Shared DIY checkout logic: create Shopify draft order or cart URL and return structured preview.
+ * Uses roof-kit calculator (LRDIY logic) when roof_size_sqm is provided; otherwise bucket counts.
+ * Cart URL format matches LRDIY_LandingPages (same checkout link creation logic).
  */
 
 import { env } from '$env/dynamic/private';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getProductPricingForOwner } from '$lib/product-pricing.server';
+import type { ProductPricing } from '$lib/product-pricing.server';
 import {
+	buildShopifyCartUrl,
 	createDraftOrder,
+	FIXED_DISCOUNT_CODE_BY_PERCENT,
 	getDiyProductImages,
 	getShopifyConfigForUser
 } from '$lib/shopify.server';
+import {
+	calculateRoofKitBreakdown,
+	productListToRoofKitVariants,
+	type RoofKitLineItem
+} from '$lib/roof-kit-calculator.server';
 
 export type DiyCheckoutInput = {
 	roof_size_sqm?: number;
@@ -66,6 +75,38 @@ function calculateBucketsFromRoofSize(
 	return { countsBySize, litres };
 }
 
+/** Resolve roof-kit breakdown to checkout line items using product_pricing (match by handle + size). */
+function resolveRoofKitToLineItems(
+	kitItems: RoofKitLineItem[],
+	products: ProductPricing[],
+	imageBySize: Record<number, string>
+): Array<{ title: string; quantity: number; price: string; imageUrl?: string; variantId?: number }> {
+	const out: Array<{ title: string; quantity: number; price: string; imageUrl?: string; variantId?: number }> = [];
+	for (const item of kitItems) {
+		const handle = item.handle;
+		const productsForHandle = products.filter(
+			(p) => (p.productHandle ?? 'waterproof-sealant') === handle
+		);
+		// Match by sizeLitres; for brush-roller prefer label match if we have two variants
+		let match = productsForHandle.find((p) => p.sizeLitres === item.sizeLitres);
+		if (!match && handle === 'brush-roller' && productsForHandle.length) {
+			const brushOnly = item.label.toLowerCase().includes('brush kit') && !item.label.toLowerCase().includes('roller');
+			match = brushOnly
+				? productsForHandle.find((p) => p.name.toLowerCase().includes('brush') && !p.name.toLowerCase().includes('roller')) ?? productsForHandle[0]
+				: productsForHandle.find((p) => p.name.toLowerCase().includes('roller')) ?? productsForHandle[productsForHandle.length - 1];
+		}
+		if (!match) continue;
+		out.push({
+			title: match.name,
+			quantity: item.quantity,
+			price: match.price.toFixed(2),
+			imageUrl: match.imageUrl ?? imageBySize[match.sizeLitres],
+			variantId: match.shopifyVariantId ?? undefined
+		});
+	}
+	return out;
+}
+
 /**
  * Create a DIY checkout for the given owner. Returns structured preview for widget/n8n.
  * Requires Shopify connected and product pricing configured.
@@ -86,27 +127,15 @@ export async function createDiyCheckoutForOwner(
 	}
 
 	const { roof_size_sqm, count_15l, count_10l, count_5l, discount_percent, email } = input;
-	let countsBySize: Record<number, number> = {};
+	let lineItems: Array<{
+		title: string;
+		quantity: number;
+		price: string;
+		imageUrl?: string;
+		variantId?: number;
+	}> = [];
 	let litres = 0;
-
-	if (roof_size_sqm != null && roof_size_sqm >= 1) {
-		const calc = calculateBucketsFromRoofSize(Number(roof_size_sqm), products);
-		countsBySize = calc.countsBySize;
-		litres = calc.litres;
-	} else if (
-		(count_15l ?? 0) > 0 ||
-		(count_10l ?? 0) > 0 ||
-		(count_5l ?? 0) > 0
-	) {
-		const sorted = [...products].sort((a, b) => b.sizeLitres - a.sizeLitres);
-		const explicitCounts = [Math.max(0, count_15l ?? 0), Math.max(0, count_10l ?? 0), Math.max(0, count_5l ?? 0)];
-		sorted.forEach((p, i) => {
-			if (i < 3 && explicitCounts[i] > 0) countsBySize[p.sizeLitres] = explicitCounts[i];
-		});
-		litres = Object.entries(countsBySize).reduce((sum, [size, qty]) => sum + Number(size) * qty, 0);
-	} else {
-		return { ok: false, error: 'Provide roof_size_sqm or at least one bucket count (count_15l, count_10l, count_5l).' };
-	}
+	let notePrefix = 'DIY quote';
 
 	let imageBySize: Record<number, string> = {};
 	try {
@@ -121,25 +150,47 @@ export async function createDiyCheckoutForOwner(
 	if (!imageBySize[10] && env.DIY_PRODUCT_IMAGE_10L?.trim()) imageBySize[10] = env.DIY_PRODUCT_IMAGE_10L.trim();
 	if (!imageBySize[5] && env.DIY_PRODUCT_IMAGE_5L?.trim()) imageBySize[5] = env.DIY_PRODUCT_IMAGE_5L.trim();
 
-	const lineItems: Array<{
-		title: string;
-		quantity: number;
-		price: string;
-		imageUrl?: string;
-		variantId?: number;
-	}> = [];
-	for (const p of products) {
-		const qty = countsBySize[p.sizeLitres] ?? 0;
-		if (qty > 0) {
-			lineItems.push({
-				title: p.name,
-				quantity: qty,
-				price: p.price.toFixed(2),
-				imageUrl: p.imageUrl ?? imageBySize[p.sizeLitres],
-				variantId: p.shopifyVariantId ?? undefined
-			});
+	if (roof_size_sqm != null && roof_size_sqm >= 1) {
+		// Roof-kit calculator (LRDIY logic): area → sealant, thermal, sealer, geo, rapid-cure, bonus kit. Corrugated/painted only.
+		const variants = productListToRoofKitVariants(
+			products.map((p) => ({
+				productHandle: p.productHandle,
+				sizeLitres: p.sizeLitres,
+				price: p.price
+			}))
+		);
+		const breakdown = calculateRoofKitBreakdown(Number(roof_size_sqm), variants);
+		litres = breakdown.sealantLitres;
+		notePrefix = `Roof-Kit ${roof_size_sqm}m²`;
+		lineItems = resolveRoofKitToLineItems(breakdown.lineItems, products, imageBySize);
+	} else if (
+		(count_15l ?? 0) > 0 ||
+		(count_10l ?? 0) > 0 ||
+		(count_5l ?? 0) > 0
+	) {
+		const countsBySize: Record<number, number> = {};
+		const sorted = [...products].sort((a, b) => b.sizeLitres - a.sizeLitres);
+		const explicitCounts = [Math.max(0, count_15l ?? 0), Math.max(0, count_10l ?? 0), Math.max(0, count_5l ?? 0)];
+		sorted.forEach((p, i) => {
+			if (i < 3 && explicitCounts[i] > 0) countsBySize[p.sizeLitres] = explicitCounts[i];
+		});
+		litres = Object.entries(countsBySize).reduce((sum, [size, qty]) => sum + Number(size) * qty, 0);
+		for (const p of products) {
+			const qty = countsBySize[p.sizeLitres] ?? 0;
+			if (qty > 0) {
+				lineItems.push({
+					title: p.name,
+					quantity: qty,
+					price: p.price.toFixed(2),
+					imageUrl: p.imageUrl ?? imageBySize[p.sizeLitres],
+					variantId: p.shopifyVariantId ?? undefined
+				});
+			}
 		}
+	} else {
+		return { ok: false, error: 'Provide roof_size_sqm or at least one bucket count (count_15l, count_10l, count_5l).' };
 	}
+
 	if (lineItems.length === 0) {
 		return { ok: false, error: 'No items to add. Provide roof_size_sqm or bucket counts.' };
 	}
@@ -163,11 +214,60 @@ export async function createDiyCheckoutForOwner(
 	const total = Math.round((subtotal - discountAmount) * 100) / 100;
 
 	const noteParts = lineItems.map((li) => `${li.quantity}× ${li.title}`).join(', ');
-
-	// Try creating draft order with variant_id first, but if it fails due to unavailable variant,
-	// retry without variant_id (Shopify will create a custom line item)
-	// IMPORTANT: We always try to use variant IDs to generate proper checkout/cart permalinks, not invoice links
+	const orderNote = `${notePrefix}: ${litres}L sealant (${noteParts})`;
+	const totalItems = lineItems.reduce((sum, li) => sum + li.quantity, 0);
 	const itemsWithVariants = lineItems.filter((li) => li.variantId != null && li.variantId > 0);
+	const allHaveVariantIds = itemsWithVariants.length === lineItems.length && lineItems.length > 0;
+	const discountCode =
+		discount_percent != null && discount_percent >= 1 && discount_percent <= 20
+			? FIXED_DISCOUNT_CODE_BY_PERCENT[discount_percent] ?? undefined
+			: undefined;
+
+	// Same checkout link creation as LRDIY: cart permalink when all items have variant IDs
+	if (allHaveVariantIds && config.shopDomain) {
+		const cartUrl = buildShopifyCartUrl(
+			config.shopDomain,
+			lineItems.map((li) => ({ variantId: li.variantId!, quantity: li.quantity })),
+			{ discountCode, note: orderNote }
+		);
+		const fmt = (n: number) => n.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+		const lineItemsUI = lineItems.map((li) => {
+			const unitPrice = Number(li.price);
+			const lineTotal = unitPrice * li.quantity;
+			const variantMatch = /\d+\s*L\b|\d+\s*m\b/i.exec(li.title);
+			const variant = variantMatch ? variantMatch[0].trim() : null;
+			return {
+				imageUrl: li.imageUrl ?? null,
+				title: li.title,
+				variant,
+				quantity: li.quantity,
+				unitPrice: fmt(unitPrice),
+				lineTotal: fmt(lineTotal)
+			};
+		});
+		const summary = {
+			totalItems,
+			subtotal: fmt(subtotal),
+			total: fmt(total),
+			currency,
+			...(appliedDiscount
+				? {
+						discountPercent: Number(appliedDiscount.value),
+						discountAmount: fmt(discountAmount)
+					}
+				: {})
+		};
+		return {
+			ok: true,
+			data: {
+				checkoutUrl: cartUrl,
+				lineItemsUI,
+				summary
+			}
+		};
+	}
+
+	// Fallback: draft order (when variant IDs missing or cart URL not desired)
 	const result = await createDraftOrder(config, {
 		email: email?.trim() || undefined,
 		line_items: lineItems.map((li) => ({
@@ -176,7 +276,7 @@ export async function createDiyCheckoutForOwner(
 			price: li.price,
 			variant_id: li.variantId
 		})),
-		note: `DIY quote: ${litres}L total (${noteParts})`,
+		note: orderNote,
 		tags: 'diy,chat',
 		currency,
 		applied_discount: appliedDiscount
@@ -209,7 +309,7 @@ export async function createDiyCheckoutForOwner(
 				price: li.price
 				// Omit variant_id - Shopify will create custom line items
 			})),
-			note: `DIY quote: ${litres}L total (${noteParts})`,
+			note: orderNote,
 			tags: 'diy,chat',
 			currency,
 			applied_discount: appliedDiscount
@@ -272,7 +372,6 @@ export async function createDiyCheckoutForOwner(
 	if (!result.checkoutUrl) return { ok: false, error: 'Checkout link was not returned by Shopify.' };
 
 	const fmt = (n: number) => n.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-	const totalItems = lineItems.reduce((sum, li) => sum + li.quantity, 0);
 
 	const lineItemsUI = lineItems.map((li) => {
 		const unitPrice = Number(li.price);

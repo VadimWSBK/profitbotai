@@ -20,12 +20,14 @@ export type ProductPricing = {
 	shopifyProductId: number | null;
 	shopifyVariantId: number | null;
 	sortOrder: number;
+	/** Roof-kit product type; null = waterproof-sealant (backward compat) */
+	productHandle: string | null;
 };
 
 const DEFAULT_PRODUCTS: Omit<ProductPricing, 'id'>[] = [
-	{ name: 'NetZero UltraTherm 15L Bucket', sizeLitres: 15, price: 389.99, currency: 'AUD', coverageSqm: 2, imageUrl: null, description: null, colors: null, shopifyProductId: null, shopifyVariantId: null, sortOrder: 0 },
-	{ name: 'NetZero UltraTherm 10L Bucket', sizeLitres: 10, price: 285.99, currency: 'AUD', coverageSqm: 2, imageUrl: null, description: null, colors: null, shopifyProductId: null, shopifyVariantId: null, sortOrder: 1 },
-	{ name: 'NetZero UltraTherm 5L Bucket', sizeLitres: 5, price: 149.99, currency: 'AUD', coverageSqm: 2, imageUrl: null, description: null, colors: null, shopifyProductId: null, shopifyVariantId: null, sortOrder: 2 }
+	{ name: 'NetZero UltraTherm 15L Bucket', sizeLitres: 15, price: 389.99, currency: 'AUD', coverageSqm: 2, imageUrl: null, description: null, colors: null, shopifyProductId: null, shopifyVariantId: null, sortOrder: 0, productHandle: null },
+	{ name: 'NetZero UltraTherm 10L Bucket', sizeLitres: 10, price: 285.99, currency: 'AUD', coverageSqm: 2, imageUrl: null, description: null, colors: null, shopifyProductId: null, shopifyVariantId: null, sortOrder: 1, productHandle: null },
+	{ name: 'NetZero UltraTherm 5L Bucket', sizeLitres: 5, price: 149.99, currency: 'AUD', coverageSqm: 2, imageUrl: null, description: null, colors: null, shopifyProductId: null, shopifyVariantId: null, sortOrder: 2, productHandle: null }
 ];
 
 /** Fetch product pricing for a user. Returns DB rows or defaults if empty. */
@@ -35,7 +37,7 @@ export async function getProductPricingForUser(
 ): Promise<ProductPricing[]> {
 	const { data: rows, error } = await supabase
 		.from('product_pricing')
-		.select('id, name, size_litres, price, currency, coverage_sqm, image_url, description, colors, shopify_product_id, shopify_variant_id, sort_order')
+		.select('id, name, size_litres, price, currency, coverage_sqm, image_url, description, colors, shopify_product_id, shopify_variant_id, sort_order, product_handle')
 		.eq('created_by', userId)
 		.order('sort_order', { ascending: true })
 		.order('size_litres', { ascending: false });
@@ -49,7 +51,11 @@ export async function getProductPricingForUser(
 		return DEFAULT_PRODUCTS.map((p, i) => ({ ...p, id: `default-${i}` }));
 	}
 
-	return rows.map((r) => ({
+	return rows.map((r) => mapRow(r));
+}
+
+function mapRow(r: Record<string, unknown>): ProductPricing {
+	return {
 		id: r.id as string,
 		name: (r.name as string) ?? '',
 		sizeLitres: Number(r.size_litres) ?? 0,
@@ -61,8 +67,9 @@ export async function getProductPricingForUser(
 		colors: Array.isArray(r.colors) ? (r.colors as string[]) : null,
 		shopifyProductId: r.shopify_product_id != null ? Number(r.shopify_product_id) : null,
 		shopifyVariantId: r.shopify_variant_id != null ? Number(r.shopify_variant_id) : null,
-		sortOrder: Number(r.sort_order) ?? 0
-	}));
+		sortOrder: Number(r.sort_order) ?? 0,
+		productHandle: (r.product_handle as string | null) ?? null
+	};
 }
 
 /** Fetch via admin client (for agent tools where we have ownerId). */
@@ -70,7 +77,7 @@ export async function getProductPricingForOwner(ownerId: string): Promise<Produc
 	const admin = getSupabaseAdmin();
 	const { data: rows, error } = await admin
 		.from('product_pricing')
-		.select('id, name, size_litres, price, currency, coverage_sqm, image_url, description, colors, shopify_product_id, shopify_variant_id, sort_order')
+		.select('id, name, size_litres, price, currency, coverage_sqm, image_url, description, colors, shopify_product_id, shopify_variant_id, sort_order, product_handle')
 		.eq('created_by', ownerId)
 		.order('sort_order', { ascending: true })
 		.order('size_litres', { ascending: false });
@@ -79,20 +86,7 @@ export async function getProductPricingForOwner(ownerId: string): Promise<Produc
 		return DEFAULT_PRODUCTS.map((p, i) => ({ ...p, id: `default-${i}` }));
 	}
 
-	return rows.map((r) => ({
-		id: r.id as string,
-		name: (r.name as string) ?? '',
-		sizeLitres: Number(r.size_litres) ?? 0,
-		price: Number(r.price) ?? 0,
-		currency: (r.currency as string) ?? 'AUD',
-		coverageSqm: Number(r.coverage_sqm) ?? 0,
-		imageUrl: (r.image_url as string | null) ?? null,
-		description: (r.description as string | null) ?? null,
-		colors: Array.isArray(r.colors) ? (r.colors as string[]) : null,
-		shopifyProductId: r.shopify_product_id != null ? Number(r.shopify_product_id) : null,
-		shopifyVariantId: r.shopify_variant_id != null ? Number(r.shopify_variant_id) : null,
-		sortOrder: Number(r.sort_order) ?? 0
-	}));
+	return rows.map((r) => mapRow(r));
 }
 
 /** Format product pricing as text for agent rules / system prompt. */

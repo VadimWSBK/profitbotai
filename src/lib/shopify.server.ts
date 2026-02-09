@@ -169,6 +169,25 @@ export async function shopifyGraphql<T = unknown>(
 /** Fixed discount codes in Shopify (NZ10, NZ15, NZ20). Used in cart permalink ?discount= so the link pre-fills the code. */
 export const FIXED_DISCOUNT_CODE_BY_PERCENT: Record<number, string> = { 10: 'NZ10', 15: 'NZ15', 20: 'NZ20' };
 
+/**
+ * Build Shopify cart permalink (same logic as LRDIY_LandingPages roof-kit checkout).
+ * Format: https://{shopDomain}/cart/{variantId:qty,variantId:qty}?discount=CODE&note=...
+ * shopDomain should be the store's myshopify.com domain (e.g. store.myshopify.com).
+ */
+export function buildShopifyCartUrl(
+	shopDomain: string,
+	lineItems: Array<{ variantId: number; quantity: number }>,
+	opts?: { discountCode?: string; note?: string }
+): string {
+	const cartParam = lineItems.map((li) => `${li.variantId}:${li.quantity}`).join(',');
+	const base = `https://${shopDomain.replace(/^https?:\/\//, '').replace(/\/+$/, '')}/cart/${cartParam}`;
+	const params = new URLSearchParams();
+	if (opts?.discountCode?.trim()) params.set('discount', opts.discountCode.trim());
+	if (opts?.note?.trim()) params.set('note', opts.note.trim());
+	const qs = params.toString();
+	return qs ? `${base}?${qs}` : base;
+}
+
 /** @deprecated Use FIXED_DISCOUNT_CODE_BY_PERCENT. Kept for backwards compatibility. */
 export const CHAT_DISCOUNT_CODE_BY_PERCENT: Record<number, string> = FIXED_DISCOUNT_CODE_BY_PERCENT;
 
