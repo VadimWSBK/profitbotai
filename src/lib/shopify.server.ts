@@ -166,81 +166,11 @@ export async function shopifyGraphql<T = unknown>(
 	}
 }
 
-/** Discount codes used for chat-offered discounts; must exist in Shopify for cart/checkout ?discount= to work. */
-export const CHAT_DISCOUNT_CODE_BY_PERCENT: Record<number, string> = { 10: 'CHAT10', 15: 'CHAT15' };
+/** Fixed discount codes in Shopify (NZ10, NZ15, NZ20). Used in cart permalink ?discount= so the link pre-fills the code. */
+export const FIXED_DISCOUNT_CODE_BY_PERCENT: Record<number, string> = { 10: 'NZ10', 15: 'NZ15', 20: 'NZ20' };
 
-/**
- * Create a percentage-off discount code in Shopify (GraphQL). Use when the customer is offered a discount
- * so that the checkout link with ?discount=CODE actually applies. If the code already exists, returns ok (idempotent).
- * Requires Shopify app/integration to have write_discounts scope.
- */
-export async function createChatDiscountCode(
-	config: ShopifyConfig,
-	percent: 10 | 15,
-	options?: { expiresInDays?: number }
-): Promise<{ ok: boolean; code?: string; error?: string }> {
-	const code = CHAT_DISCOUNT_CODE_BY_PERCENT[percent];
-	if (!code) return { ok: false, error: 'Only 10 or 15 percent supported' };
-
-	const startsAt = new Date().toISOString();
-	const endsAt = options?.expiresInDays
-		? new Date(Date.now() + options.expiresInDays * 24 * 60 * 60 * 1000).toISOString()
-		: null;
-
-	const mutation = `
-		mutation discountCodeBasicCreate($basicCodeDiscount: DiscountCodeBasicInput!) {
-			discountCodeBasicCreate(basicCodeDiscount: $basicCodeDiscount) {
-				codeDiscountNode {
-					id
-					codeDiscount {
-						... on DiscountCodeBasic {
-							codes(first: 5) { nodes { code } }
-						}
-					}
-				}
-				userErrors { field message }
-			}
-		}
-	`;
-	const variables = {
-		basicCodeDiscount: {
-			title: `Chat ${percent}% off`,
-			code,
-			startsAt,
-			endsAt,
-			context: { all: 'ALL' as const },
-			customerGets: {
-				value: { percentage: percent / 100 },
-				items: { all: true }
-			}
-		}
-	};
-
-	const res = await shopifyGraphql<{
-		discountCodeBasicCreate?: {
-			codeDiscountNode?: { id?: string };
-			userErrors?: Array<{ field?: string[]; message?: string }>;
-		};
-	}>(config, mutation, variables);
-
-	if (!res.ok) {
-		// Code might already exist (e.g. "Code has already been taken")
-		const errMsg = (res.error ?? '').toLowerCase();
-		if (errMsg.includes('already') || errMsg.includes('taken') || errMsg.includes('duplicate')) {
-			return { ok: true, code };
-		}
-		return { ok: false, error: res.error };
-	}
-
-	const userErrors = res.data?.discountCodeBasicCreate?.userErrors ?? [];
-	if (userErrors.length > 0) {
-		const msg = userErrors.map((e) => e.message).filter(Boolean).join('; ');
-		if (/already|taken|exists/i.test(msg)) return { ok: true, code };
-		return { ok: false, error: msg };
-	}
-
-	return { ok: true, code };
-}
+/** @deprecated Use FIXED_DISCOUNT_CODE_BY_PERCENT. Kept for backwards compatibility. */
+export const CHAT_DISCOUNT_CODE_BY_PERCENT: Record<number, string> = FIXED_DISCOUNT_CODE_BY_PERCENT;
 
 export type ShopifyDiscountCode = {
 	code?: string | null;
@@ -389,7 +319,7 @@ export type ShopifyDraftOrderInput = {
 	note?: string;
 	tags?: string;
 	currency?: string;
-	/** Optional percentage discount (10 or 15) applied to the order */
+	/** Optional percentage discount (10, 15, or 20; uses fixed codes NZ10, NZ15, NZ20 in cart URL) */
 	applied_discount?: {
 		title?: string;
 		description?: string;
@@ -430,53 +360,23 @@ export async function createDraftOrder(
 	const draft = res.data?.draft_order;
 	if (!draft?.id) return { ok: false, error: 'Draft order not returned' };
 	
-	// Build a proper checkout/cart permalink URL with variant IDs if available
-	// Shopify cart permalink format: https://{shop}.myshopify.com/cart/{variant_id}:{quantity},{variant_id}:{quantity}
-	// This creates a direct checkout link, not an invoice link
+	// Always use cart permalink with variant IDs when available; append ?discount=CODE for fixed codes (NZ10, NZ15, NZ20).
 	let checkoutUrl: string | undefined;
 	const itemsWithVariants = input.line_items.filter((item) => item.variant_id != null && item.variant_id > 0);
-	
+
 	if (itemsWithVariants.length > 0) {
-		// Build cart permalink URL with variant IDs (this goes directly to checkout)
 		const cartItems = itemsWithVariants.map((item) => `${item.variant_id}:${item.quantity}`).join(',');
-		
-		// Extract shop domain - handle both myshopify.com and custom domains
-		let shopDomain = config.shopDomain.trim();
-		// Remove protocol if present
-		shopDomain = shopDomain.replace(/^https?:\/\//, '');
-		// Remove trailing slashes and paths
-		shopDomain = shopDomain.split('/')[0];
-		
-		// Determine if it's a myshopify.com domain or custom domain
+		let shopDomain = config.shopDomain.trim().replace(/^https?:\/\//, '').split('/')[0];
 		let baseUrl: string;
-		if (shopDomain.includes('.myshopify.com')) {
-			// Already a myshopify.com domain, use as-is
-			baseUrl = `https://${shopDomain}`;
-		} else if (shopDomain.includes('.')) {
-			// Custom domain - we need to find the myshopify.com domain
-			// For custom domains, we'll try to extract the shop name
-			// If shopDomain is like "shop.example.com", we can't easily get the myshopify.com domain
-			// So we'll use the custom domain and hope Shopify redirects correctly
-			baseUrl = `https://${shopDomain}`;
-		} else {
-			// Just the shop name (e.g., "myshop")
-			baseUrl = `https://${shopDomain}.myshopify.com`;
-		}
-		
-		// Build the cart permalink URL (this goes directly to checkout)
+		if (shopDomain.includes('.myshopify.com')) baseUrl = `https://${shopDomain}`;
+		else if (shopDomain.includes('.')) baseUrl = `https://${shopDomain}`;
+		else baseUrl = `https://${shopDomain}.myshopify.com`;
 		checkoutUrl = `${baseUrl}/cart/${cartItems}`;
-		
-		// Add discount code if applicable
-		if (input.applied_discount && input.applied_discount.value) {
-			const discountPercent = Number.parseFloat(input.applied_discount.value);
-			const discountCode = CHAT_DISCOUNT_CODE_BY_PERCENT[discountPercent];
-			if (discountCode) {
-				checkoutUrl += `?discount=${encodeURIComponent(discountCode)}`;
-			}
+		if (input.applied_discount?.value) {
+			const discountCode = FIXED_DISCOUNT_CODE_BY_PERCENT[Number.parseFloat(input.applied_discount.value)];
+			if (discountCode) checkoutUrl += `?discount=${encodeURIComponent(discountCode)}`;
 		}
 	} else {
-		// No variant IDs available - fall back to invoice URL as last resort
-		// This should rarely happen if products are configured correctly
 		checkoutUrl = draft.invoice_url ?? undefined;
 	}
 	

@@ -11,8 +11,7 @@ import {
 } from '$lib/quote-pdf.server';
 import { randomUUID } from 'node:crypto';
 import {
-	createChatDiscountCode,
-	CHAT_DISCOUNT_CODE_BY_PERCENT,
+	FIXED_DISCOUNT_CODE_BY_PERCENT,
 	getShopifyConfigForUser,
 	listRecentOrders,
 	searchOrders,
@@ -1489,7 +1488,7 @@ export const POST: RequestHandler = async (event) => {
 				// Verify widget belongs to workspace
 				const { data: widget, error: widgetErr } = await supabase
 					.from('widgets')
-					.select('id, workspace_id, created_by')
+					.select('id, workspace_id')
 					.eq('id', widgetId)
 					.eq('workspace_id', authInfo.workspaceId)
 					.single();
@@ -1498,7 +1497,7 @@ export const POST: RequestHandler = async (event) => {
 					return json({ error: 'Widget not found or access denied' }, { status: 404 });
 				}
 
-				const ALLOWED_PERCENTS = [10, 15] as const;
+				const ALLOWED_PERCENTS = [10, 15, 20] as const;
 				const raw = typeof discount_percent === 'number' ? discount_percent : undefined;
 				const discountPercent = raw != null && ALLOWED_PERCENTS.includes(raw as (typeof ALLOWED_PERCENTS)[number])
 					? (raw as (typeof ALLOWED_PERCENTS)[number])
@@ -1506,28 +1505,13 @@ export const POST: RequestHandler = async (event) => {
 
 				if (discountPercent === null) {
 					return json(
-						{ error: 'discount_percent is required and must be 10 or 15.' },
+						{ error: 'discount_percent is required and must be 10, 15, or 20.' },
 						{ status: 400 }
 					);
 				}
 
-				// Create real discount code in Shopify when connected
-				const ownerId = widget.created_by ?? null;
-				if (ownerId) {
-					const config = await getShopifyConfigForUser(supabase, ownerId);
-					if (config) {
-						const result = await createChatDiscountCode(config, discountPercent, { expiresInDays: 30 });
-						if (!result.ok) {
-							console.error('[MCP create_discount] Shopify discount creation failed:', result.error);
-						}
-					}
-				}
-
-				const code = CHAT_DISCOUNT_CODE_BY_PERCENT[discountPercent];
-				const message =
-					discountPercent === 10
-						? 'A 10% discount has been applied. When you ask for your checkout link, the discount will be included automatically.'
-						: 'A 15% discount has been applied. When you ask for your checkout link, the discount will be included automatically.';
+				const code = FIXED_DISCOUNT_CODE_BY_PERCENT[discountPercent];
+				const message = `A ${discountPercent}% discount (${code}) will be applied. When you ask for your checkout link, the discount will be included automatically.`;
 
 				return json({
 					success: true,

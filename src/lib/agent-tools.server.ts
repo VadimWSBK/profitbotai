@@ -15,7 +15,6 @@ import { AGENT_TOOL_IDS, type AgentToolId } from '$lib/agent-tools';
 import { getProductPricingForOwner } from '$lib/product-pricing.server';
 import {
 	cancelOrder,
-	createChatDiscountCode,
 	createDraftOrder,
 	getDiyProductImages,
 	getShopifyConfigForUser,
@@ -493,7 +492,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 
 	tools.shopify_create_diy_checkout_link = tool({
 		description:
-			'Use this when the customer wants a DIY quote or to buy product themselves (supply-only). Creates a one-click checkout and makes the chat show a product table and GO TO CHECKOUT button in the same message. Call it with roof_size_sqm when you have their roof size (required for DIY quotes); the widget will display the breakdown and button. Optional: discount_percent (e.g. 10 or 15) if they ask for a discount; email to pre-fill checkout.',
+			'Use this when the customer wants a DIY quote or to buy product themselves (supply-only). Creates a one-click checkout and makes the chat show a product table and GO TO CHECKOUT button. Call it with roof_size_sqm when you have their roof size (required for DIY quotes). Optional: discount_percent 10, 15, or 20 to use fixed codes NZ10, NZ15, NZ20 in the checkout link; email to pre-fill checkout.',
 		inputSchema: z.object({
 			roof_size_sqm: z
 				.number()
@@ -509,7 +508,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 				.min(1)
 				.max(20)
 				.optional()
-				.describe('Discount percentage (10 for first request, 15 if customer asks for more). Pre-applied to checkout.'),
+				.describe('Discount: 10 (NZ10), 15 (NZ15), or 20 (NZ20). Use same value as when offering the discount.'),
 			email: z.string().optional().describe('Customer email for pre-filling checkout (optional).')
 		}),
 		execute: async (
@@ -587,11 +586,6 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 			}
 			const discountAmount = appliedDiscount ? Number.parseFloat(appliedDiscount.amount) : 0;
 			const total = Math.round((subtotal - discountAmount) * 100) / 100;
-
-			// Ensure discount code exists in Shopify so checkout URL ?discount=CODE applies (idempotent)
-			if (discount_percent === 10 || discount_percent === 15) {
-				await createChatDiscountCode(config, discount_percent as 10 | 15, { expiresInDays: 30 });
-			}
 
 			const noteParts = lineItems.map((li) => `${li.quantity}× ${li.title}`).join(', ');
 			const result = await createDraftOrder(config, {
@@ -692,13 +686,13 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 
 	tools.shopify_create_discount = tool({
 		description:
-			'Create a real discount code in Shopify when the customer asks for a discount. Call this when you offer 10% or 15% off so the code exists in Shopify; then when you create the checkout link with shopify_create_diy_checkout_link use the same discount_percent so the link has the discount automatically applied. Offer 10% first; if they push for more, use 15%.',
+			'When the customer asks for a discount, record which fixed code to use (NZ10, NZ15, NZ20). Call this when you offer 10%, 15%, or 20% off; then when creating the checkout link with shopify_create_diy_checkout_link pass the same discount_percent so the link includes ?discount=CODE. Offer 10% first (NZ10); if they push for more, use 15% (NZ15) or 20% (NZ20).',
 		inputSchema: z.object({
 			discount_percent: z
 				.number()
 				.int()
-				.refine((v) => v === 10 || v === 15, { message: 'Must be 10 or 15' })
-				.describe('Discount percentage: 10 for first request, 15 if customer asks for more.')
+				.refine((v) => v === 10 || v === 15 || v === 20, { message: 'Must be 10, 15, or 20' })
+				.describe('Discount: 10 (NZ10), 15 (NZ15), or 20 (NZ20).')
 		}),
 		execute: async (
 			{ discount_percent },
@@ -706,16 +700,14 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 		) => {
 			const c = getContext(experimental_context);
 			if (!c) return { error: 'Missing context' };
-			const config = await getShopifyConfigForUser(admin, c.ownerId);
-			if (!config) return { error: 'Shopify is not connected. Connect Shopify in Settings → Integrations.' };
-			const percent = discount_percent === 10 || discount_percent === 15 ? discount_percent : 10;
-			const result = await createChatDiscountCode(config, percent, { expiresInDays: 30 });
-			if (!result.ok) return { error: result.error ?? 'Failed to create discount code' };
+			const { FIXED_DISCOUNT_CODE_BY_PERCENT } = await import('$lib/shopify.server');
+			const code = FIXED_DISCOUNT_CODE_BY_PERCENT[discount_percent];
+			if (!code) return { error: 'Use discount_percent 10, 15, or 20.' };
 			return {
 				success: true,
-				code: result.code,
-				discountPercent: percent,
-				message: `A ${percent}% discount has been applied. When you send the checkout link (use shopify_create_diy_checkout_link with discount_percent: ${percent}), the discount will be included automatically—no need for the customer to enter a code.`
+				code,
+				discountPercent: discount_percent,
+				message: `A ${discount_percent}% discount (${code}) will be applied. When you send the checkout link, use shopify_create_diy_checkout_link with discount_percent: ${discount_percent} so the link includes the discount.`
 			};
 		}
 	});

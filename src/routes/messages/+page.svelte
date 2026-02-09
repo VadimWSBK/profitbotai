@@ -1163,32 +1163,53 @@
 											<div class="checkout-preview-block checkout-preview-block--messages">
 												<div class="checkout-preview">
 													<h3 class="checkout-title">Your Checkout Preview</h3>
-													{#each msg.checkoutPreview.lineItemsUI as item}
-														<div class="line-item">
-															{#if item.imageUrl}
-																<img class="product-image" src={item.imageUrl} alt={item.title} loading="lazy" />
-															{:else}
-																<div class="product-image image-placeholder" aria-hidden="true"></div>
-															{/if}
-															<div class="product-details">
-																<div class="product-title">{item.title}</div>
-																<div class="product-meta">Unit Price: $${item.unitPrice} {msg.checkoutPreview.summary.currency ?? 'AUD'}</div>
-															</div>
-															<div class="product-qty">Qty: {item.quantity}</div>
-															<div class="product-total">${item.lineTotal} {msg.checkoutPreview.summary.currency ?? 'AUD'}</div>
+													{#if msg.checkoutPreview.lineItemsUI && msg.checkoutPreview.lineItemsUI.length > 0}
+														<div class="checkout-table-wrap">
+															<table class="checkout-table">
+																<thead>
+																	<tr>
+																		<th class="checkout-th-image">Image</th>
+																		<th class="checkout-th-product">Product</th>
+																		<th class="checkout-th-unit">Unit price</th>
+																		<th class="checkout-th-qty">Qty</th>
+																		<th class="checkout-th-total">Line total</th>
+																	</tr>
+																</thead>
+																<tbody>
+																	{#each msg.checkoutPreview.lineItemsUI as item}
+																		<tr class="checkout-tr">
+																			<td class="checkout-td-image">
+																				{#if item.imageUrl}
+																					<img class="product-image" src={item.imageUrl} alt={item.title} loading="lazy" />
+																				{:else}
+																					<div class="product-image image-placeholder" aria-hidden="true"></div>
+																				{/if}
+																			</td>
+																			<td class="checkout-td-product"><div class="product-title">{item.title}</div></td>
+																			<td class="checkout-td-unit">${item.unitPrice} {msg.checkoutPreview.summary.currency ?? 'AUD'}</td>
+																			<td class="checkout-td-qty">{item.quantity}</td>
+																			<td class="checkout-td-total"><strong>${item.lineTotal} {msg.checkoutPreview.summary.currency ?? 'AUD'}</strong></td>
+																		</tr>
+																	{/each}
+																</tbody>
+															</table>
 														</div>
-													{/each}
+													{/if}
 													<hr class="checkout-hr" />
-													<div class="summary-row"><span>Items</span><span>{msg.checkoutPreview.summary.totalItems}</span></div>
-													{#if msg.checkoutPreview.summary.discountPercent != null}
-														<div class="summary-row"><span>Discount</span><span>{msg.checkoutPreview.summary.discountPercent}% OFF</span></div>
-													{/if}
-													<div class="summary-row"><span>Shipping</span><span>FREE</span></div>
-													<div class="summary-row subtotal"><span>Subtotal</span><span>${msg.checkoutPreview.summary.subtotal} {msg.checkoutPreview.summary.currency}</span></div>
-													{#if msg.checkoutPreview.summary.discountAmount != null}
-														<div class="summary-row savings"><span>Savings</span><span>- ${msg.checkoutPreview.summary.discountAmount} {msg.checkoutPreview.summary.currency}</span></div>
-													{/if}
-													<div class="summary-row total"><span>Total</span><span>${msg.checkoutPreview.summary.total} {msg.checkoutPreview.summary.currency}</span></div>
+													<table class="checkout-summary-table">
+														<tbody>
+															<tr class="summary-row"><td>Items</td><td>{msg.checkoutPreview.summary.totalItems}</td></tr>
+															{#if msg.checkoutPreview.summary.discountPercent != null}
+																<tr class="summary-row"><td>Discount</td><td>{msg.checkoutPreview.summary.discountPercent}% OFF</td></tr>
+															{/if}
+															<tr class="summary-row"><td>Shipping</td><td>FREE</td></tr>
+															<tr class="summary-row subtotal"><td>Subtotal</td><td>${msg.checkoutPreview.summary.subtotal} {msg.checkoutPreview.summary.currency}</td></tr>
+															{#if msg.checkoutPreview.summary.discountAmount != null}
+																<tr class="summary-row savings"><td>Savings</td><td>- ${msg.checkoutPreview.summary.discountAmount} {msg.checkoutPreview.summary.currency}</td></tr>
+															{/if}
+															<tr class="summary-row total"><td>Total</td><td>${msg.checkoutPreview.summary.total} {msg.checkoutPreview.summary.currency}</td></tr>
+														</tbody>
+													</table>
 													<div class="gst-note">GST included</div>
 													<a href={msg.checkoutPreview.checkoutUrl} target="_blank" rel="noopener noreferrer" class="checkout-button">GO TO CHECKOUT</a>
 												</div>

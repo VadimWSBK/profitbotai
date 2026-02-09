@@ -827,32 +827,53 @@
 										<div class="checkout-preview-block">
 											<div class="checkout-preview">
 												<h3 class="checkout-title">Your Checkout Preview</h3>
-												{#each preview.lineItemsUI as item}
-													<div class="line-item">
-														{#if item.imageUrl}
-															<img class="product-image" src={item.imageUrl} alt={item.title} loading="lazy" />
-														{:else}
-															<div class="product-image image-placeholder" aria-hidden="true"></div>
-														{/if}
-														<div class="product-details">
-															<div class="product-title">{item.title}</div>
-															<div class="product-meta">Unit Price: $${item.unitPrice} {preview.summary.currency ?? 'AUD'}</div>
-														</div>
-														<div class="product-qty">Qty: {item.quantity}</div>
-														<div class="product-total">${item.lineTotal} {preview.summary.currency ?? 'AUD'}</div>
+												{#if preview.lineItemsUI && preview.lineItemsUI.length > 0}
+													<div class="checkout-table-wrap">
+														<table class="checkout-table">
+															<thead>
+																<tr>
+																	<th class="checkout-th-image">Image</th>
+																	<th class="checkout-th-product">Product</th>
+																	<th class="checkout-th-unit">Unit price</th>
+																	<th class="checkout-th-qty">Qty</th>
+																	<th class="checkout-th-total">Line total</th>
+																</tr>
+															</thead>
+															<tbody>
+																{#each preview.lineItemsUI as item}
+																	<tr class="checkout-tr">
+																		<td class="checkout-td-image">
+																			{#if item.imageUrl}
+																				<img class="product-image" src={item.imageUrl} alt={item.title} loading="lazy" />
+																			{:else}
+																				<div class="product-image image-placeholder" aria-hidden="true"></div>
+																			{/if}
+																		</td>
+																		<td class="checkout-td-product"><div class="product-title">{item.title}</div></td>
+																		<td class="checkout-td-unit">${item.unitPrice} {preview.summary.currency ?? 'AUD'}</td>
+																		<td class="checkout-td-qty">{item.quantity}</td>
+																		<td class="checkout-td-total"><strong>${item.lineTotal} {preview.summary.currency ?? 'AUD'}</strong></td>
+																	</tr>
+																{/each}
+															</tbody>
+														</table>
 													</div>
-												{/each}
+												{/if}
 												<hr class="checkout-hr" />
-												<div class="summary-row"><span>Items</span><span>{preview.summary.totalItems}</span></div>
-												{#if preview.summary.discountPercent != null}
-													<div class="summary-row"><span>Discount</span><span>{preview.summary.discountPercent}% OFF</span></div>
-												{/if}
-												<div class="summary-row"><span>Shipping</span><span>FREE</span></div>
-												<div class="summary-row subtotal"><span>Subtotal</span><span>${preview.summary.subtotal} {preview.summary.currency}</span></div>
-												{#if preview.summary.discountAmount != null}
-													<div class="summary-row savings"><span>Savings</span><span>- ${preview.summary.discountAmount} {preview.summary.currency}</span></div>
-												{/if}
-												<div class="summary-row total"><span>Total</span><span>${preview.summary.total} {preview.summary.currency}</span></div>
+												<table class="checkout-summary-table">
+													<tbody>
+														<tr class="summary-row"><td>Items</td><td>{preview.summary.totalItems}</td></tr>
+														{#if preview.summary.discountPercent != null}
+															<tr class="summary-row"><td>Discount</td><td>{preview.summary.discountPercent}% OFF</td></tr>
+														{/if}
+														<tr class="summary-row"><td>Shipping</td><td>FREE</td></tr>
+														<tr class="summary-row subtotal"><td>Subtotal</td><td>${preview.summary.subtotal} {preview.summary.currency}</td></tr>
+														{#if preview.summary.discountAmount != null}
+															<tr class="summary-row savings"><td>Savings</td><td>- ${preview.summary.discountAmount} {preview.summary.currency}</td></tr>
+														{/if}
+														<tr class="summary-row total"><td>Total</td><td>${preview.summary.total} {preview.summary.currency}</td></tr>
+													</tbody>
+												</table>
 												<div class="gst-note">GST included</div>
 												{#if preview.checkoutUrl}
 													<a href={preview.checkoutUrl} target="_blank" rel="noopener noreferrer" class="checkout-button">GO TO CHECKOUT</a>
@@ -1318,7 +1339,7 @@
 		display: block;
 	}
 
-	/* Data-driven checkout preview (line items + summary + button) */
+	/* Data-driven checkout preview (HTML table + product image + summary + button) */
 	:global(.checkout-preview-block) {
 		margin-top: 0.75em;
 		background: transparent !important;
@@ -1331,48 +1352,67 @@
 		color: inherit;
 		line-height: 1.2;
 	}
-	:global(.checkout-preview-block .line-item) {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		padding: 10px 0;
-		border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+	:global(.checkout-preview-block .checkout-table-wrap) {
+		overflow-x: auto;
+		margin-bottom: 4px;
 	}
-	:global(.checkout-preview-block .line-item:last-of-type) {
+	:global(.checkout-preview-block .checkout-table) {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 14px;
+	}
+	:global(.checkout-preview-block .checkout-table th) {
+		text-align: left;
+		padding: 8px 10px;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+		font-weight: 600;
+		opacity: 0.9;
+		background: rgba(255, 255, 255, 0.08);
+	}
+	:global(.checkout-preview-block .checkout-table td) {
+		padding: 10px;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+		vertical-align: middle;
+	}
+	:global(.checkout-preview-block .checkout-tr:last-child td) {
 		border-bottom: none;
 	}
+	:global(.checkout-preview-block .checkout-th-image),
+	:global(.checkout-preview-block .checkout-td-image) {
+		width: 72px;
+		text-align: center;
+	}
 	:global(.checkout-preview-block .product-image) {
-		width: 64px;
-		height: 64px;
-		min-width: 64px;
+		width: 56px;
+		height: 56px;
 		border-radius: 8px;
 		object-fit: cover;
 		background: rgba(255, 255, 255, 0.1);
+		display: inline-block;
+		vertical-align: middle;
 	}
 	:global(.checkout-preview-block .product-image.image-placeholder) {
-		display: block;
-	}
-	:global(.checkout-preview-block .product-details) {
-		flex: 1;
-		min-width: 0;
+		display: inline-block;
+		min-width: 56px;
+		min-height: 56px;
+		background: rgba(255, 255, 255, 0.1);
+		border-radius: 8px;
 	}
 	:global(.checkout-preview-block .product-title) {
 		font-weight: 700;
-		font-size: 15px;
-		margin-bottom: 4px;
+		font-size: 14px;
 		line-height: 1.3;
 	}
-	:global(.checkout-preview-block .product-meta) {
-		font-size: 13px;
-		opacity: 0.85;
-	}
-	:global(.checkout-preview-block .product-qty) {
-		font-size: 13px;
+	:global(.checkout-preview-block .checkout-td-unit) {
+		opacity: 0.9;
 		white-space: nowrap;
 	}
-	:global(.checkout-preview-block .product-total) {
-		font-weight: 700;
-		font-size: 15px;
+	:global(.checkout-preview-block .checkout-td-qty) {
+		text-align: center;
+		white-space: nowrap;
+	}
+	:global(.checkout-preview-block .checkout-td-total) {
+		text-align: right;
 		white-space: nowrap;
 	}
 	:global(.checkout-preview-block .checkout-hr) {
@@ -1380,23 +1420,28 @@
 		border-top: 1px solid rgba(255, 255, 255, 0.2);
 		margin: 12px 0;
 	}
-	:global(.checkout-preview-block .summary-row) {
-		display: flex;
-		justify-content: space-between;
-		padding: 4px 0;
+	:global(.checkout-preview-block .checkout-summary-table) {
+		width: 100%;
+		border-collapse: collapse;
 		font-size: 14px;
 	}
-	:global(.checkout-preview-block .summary-row.subtotal) {
-		margin-top: 4px;
+	:global(.checkout-preview-block .checkout-summary-table .summary-row td) {
+		padding: 4px 0;
 	}
-	:global(.checkout-preview-block .summary-row.savings) {
+	:global(.checkout-preview-block .checkout-summary-table .summary-row td:last-child) {
+		text-align: right;
+		font-weight: 500;
+	}
+	:global(.checkout-preview-block .checkout-summary-table .subtotal td) {
+		padding-top: 8px;
+	}
+	:global(.checkout-preview-block .checkout-summary-table .summary-row.savings) {
 		color: rgba(34, 197, 94, 0.95);
 	}
-	:global(.checkout-preview-block .summary-row.total) {
+	:global(.checkout-preview-block .checkout-summary-table .summary-row.total td) {
 		font-weight: 700;
 		font-size: 1.05em;
-		margin-top: 6px;
-		padding-top: 6px;
+		padding-top: 8px;
 		border-top: 1px solid rgba(255, 255, 255, 0.2);
 	}
 	:global(.checkout-preview-block .gst-note) {

@@ -300,32 +300,42 @@ export const components = String.raw`
     var cur = preview.summary && preview.summary.currency ? escapeHtml(String(preview.summary.currency)) : 'AUD';
     var html = '<div class="pb-checkout-preview">';
     html += '<h3 class="pb-checkout-title">Your Checkout Preview</h3>';
-    if (preview.lineItemsUI && Array.isArray(preview.lineItemsUI)) {
+    if (preview.lineItemsUI && Array.isArray(preview.lineItemsUI) && preview.lineItemsUI.length > 0) {
+      html += '<div class="pb-checkout-table-wrap"><table class="pb-checkout-table"><thead><tr>';
+      html += '<th class="pb-checkout-th-image">Image</th>';
+      html += '<th class="pb-checkout-th-product">Product</th>';
+      html += '<th class="pb-checkout-th-unit">Unit price</th>';
+      html += '<th class="pb-checkout-th-qty">Qty</th>';
+      html += '<th class="pb-checkout-th-total">Line total</th>';
+      html += '</tr></thead><tbody>';
       for (var i = 0; i < preview.lineItemsUI.length; i++) {
         var item = preview.lineItemsUI[i];
-        html += '<div class="pb-line-item">';
+        html += '<tr class="pb-checkout-tr">';
+        html += '<td class="pb-checkout-td-image">';
         if (item.imageUrl) {
           html += '<img class="pb-product-image" src="' + escapeHtml(item.imageUrl) + '" alt="' + escapeHtml(item.title || '') + '" loading="lazy" />';
         } else {
           html += '<div class="pb-product-image pb-image-placeholder" aria-hidden="true"></div>';
         }
-        html += '<div class="pb-product-details">';
-        html += '<div class="pb-product-title">' + escapeHtml(item.title || '') + '</div>';
-        html += '<div class="pb-product-meta">Unit Price: $' + escapeHtml(String(item.unitPrice || '')) + ' ' + cur + '</div>';
-        html += '</div>';
-        html += '<div class="pb-product-qty">Qty: ' + escapeHtml(String(item.quantity || 1)) + '</div>';
-        html += '<div class="pb-product-total">$' + escapeHtml(String(item.lineTotal || '')) + ' ' + cur + '</div>';
-        html += '</div>';
+        html += '</td>';
+        html += '<td class="pb-checkout-td-product"><div class="pb-product-title">' + escapeHtml(item.title || '') + '</div></td>';
+        html += '<td class="pb-checkout-td-unit">$' + escapeHtml(String(item.unitPrice || '')) + ' ' + cur + '</td>';
+        html += '<td class="pb-checkout-td-qty">' + escapeHtml(String(item.quantity || 1)) + '</td>';
+        html += '<td class="pb-checkout-td-total"><strong>$' + escapeHtml(String(item.lineTotal || '')) + ' ' + cur + '</strong></td>';
+        html += '</tr>';
       }
+      html += '</tbody></table></div>';
     }
     html += '<hr class="pb-checkout-hr" />';
     if (preview.summary) {
-      html += '<div class="pb-summary-row"><span>Items</span><span>' + escapeHtml(String(preview.summary.totalItems || 0)) + '</span></div>';
-      if (preview.summary.discountPercent != null) html += '<div class="pb-summary-row"><span>Discount</span><span>' + escapeHtml(String(preview.summary.discountPercent)) + '% OFF</span></div>';
-      html += '<div class="pb-summary-row"><span>Shipping</span><span>FREE</span></div>';
-      html += '<div class="pb-summary-row pb-subtotal"><span>Subtotal</span><span>$' + escapeHtml(String(preview.summary.subtotal || '')) + ' ' + cur + '</span></div>';
-      if (preview.summary.discountAmount != null) html += '<div class="pb-summary-row pb-savings"><span>Savings</span><span>- $' + escapeHtml(String(preview.summary.discountAmount)) + ' ' + cur + '</span></div>';
-      html += '<div class="pb-summary-row pb-total"><span>Total</span><span>$' + escapeHtml(String(preview.summary.total || '')) + ' ' + cur + '</span></div>';
+      html += '<table class="pb-checkout-summary-table"><tbody>';
+      html += '<tr class="pb-summary-row"><td>Items</td><td>' + escapeHtml(String(preview.summary.totalItems || 0)) + '</td></tr>';
+      if (preview.summary.discountPercent != null) html += '<tr class="pb-summary-row"><td>Discount</td><td>' + escapeHtml(String(preview.summary.discountPercent)) + '% OFF</td></tr>';
+      html += '<tr class="pb-summary-row"><td>Shipping</td><td>FREE</td></tr>';
+      html += '<tr class="pb-summary-row pb-subtotal"><td>Subtotal</td><td>$' + escapeHtml(String(preview.summary.subtotal || '')) + ' ' + cur + '</td></tr>';
+      if (preview.summary.discountAmount != null) html += '<tr class="pb-summary-row pb-savings"><td>Savings</td><td>- $' + escapeHtml(String(preview.summary.discountAmount)) + ' ' + cur + '</td></tr>';
+      html += '<tr class="pb-summary-row pb-total"><td>Total</td><td>$' + escapeHtml(String(preview.summary.total || '')) + ' ' + cur + '</td></tr>';
+      html += '</tbody></table>';
     }
     html += '<div class="pb-gst-note">GST included</div>';
     if (preview.checkoutUrl) html += '<a href="' + escapeHtml(preview.checkoutUrl) + '" target="_blank" rel="noopener noreferrer" class="pb-checkout-button">GO TO CHECKOUT</a>';
