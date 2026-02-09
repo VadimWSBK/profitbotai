@@ -1,5 +1,5 @@
 <script lang="ts">
-	type ProductRow = {
+	type VariantRow = {
 		id?: string;
 		name: string;
 		sizeLitres: number;
@@ -10,6 +10,8 @@
 		description: string;
 		colors: string[];
 		productHandle: string;
+		shopifyProductId: number | null;
+		shopifyVariantId: number | null;
 	};
 
 	const PRODUCT_HANDLES = [
@@ -22,7 +24,7 @@
 		{ value: 'brush-roller', label: 'Brush / Roller kit' }
 	] as const;
 
-	let products = $state<ProductRow[]>([]);
+	let products = $state<VariantRow[]>([]);
 	let productsSaving = $state(false);
 	let loaded = $state(false);
 	let errorMessage = $state<string | null>(null);
@@ -30,6 +32,60 @@
 	let shopifyDomain = $state('');
 	let syncProductsLoading = $state(false);
 	let syncProductsResult = $state<{ synced: number } | null>(null);
+
+	function getBaseName(name: string, sizeLitres: number): string {
+		const suffix = new RegExp(`\\s*${sizeLitres}\\s*L\\s*$`, 'i');
+		return name.replace(suffix, '').trim() || name;
+	}
+
+	function groupByProduct(): { key: string; baseName: string; productHandle: string; description: string; colors: string[]; variants: VariantRow[] }[] {
+		const groups = new Map<string, VariantRow[]>();
+		products.forEach((p, i) => {
+			const key = p.shopifyProductId != null ? String(p.shopifyProductId) : `single-${i}`;
+			if (!groups.has(key)) groups.set(key, []);
+			groups.get(key)!.push(p);
+		});
+		return Array.from(groups.entries()).map(([key, variants]) => {
+			const first = variants[0];
+			const baseName = getBaseName(first.name, first.sizeLitres);
+			return {
+				key,
+				baseName,
+				productHandle: first.productHandle,
+				description: first.description,
+				colors: first.colors,
+				variants
+			};
+		});
+	}
+
+	function updateGroupBaseName(key: string, newBaseName: string) {
+		const group = groupByProduct().find((g) => g.key === key);
+		if (!group) return;
+		products = products.map((p) => {
+			if (group.variants.some((v) => v === p)) {
+				const suffix = p.sizeLitres > 0 ? ` ${p.sizeLitres}L` : '';
+				return { ...p, name: newBaseName.trim() + suffix };
+			}
+			return p;
+		});
+	}
+
+	function updateGroupProductHandle(key: string, handle: string) {
+		const group = groupByProduct().find((g) => g.key === key);
+		if (!group) return;
+		products = products.map((p) =>
+			group.variants.some((v) => v === p) ? { ...p, productHandle: handle } : p
+		);
+	}
+
+	function updateGroupDescription(key: string, description: string) {
+		const group = groupByProduct().find((g) => g.key === key);
+		if (!group) return;
+		products = products.map((p) =>
+			group.variants.some((v) => v === p) ? { ...p, description } : p
+		);
+	}
 
 	async function load() {
 		const [integrationsRes, productsRes] = await Promise.all([
@@ -57,6 +113,8 @@
 							description?: string | null;
 							colors?: string[] | null;
 							productHandle?: string | null;
+							shopifyProductId?: number | null;
+							shopifyVariantId?: number | null;
 						}) => ({
 							id: p.id,
 							name: p.name ?? '',
@@ -67,13 +125,15 @@
 							imageUrl: p.imageUrl ?? '',
 							description: p.description ?? '',
 							colors: Array.isArray(p.colors) ? p.colors : [],
-							productHandle: p.productHandle && String(p.productHandle).trim() ? p.productHandle.trim() : ''
+							productHandle: p.productHandle && String(p.productHandle).trim() ? p.productHandle.trim() : '',
+							shopifyProductId: p.shopifyProductId != null ? Number(p.shopifyProductId) : null,
+							shopifyVariantId: p.shopifyVariantId != null ? Number(p.shopifyVariantId) : null
 						})
 					)
 				: [
-						{ name: 'NetZero UltraTherm 15L Bucket', sizeLitres: 15, price: 389.99, currency: 'AUD', coverageSqm: 2, imageUrl: '', description: '', colors: [] as string[], productHandle: '' },
-						{ name: 'NetZero UltraTherm 10L Bucket', sizeLitres: 10, price: 285.99, currency: 'AUD', coverageSqm: 2, imageUrl: '', description: '', colors: [] as string[], productHandle: '' },
-						{ name: 'NetZero UltraTherm 5L Bucket', sizeLitres: 5, price: 149.99, currency: 'AUD', coverageSqm: 2, imageUrl: '', description: '', colors: [] as string[], productHandle: '' }
+						{ name: 'NetZero UltraTherm 15L Bucket', sizeLitres: 15, price: 389.99, currency: 'AUD', coverageSqm: 2, imageUrl: '', description: '', colors: [] as string[], productHandle: '', shopifyProductId: null, shopifyVariantId: null },
+						{ name: 'NetZero UltraTherm 10L Bucket', sizeLitres: 10, price: 285.99, currency: 'AUD', coverageSqm: 2, imageUrl: '', description: '', colors: [] as string[], productHandle: '', shopifyProductId: null, shopifyVariantId: null },
+						{ name: 'NetZero UltraTherm 5L Bucket', sizeLitres: 5, price: 149.99, currency: 'AUD', coverageSqm: 2, imageUrl: '', description: '', colors: [] as string[], productHandle: '', shopifyProductId: null, shopifyVariantId: null }
 					];
 		loaded = true;
 	}
@@ -117,7 +177,9 @@
 						imageUrl: p.imageUrl.trim() || null,
 						description: p.description.trim() || null,
 						colors: p.colors.length > 0 ? p.colors : null,
-						productHandle: p.productHandle?.trim() || null
+						productHandle: p.productHandle?.trim() || null,
+						shopifyProductId: p.shopifyProductId,
+						shopifyVariantId: p.shopifyVariantId
 					}))
 				})
 			});
@@ -134,12 +196,40 @@
 	function addProduct() {
 		products = [
 			...products,
-			{ name: '', sizeLitres: 5, price: 0, currency: 'AUD', coverageSqm: 2, imageUrl: '', description: '', colors: [], productHandle: '' }
+			{ name: '', sizeLitres: 5, price: 0, currency: 'AUD', coverageSqm: 2, imageUrl: '', description: '', colors: [], productHandle: '', shopifyProductId: null, shopifyVariantId: null }
 		];
 	}
 
-	function removeProduct(i: number) {
-		products = products.filter((_, idx) => idx !== i);
+	function addVariantToGroup(key: string) {
+		const group = groupByProduct().find((g) => g.key === key);
+		if (!group || group.variants.length === 0) return;
+		const first = group.variants[0];
+		products = [
+			...products,
+			{
+				name: `${group.baseName} 0L`,
+				sizeLitres: 0,
+				price: 0,
+				currency: first.currency,
+				coverageSqm: first.coverageSqm,
+				imageUrl: '',
+				description: first.description,
+				colors: first.colors,
+				productHandle: first.productHandle,
+				shopifyProductId: first.shopifyProductId,
+				shopifyVariantId: null
+			}
+		];
+	}
+
+	function removeVariant(variant: VariantRow) {
+		products = products.filter((p) => p !== variant);
+	}
+
+	function removeProductGroup(key: string) {
+		const group = groupByProduct().find((g) => g.key === key);
+		if (!group) return;
+		products = products.filter((p) => !group.variants.includes(p));
 	}
 
 	function closeError() {
@@ -155,7 +245,7 @@
 	<title>Products – ProfitBot</title>
 </svelte:head>
 
-<div class="max-w-3xl mx-auto">
+<div class="max-w-4xl mx-auto">
 	<h1 class="text-2xl font-bold text-gray-900">Products</h1>
 	<p class="text-gray-500 mt-1 mb-6">
 		Sync products from Shopify and manage product pricing. Used by the agent for DIY quotes, roof-kit calculator, and checkout links.
@@ -185,7 +275,7 @@
 		<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
 			<h2 class="text-lg font-semibold text-gray-900 mb-1">Sync from Shopify</h2>
 			<p class="text-gray-500 text-sm mb-4">
-				Pull product names, images, variant IDs, and prices from your connected Shopify store into the product list below. Connect Shopify in <a href="/integrations" class="text-amber-600 hover:text-amber-700 underline">Integrations</a> first.
+				Pull product names, variant IDs, images, and prices from your connected Shopify store. Each product is shown once with all its variants (sizes) listed below.
 			</p>
 			{#if shopifyConnected}
 				<div class="flex flex-wrap items-center gap-2">
@@ -198,7 +288,7 @@
 						{syncProductsLoading ? 'Syncing…' : 'Sync products from Shopify'}
 					</button>
 					{#if syncProductsResult}
-						<span class="text-sm text-gray-500">{syncProductsResult.synced} product(s) synced</span>
+						<span class="text-sm text-gray-500">{syncProductsResult.synced} variant(s) synced</span>
 					{/if}
 					<span class="text-xs text-gray-500">{shopifyDomain}</span>
 				</div>
@@ -209,69 +299,148 @@
 			{/if}
 		</div>
 
-		<!-- Product pricing list -->
+		<!-- Product pricing: one card per product, variants in a table -->
 		<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
 			<h2 class="text-lg font-semibold text-gray-900 mb-1">Product pricing</h2>
 			<p class="text-gray-500 text-sm mb-4">
-				DIY products used by the agent for quotes and checkout links. Prices and coverage are injected into the chat context. Set <strong>Product type</strong> for roof-kit calculator (e.g. sealant, thermal coating, brush-roller).
+				One product can have multiple variants (e.g. 15L, 10L, 5L). Set <strong>Product type</strong> for the roof-kit calculator. Variant ID and image URL are used for checkout links.
 			</p>
-			<div class="space-y-4">
-				{#each products as product, i}
-					<div class="p-4 border border-gray-200 rounded-lg space-y-3">
-						<div class="flex justify-between items-center">
-							<span class="text-sm font-medium text-gray-600">Product {i + 1}</span>
-							<button type="button" onclick={() => removeProduct(i)} class="text-red-600 hover:text-red-700 text-sm">Remove</button>
-						</div>
-						<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-							<label class="col-span-2">
-								<span class="text-xs text-gray-500">Name</span>
-								<input type="text" bind:value={product.name} placeholder="e.g. NetZero 15L Bucket" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-							</label>
-							<label>
-								<span class="text-xs text-gray-500">Size (L)</span>
-								<input type="number" bind:value={product.sizeLitres} min="0" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-							</label>
-							<label>
-								<span class="text-xs text-gray-500">Coverage (sqm/L)</span>
-								<input type="number" bind:value={product.coverageSqm} min="0" step="0.1" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-							</label>
-							<label>
-								<span class="text-xs text-gray-500">Price</span>
-								<input type="number" bind:value={product.price} min="0" step="0.01" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-							</label>
-							<label>
-								<span class="text-xs text-gray-500">Currency</span>
-								<input type="text" bind:value={product.currency} placeholder="AUD" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-							</label>
-							<label class="col-span-2">
-								<span class="text-xs text-gray-500">Product type (roof-kit)</span>
-								<select
-									bind:value={product.productHandle}
-									class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
-								>
-									{#each PRODUCT_HANDLES as opt}
-										<option value={opt.value}>{opt.label}</option>
-									{/each}
-								</select>
-							</label>
-							<label class="col-span-2 sm:col-span-4">
-								<span class="text-xs text-gray-500">Image URL (optional)</span>
-								<input type="url" bind:value={product.imageUrl} placeholder="https://..." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-							</label>
-							<label class="col-span-2 sm:col-span-4">
-								<span class="text-xs text-gray-500">Description (optional)</span>
-								<textarea bind:value={product.description} placeholder="Product description…" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm resize-y"></textarea>
-							</label>
-							{#if product.colors.length > 0}
-								<div class="col-span-2 sm:col-span-4">
-									<span class="text-xs text-gray-500">Colors</span>
-									<div class="flex flex-wrap gap-1.5 mt-1">
-										{#each product.colors as color}
-											<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">{color}</span>
-										{/each}
-									</div>
+			<div class="space-y-6">
+				{#each groupByProduct() as group (group.key)}
+					<div class="p-4 border border-gray-200 rounded-lg space-y-4">
+						<div class="flex justify-between items-start gap-2">
+							<div class="flex-1 min-w-0 space-y-2">
+								<label class="block">
+									<span class="text-xs text-gray-500">Product name</span>
+									<input
+										type="text"
+										value={group.baseName}
+										oninput={(e) => updateGroupBaseName(group.key, (e.currentTarget as HTMLInputElement).value)}
+										placeholder="e.g. NetZero UltraTherm Roof Coating"
+										class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium"
+									/>
+								</label>
+								<div class="flex flex-wrap gap-3 items-center">
+									<label class="flex items-center gap-2">
+										<span class="text-xs text-gray-500">Product type (roof-kit)</span>
+										<select
+											value={group.productHandle}
+											onchange={(e) => updateGroupProductHandle(group.key, (e.currentTarget as HTMLSelectElement).value)}
+											class="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+										>
+											{#each PRODUCT_HANDLES as opt}
+												<option value={opt.value}>{opt.label}</option>
+											{/each}
+										</select>
+									</label>
+									<button
+										type="button"
+										onclick={() => addVariantToGroup(group.key)}
+										class="text-sm text-amber-600 hover:text-amber-700 font-medium"
+									>
+										+ Add variant
+									</button>
 								</div>
-							{/if}
+								<label class="block">
+									<span class="text-xs text-gray-500">Description (optional)</span>
+									<textarea
+										value={group.description}
+										oninput={(e) => updateGroupDescription(group.key, (e.currentTarget as HTMLTextAreaElement).value)}
+										placeholder="Product description…"
+										rows="2"
+										class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm resize-y"
+									></textarea>
+								</label>
+								{#if group.colors.length > 0}
+									<div>
+										<span class="text-xs text-gray-500">Colors</span>
+										<div class="flex flex-wrap gap-1.5 mt-1">
+											{#each group.colors as color}
+												<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">{color}</span>
+											{/each}
+										</div>
+									</div>
+								{/if}
+							</div>
+							<button
+								type="button"
+								onclick={() => removeProductGroup(group.key)}
+								class="text-red-600 hover:text-red-700 text-sm shrink-0"
+							>
+								Remove product
+							</button>
+						</div>
+
+						<!-- Variants table -->
+						<div class="border border-gray-100 rounded-lg overflow-hidden">
+							<table class="w-full text-sm">
+								<thead class="bg-gray-50 border-b border-gray-200">
+									<tr>
+										<th class="text-left py-2 px-3 font-medium text-gray-600">Size (L)</th>
+										<th class="text-left py-2 px-3 font-medium text-gray-600">Variant ID</th>
+										<th class="text-left py-2 px-3 font-medium text-gray-600">Image URL</th>
+										<th class="text-left py-2 px-3 font-medium text-gray-600">Price</th>
+										<th class="text-left py-2 px-3 font-medium text-gray-600">Currency</th>
+										<th class="text-left py-2 px-3 font-medium text-gray-600">Coverage (sqm/L)</th>
+										<th class="w-20"></th>
+									</tr>
+								</thead>
+								<tbody>
+									{#each group.variants as v}
+										<tr class="border-b border-gray-100 last:border-0 hover:bg-gray-50/50">
+											<td class="py-2 px-3">
+												<input
+													type="number"
+													bind:value={v.sizeLitres}
+													min="0"
+													class="w-16 px-2 py-1 border border-gray-300 rounded text-sm"
+												/>
+											</td>
+											<td class="py-2 px-3">
+												<input
+													type="text"
+													value={v.shopifyVariantId ?? ''}
+													oninput={(e) => {
+														const raw = (e.currentTarget as HTMLInputElement).value.trim();
+														v.shopifyVariantId = raw === '' ? null : (Number(raw) || null);
+													}}
+													placeholder="Shopify variant ID"
+													class="w-full max-w-[120px] px-2 py-1 border border-gray-300 rounded text-sm font-mono"
+												/>
+											</td>
+											<td class="py-2 px-3 min-w-0">
+												<input
+													type="url"
+													bind:value={v.imageUrl}
+													placeholder="Variant image URL"
+													class="w-full min-w-[140px] max-w-[200px] px-2 py-1 border border-gray-300 rounded text-sm truncate"
+												/>
+												{#if v.imageUrl}
+													<img src={v.imageUrl} alt="" class="mt-1 w-10 h-10 object-contain rounded border border-gray-200" />
+												{/if}
+											</td>
+											<td class="py-2 px-3">
+												<input type="number" bind:value={v.price} min="0" step="0.01" class="w-20 px-2 py-1 border border-gray-300 rounded text-sm" />
+											</td>
+											<td class="py-2 px-3">
+												<input type="text" bind:value={v.currency} class="w-14 px-2 py-1 border border-gray-300 rounded text-sm" />
+											</td>
+											<td class="py-2 px-3">
+												<input type="number" bind:value={v.coverageSqm} min="0" step="0.1" class="w-16 px-2 py-1 border border-gray-300 rounded text-sm" />
+											</td>
+											<td class="py-2 px-2">
+												<button
+													type="button"
+													onclick={() => removeVariant(v)}
+													class="text-red-600 hover:text-red-700 text-xs"
+												>
+													Remove
+												</button>
+											</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
 						</div>
 					</div>
 				{/each}
