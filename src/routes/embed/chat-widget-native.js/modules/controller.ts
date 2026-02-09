@@ -496,15 +496,20 @@ export const controller = String.raw`
           state.messagesLoading = false;
 
           if (forceRefresh || state.messages.length === 0) {
-            state.messages = list.map(function(m) {
-              return { id: m.id, _localId: nextLocalId(), role: m.role === 'user' ? 'user' : 'bot', content: m.content, avatarUrl: m.avatarUrl, checkoutPreview: m.checkoutPreview, createdAt: m.createdAt };
-            });
-            state.showStarterPrompts = list.length === 0;
-            if (forceRefresh) {
-              state.renderedIds = {};
-              renderMessages(true);
-            } else {
-              renderMessages();
+            // If we have local (unsaved) messages and server list is shorter, server may not have latest yet — don't overwrite
+            var hasLocal = false;
+            for (var i = 0; i < state.messages.length; i++) { if (!state.messages[i].id) { hasLocal = true; break; } }
+            if (!hasLocal || list.length >= state.messages.length) {
+              state.messages = list.map(function(m) {
+                return { id: m.id, _localId: nextLocalId(), role: m.role === 'user' ? 'user' : 'bot', content: m.content, avatarUrl: m.avatarUrl, checkoutPreview: m.checkoutPreview, createdAt: m.createdAt };
+              });
+              state.showStarterPrompts = list.length === 0;
+              if (forceRefresh) {
+                state.renderedIds = {};
+                renderMessages(true);
+              } else {
+                renderMessages();
+              }
             }
           } else if (list.length > state.messages.length) {
             // If we have any local (unsaved) messages, server list is source of truth — replace to avoid duplicates
@@ -952,12 +957,15 @@ export const controller = String.raw`
       inputEl.focus();
       stopPolling();
       if (reply) {
-        state.messages.push({ id: null, _localId: nextLocalId(), role: 'bot', content: reply, checkoutPreview: checkoutPreview || undefined, createdAt: new Date().toISOString() });
+        // Avoid duplicate bot message if finishSend is ever called twice (e.g. race with openChat fetch)
+        var last = state.messages[state.messages.length - 1];
+        var isDuplicate = last && last.role === 'bot' && last.content === reply && !last.id;
+        if (!isDuplicate) {
+          state.messages.push({ id: null, _localId: nextLocalId(), role: 'bot', content: reply, checkoutPreview: checkoutPreview || undefined, createdAt: new Date().toISOString() });
+        }
       }
       renderMessages();
-      // Silent sync: replace local state with DB data but skip DOM rebuild if message count matches
-      // This assigns real IDs to local messages without any visual flash
-      // After sync completes, start polling for subsequent human agent replies
+      // Silent sync: replace local state with DB data so server is source of truth (fixes any duplicates)
       setTimeout(function() {
         silentSync();
         startPolling();
@@ -979,8 +987,8 @@ export const controller = String.raw`
             seenIds[m.id] = true;
             return true;
           });
-          // Update state (real IDs + checkoutPreview from API) and re-render so structured checkout block shows
-          if (list.length >= state.messages.length) {
+          // Always replace with server list so server is source of truth (fixes duplicate messages)
+          if (list.length > 0) {
             state.messages = list.map(function(m) {
               return { id: m.id, _localId: nextLocalId(), role: m.role === 'user' ? 'user' : 'bot', content: m.content, avatarUrl: m.avatarUrl, checkoutPreview: m.checkoutPreview, createdAt: m.createdAt };
             });
