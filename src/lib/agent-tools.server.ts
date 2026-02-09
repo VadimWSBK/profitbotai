@@ -541,12 +541,20 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 			return {
 				success: true,
 				checkoutUrl,
+				lineItemsUI,
+				summary: {
+					totalItems: summary.totalItems,
+					subtotal: summary.subtotal,
+					total: summary.total,
+					currency: summary.currency,
+					...(summary.discountPercent != null && { discountPercent: summary.discountPercent }),
+					...(summary.discountAmount != null && { discountAmount: summary.discountAmount })
+				},
 				discountPercent: summary.discountPercent ?? null,
 				subtotal: summary.subtotal,
 				discountAmount: summary.discountAmount ?? null,
 				total: summary.total,
 				lineItems: lineItemsUI.map((li) => `${li.quantity}× ${li.title} (${li.unitPrice} each)`),
-				lineItemsUI,
 				previewMarkdown,
 				message: `Checkout link created. In your reply, write a short intro that includes the product breakdown so the customer sees what they're getting, e.g. "Here is your DIY quote for [X] m²: ${lineItemsText}." Use the exact quantities from the lineItems. Do NOT paste the full Items/Subtotal/TOTAL block—the widget will show the table. Use "calculated" not "estimated".\n\n${previewMarkdown}`
 			};
