@@ -7,6 +7,7 @@ import { env } from '$env/dynamic/private';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getProductPricingForOwner } from '$lib/product-pricing.server';
 import {
+	createChatDiscountCode,
 	createDraftOrder,
 	getDiyProductImages,
 	getShopifyConfigForUser
@@ -161,7 +162,12 @@ export async function createDiyCheckoutForOwner(
 	const total = Math.round((subtotal - discountAmount) * 100) / 100;
 
 	const noteParts = lineItems.map((li) => `${li.quantity}× ${li.title}`).join(', ');
-	
+
+	// Ensure the discount code exists in Shopify so the cart URL ?discount=CODE works (idempotent)
+	if (appliedDiscount && (discount_percent === 10 || discount_percent === 15)) {
+		await createChatDiscountCode(config, discount_percent as 10 | 15, { expiresInDays: 30 });
+	}
+
 	// Try creating draft order with variant_id first, but if it fails due to unavailable variant,
 	// retry without variant_id (Shopify will create a custom line item)
 	// IMPORTANT: We always try to use variant IDs to generate proper checkout/cart permalinks, not invoice links

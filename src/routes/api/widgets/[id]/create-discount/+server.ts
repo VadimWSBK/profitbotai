@@ -1,13 +1,18 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { getSupabaseClient } from '$lib/supabase.server';
+import {
+	createChatDiscountCode,
+	CHAT_DISCOUNT_CODE_BY_PERCENT,
+	getShopifyConfigForUser
+} from '$lib/shopify.server';
 
 const ALLOWED_PERCENTS = [10, 15] as const;
-const CODE_BY_PERCENT: Record<number, string> = { 10: 'CHAT10', 15: 'CHAT15' };
 
 /**
  * POST /api/widgets/[id]/create-discount
- * Create a discount (10% or 15%) for the customer. Returns a discount code label and message.
- * The discount is applied when you call the DIY checkout with the same discount_percent.
+ * Create a real discount code in Shopify (10% or 15%) when Shopify is connected, then return code and message.
+ * The checkout link from DIY checkout will have the discount automatically applied via ?discount=CODE.
  * For n8n: call this when the customer asks for a discount; then use discount_percent when calling diy-checkout.
  *
  * Body: { discount_percent: 10 | 15 }
@@ -38,7 +43,21 @@ export const POST: RequestHandler = async (event) => {
 		);
 	}
 
-	const code = CODE_BY_PERCENT[discountPercent];
+	const code = CHAT_DISCOUNT_CODE_BY_PERCENT[discountPercent];
+	const supabase = getSupabaseClient(event);
+	const { data: widget } = await supabase.from('widgets').select('created_by').eq('id', widgetId).single();
+	const ownerId = widget?.created_by ?? null;
+	if (ownerId) {
+		const config = await getShopifyConfigForUser(supabase, ownerId);
+		if (config) {
+			const result = await createChatDiscountCode(config, discountPercent, { expiresInDays: 30 });
+			if (!result.ok) {
+				console.error('[create-discount] Shopify discount creation failed:', result.error);
+				// Still return success with code so n8n/agent can use discount_percent on checkout; store may have code already
+			}
+		}
+	}
+
 	const message =
 		discountPercent === 10
 			? 'A 10% discount has been applied. When you ask for your checkout link, the discount will be included automatically.'

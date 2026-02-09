@@ -18,6 +18,7 @@ export const AGENT_TOOL_IDS = [
 	'shopify_check_orders',
 	'shopify_create_draft_order',
 	'shopify_create_diy_checkout_link',
+	'shopify_create_discount',
 	'shopify_cancel_order',
 	'shopify_refund_order'
 ] as const;
@@ -39,6 +40,7 @@ export const AGENT_TOOL_LABELS: Record<AgentToolId, string> = {
 	shopify_check_orders: 'Shopify: Check orders/status',
 	shopify_create_draft_order: 'Shopify: Create draft order',
 	shopify_create_diy_checkout_link: 'Shopify: Create DIY checkout link',
+	shopify_create_discount: 'Shopify: Create discount code (10% or 15%)',
 	shopify_cancel_order: 'Shopify: Cancel order',
 	shopify_refund_order: 'Shopify: Refund order'
 };

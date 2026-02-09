@@ -128,6 +128,120 @@ export async function shopifyRequest<T>(
 	}
 }
 
+/** GraphQL Admin API (e.g. for discount codes). Requires write_discounts scope for discount mutations. */
+export async function shopifyGraphql<T = unknown>(
+	config: ShopifyConfig,
+	query: string,
+	variables?: Record<string, unknown>
+): Promise<{ ok: boolean; data?: T; errors?: Array<{ message?: string; field?: string[] }>; error?: string }> {
+	try {
+		const host = config.shopDomain.replace(/^https?:\/\//, '').split('/')[0];
+		const url = `https://${host}/admin/api/${config.apiVersion}/graphql.json`;
+		const res = await fetch(url, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'X-Shopify-Access-Token': config.accessToken
+			},
+			body: JSON.stringify({ query, variables: variables ?? {} })
+		});
+		const json = (await res.json()) as {
+			data?: T;
+			errors?: Array<{ message?: string; field?: string[] }>;
+		};
+		if (!res.ok) {
+			return {
+				ok: false,
+				error: json.errors?.[0]?.message ?? res.statusText ?? 'GraphQL request failed',
+				errors: json.errors
+			};
+		}
+		if (json.errors?.length) {
+			const msg = json.errors.map((e) => e.message ?? JSON.stringify(e)).join('; ');
+			return { ok: false, data: json.data, errors: json.errors, error: msg };
+		}
+		return { ok: true, data: json.data };
+	} catch (e) {
+		return { ok: false, error: e instanceof Error ? e.message : 'GraphQL request failed' };
+	}
+}
+
+/** Discount codes used for chat-offered discounts; must exist in Shopify for cart/checkout ?discount= to work. */
+export const CHAT_DISCOUNT_CODE_BY_PERCENT: Record<number, string> = { 10: 'CHAT10', 15: 'CHAT15' };
+
+/**
+ * Create a percentage-off discount code in Shopify (GraphQL). Use when the customer is offered a discount
+ * so that the checkout link with ?discount=CODE actually applies. If the code already exists, returns ok (idempotent).
+ * Requires Shopify app/integration to have write_discounts scope.
+ */
+export async function createChatDiscountCode(
+	config: ShopifyConfig,
+	percent: 10 | 15,
+	options?: { expiresInDays?: number }
+): Promise<{ ok: boolean; code?: string; error?: string }> {
+	const code = CHAT_DISCOUNT_CODE_BY_PERCENT[percent];
+	if (!code) return { ok: false, error: 'Only 10 or 15 percent supported' };
+
+	const startsAt = new Date().toISOString();
+	const endsAt = options?.expiresInDays
+		? new Date(Date.now() + options.expiresInDays * 24 * 60 * 60 * 1000).toISOString()
+		: null;
+
+	const mutation = `
+		mutation discountCodeBasicCreate($basicCodeDiscount: DiscountCodeBasicInput!) {
+			discountCodeBasicCreate(basicCodeDiscount: $basicCodeDiscount) {
+				codeDiscountNode {
+					id
+					codeDiscount {
+						... on DiscountCodeBasic {
+							codes(first: 5) { nodes { code } }
+						}
+					}
+				}
+				userErrors { field message }
+			}
+		}
+	`;
+	const variables = {
+		basicCodeDiscount: {
+			title: `Chat ${percent}% off`,
+			code,
+			startsAt,
+			endsAt,
+			context: { all: 'ALL' as const },
+			customerGets: {
+				value: { percentage: percent / 100 },
+				items: { all: true }
+			}
+		}
+	};
+
+	const res = await shopifyGraphql<{
+		discountCodeBasicCreate?: {
+			codeDiscountNode?: { id?: string };
+			userErrors?: Array<{ field?: string[]; message?: string }>;
+		};
+	}>(config, mutation, variables);
+
+	if (!res.ok) {
+		// Code might already exist (e.g. "Code has already been taken")
+		const errMsg = (res.error ?? '').toLowerCase();
+		if (errMsg.includes('already') || errMsg.includes('taken') || errMsg.includes('duplicate')) {
+			return { ok: true, code };
+		}
+		return { ok: false, error: res.error };
+	}
+
+	const userErrors = res.data?.discountCodeBasicCreate?.userErrors ?? [];
+	if (userErrors.length > 0) {
+		const msg = userErrors.map((e) => e.message).filter(Boolean).join('; ');
+		if (/already|taken|exists/i.test(msg)) return { ok: true, code };
+		return { ok: false, error: msg };
+	}
+
+	return { ok: true, code };
+}
+
 export type ShopifyDiscountCode = {
 	code?: string | null;
 	type?: string | null;
@@ -355,8 +469,7 @@ export async function createDraftOrder(
 		// Add discount code if applicable
 		if (input.applied_discount && input.applied_discount.value) {
 			const discountPercent = Number.parseFloat(input.applied_discount.value);
-			// Map discount percent to discount code (e.g., 10% -> CHAT10, 15% -> CHAT15)
-			const discountCode = discountPercent === 10 ? 'CHAT10' : discountPercent === 15 ? 'CHAT15' : null;
+			const discountCode = CHAT_DISCOUNT_CODE_BY_PERCENT[discountPercent];
 			if (discountCode) {
 				checkoutUrl += `?discount=${encodeURIComponent(discountCode)}`;
 			}

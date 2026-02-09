@@ -158,7 +158,7 @@ const RULES = [
 	},
 	{
 		content:
-			"DISCOUNT RULES: When customer asks for a discount, offer 10% (pass discount_percent: 10 to shopify_create_diy_checkout_link). If they push for more, reluctantly but with humour give 15% (discount_percent: 15). Use light-hearted tone for the 15% upgrade, e.g. \"Alright, you've convinced me! 15%—my final offer.\"",
+			"DISCOUNT RULES: When customer asks for a discount, first call shopify_create_discount with discount_percent: 10 (or 15 if they push for more). This creates a real discount code in Shopify. Then when you create the checkout link with shopify_create_diy_checkout_link, pass the same discount_percent so the link has the discount automatically applied. Offer 10% first; if they push for more, reluctantly give 15% with humour, e.g. \"Alright, you've convinced me! 15%—my final offer.\"",
 		tags: ['discount', 'quote', 'diy', 'shopify']
 	},
 	{
