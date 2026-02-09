@@ -243,7 +243,7 @@
 				</div>
 				<div>
 					<div class="flex items-center justify-between mb-2">
-						<label class="block text-sm font-medium text-gray-700">Buttons</label>
+						<span class="block text-sm font-medium text-gray-700">Buttons</span>
 						<button type="button" class="text-sm text-amber-600 hover:text-amber-800 font-medium" onclick={() => successButtons = [...successButtons, { label: 'Button', url: '', linkToQuote: false }]}>+ Add button</button>
 					</div>
 					<p class="text-xs text-gray-500 mb-2">Use "Quote PDF" to link to the generated quote (when your workflow has Generate quote). Use "Custom URL" for any other link.</p>

@@ -192,7 +192,7 @@
 
 <div class="max-w-2xl mx-auto">
 	<h1 class="text-2xl font-bold text-gray-900">Settings</h1>
-	<p class="text-gray-500 mt-1 mb-8">App and LLM API keys for Direct LLM chat. Manage products and Shopify sync in <a href="/products" class="text-amber-600 hover:text-amber-700 underline">Products</a>.</p>
+	<p class="text-gray-500 mt-1 mb-8">App and LLM API keys for Direct LLM chat. Manage products and Shopify sync in <a href="/products" class="text-amber-600 hover:text-amber-700 underline">Products</a>. Configure DIY quote kits in <a href="/settings/diy-kit-builders" class="text-amber-600 hover:text-amber-700 underline">DIY Kit Builders</a>.</p>
 
 	<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
 		<h2 class="text-lg font-semibold text-gray-900 mb-1">Profile</h2>

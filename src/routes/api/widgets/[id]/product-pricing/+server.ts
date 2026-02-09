@@ -5,8 +5,8 @@ import { getProductPricingForOwner } from '$lib/product-pricing.server';
 
 /**
  * GET /api/widgets/[id]/product-pricing
- * Returns DIY product pricing (buckets, prices, coverage) for the widget owner.
- * For n8n "Get product pricing" tool so the AI can quote accurately.
+ * Returns DIY product pricing for the widget owner.
+ * One product per entry with variants array (size × color, each with variant ID and image).
  * Auth: session or X-API-Key.
  */
 export const GET: RequestHandler = async (event) => {
@@ -30,17 +30,21 @@ export const GET: RequestHandler = async (event) => {
 			products: products.map((p) => ({
 				id: p.id,
 				name: p.name,
-				sizeLitres: p.sizeLitres,
-				price: p.price,
-				currency: p.currency,
-				coverageSqmPerLitre: p.coverageSqm,
-				totalCoverageSqm: p.coverageSqm * p.sizeLitres,
-				imageUrl: p.imageUrl,
 				description: p.description,
 				colors: p.colors,
 				shopifyProductId: p.shopifyProductId,
-				shopifyVariantId: p.shopifyVariantId,
-				sortOrder: p.sortOrder
+				productHandle: p.productHandle,
+				sortOrder: p.sortOrder,
+				variants: p.variants.map((v) => ({
+					shopifyVariantId: v.shopifyVariantId,
+					sizeLitres: v.sizeLitres,
+					color: v.color,
+					price: v.price,
+					currency: v.currency,
+					coverageSqm: v.coverageSqm,
+					imageUrl: v.imageUrl,
+					totalCoverageSqm: v.coverageSqm * v.sizeLitres
+				}))
 			}))
 		});
 	} catch (e) {

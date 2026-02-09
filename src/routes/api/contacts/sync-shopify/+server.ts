@@ -47,8 +47,8 @@ export const POST: RequestHandler = async (event) => {
 				let phone: string | null = null;
 				if (typeof customer.phone === 'string' && customer.phone.trim()) {
 					phone = customer.phone.trim();
-				} else if (defaultAddr && typeof defaultAddr.phone === 'string' && defaultAddr.phone.trim()) {
-					phone = defaultAddr.phone.trim();
+				} else if (defaultAddr && typeof (defaultAddr as { phone?: string }).phone === 'string' && (defaultAddr as { phone: string }).phone.trim()) {
+					phone = (defaultAddr as { phone: string }).phone.trim();
 				}
 				const addressParts = defaultAddr
 					? [defaultAddr.address1, defaultAddr.address2, defaultAddr.city, defaultAddr.province, defaultAddr.country, defaultAddr.zip].filter(Boolean) as string[]

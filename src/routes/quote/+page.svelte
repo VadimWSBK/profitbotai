@@ -8,18 +8,37 @@
 
 	let { data } = $props();
 	let settings = $state({
-		company: (data?.settings?.company ?? {}) as Company,
-		bank_details: (data?.settings?.bank_details ?? {}) as BankDetails,
-		line_items: (data?.settings?.line_items ?? []) as LineItem[],
-		deposit_percent: data?.settings?.deposit_percent ?? 40,
-		tax_percent: data?.settings?.tax_percent ?? 10,
-		valid_days: data?.settings?.valid_days ?? 30,
-		logo_url: data?.settings?.logo_url ?? '',
-		barcode_url: data?.settings?.barcode_url ?? '',
-		barcode_title: data?.settings?.barcode_title ?? 'Call Us or Visit Website',
-		logo_size: data?.settings?.logo_size ?? 80,
-		qr_size: data?.settings?.qr_size ?? 80,
-		currency: data?.settings?.currency ?? 'USD'
+		company: {} as Company,
+		bank_details: {} as BankDetails,
+		line_items: [] as LineItem[],
+		deposit_percent: 40,
+		tax_percent: 10,
+		valid_days: 30,
+		logo_url: '',
+		barcode_url: '',
+		barcode_title: 'Call Us or Visit Website',
+		logo_size: 80,
+		qr_size: 80,
+		currency: 'USD'
+	});
+	$effect(() => {
+		const s = data?.settings;
+		if (s) {
+			settings = {
+				company: (s.company ?? {}) as Company,
+				bank_details: (s.bank_details ?? {}) as BankDetails,
+				line_items: Array.isArray(s.line_items) ? [...s.line_items] : [],
+				deposit_percent: s.deposit_percent ?? 40,
+				tax_percent: s.tax_percent ?? 10,
+				valid_days: s.valid_days ?? 30,
+				logo_url: s.logo_url ?? '',
+				barcode_url: s.barcode_url ?? '',
+				barcode_title: s.barcode_title ?? 'Call Us or Visit Website',
+				logo_size: s.logo_size ?? 80,
+				qr_size: s.qr_size ?? 80,
+				currency: s.currency ?? 'USD'
+			};
+		}
 	});
 	let saving = $state(false);
 	let generating = $state(false);
@@ -167,25 +186,25 @@
 			<h2 class="text-lg font-semibold text-gray-900 mb-4">Company</h2>
 			<div class="grid gap-4">
 				<div>
-					<label class="block text-sm font-medium text-gray-700 mb-1">Name</label>
-					<input type="text" bind:value={settings.company.name} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="Your company name" />
+					<label for="quote-company-name" class="block text-sm font-medium text-gray-700 mb-1">Name</label>
+					<input id="quote-company-name" type="text" bind:value={settings.company.name} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="Your company name" />
 				</div>
 				<div>
-					<label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
-					<textarea bind:value={settings.company.address} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" rows="2" placeholder="Street, City, State, Postcode"></textarea>
+					<label for="quote-company-address" class="block text-sm font-medium text-gray-700 mb-1">Address</label>
+					<textarea id="quote-company-address" bind:value={settings.company.address} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" rows="2" placeholder="Street, City, State, Postcode"></textarea>
 				</div>
 				<div class="grid grid-cols-2 gap-4">
 					<div>
-						<label class="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-						<input type="text" bind:value={settings.company.phone} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="+1 234 567 8900" />
+						<label for="quote-company-phone" class="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+						<input id="quote-company-phone" type="text" bind:value={settings.company.phone} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="+1 234 567 8900" />
 					</div>
 					<div>
-						<label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
-						<input type="email" bind:value={settings.company.email} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="hello@company.com" />
+						<label for="quote-company-email" class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+						<input id="quote-company-email" type="email" bind:value={settings.company.email} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="hello@company.com" />
 					</div>
 				</div>
 				<div>
-					<label class="block text-sm font-medium text-gray-700 mb-1">Logo</label>
+					<span class="block text-sm font-medium text-gray-700 mb-1">Logo</span>
 					<div class="flex flex-wrap items-center gap-3">
 						{#if settings.logo_url}
 							<img src={settings.logo_url} alt="Logo" class="h-12 object-contain rounded border border-gray-200" />
@@ -208,8 +227,8 @@
 							/>
 						</label>
 						<div class="flex items-center gap-2">
-							<label class="text-sm text-gray-600">Size in PDF:</label>
-							<input type="number" min="20" max="80" bind:value={settings.logo_size} class="w-20 rounded border border-gray-300 px-2 py-1.5 text-sm text-gray-900" title="Width in points (20–80)" />
+							<label for="quote-logo-size" class="text-sm text-gray-600">Size in PDF:</label>
+							<input id="quote-logo-size" type="number" min="20" max="80" bind:value={settings.logo_size} class="w-20 rounded border border-gray-300 px-2 py-1.5 text-sm text-gray-900" title="Width in points (20–80)" />
 							<span class="text-xs text-gray-500">pt</span>
 						</div>
 					</div>
@@ -223,25 +242,25 @@
 			<h2 class="text-lg font-semibold text-gray-900 mb-4">Bank details</h2>
 			<div class="grid gap-4">
 				<div>
-					<label class="block text-sm font-medium text-gray-700 mb-1">Bank name</label>
-					<input type="text" bind:value={settings.bank_details.name} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="Bank name" />
+					<label for="quote-bank-name" class="block text-sm font-medium text-gray-700 mb-1">Bank name</label>
+					<input id="quote-bank-name" type="text" bind:value={settings.bank_details.name} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="Bank name" />
 				</div>
 				<div>
-					<label class="block text-sm font-medium text-gray-700 mb-1">Account name</label>
-					<input type="text" bind:value={settings.bank_details.accountName} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="Account name" />
+					<label for="quote-bank-accountName" class="block text-sm font-medium text-gray-700 mb-1">Account name</label>
+					<input id="quote-bank-accountName" type="text" bind:value={settings.bank_details.accountName} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="Account name" />
 				</div>
 				<div class="grid grid-cols-2 gap-4">
 					<div>
-						<label class="block text-sm font-medium text-gray-700 mb-1">BSB</label>
-						<input type="text" bind:value={settings.bank_details.bsb} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="000-000" />
+						<label for="quote-bank-bsb" class="block text-sm font-medium text-gray-700 mb-1">BSB</label>
+						<input id="quote-bank-bsb" type="text" bind:value={settings.bank_details.bsb} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="000-000" />
 					</div>
 					<div>
-						<label class="block text-sm font-medium text-gray-700 mb-1">Account number</label>
-						<input type="text" bind:value={settings.bank_details.accountNumber} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="12345678" />
+						<label for="quote-bank-accountNumber" class="block text-sm font-medium text-gray-700 mb-1">Account number</label>
+						<input id="quote-bank-accountNumber" type="text" bind:value={settings.bank_details.accountNumber} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="12345678" />
 					</div>
 				</div>
 				<div>
-					<label class="block text-sm font-medium text-gray-700 mb-1">QR code</label>
+					<span class="block text-sm font-medium text-gray-700 mb-1">QR code</span>
 					<div class="flex flex-wrap items-center gap-3">
 						{#if settings.barcode_url}
 							<img src={settings.barcode_url} alt="QR code" class="h-16 w-16 object-contain rounded border border-gray-200" />
@@ -264,16 +283,16 @@
 							/>
 						</label>
 						<div class="flex items-center gap-2">
-							<label class="text-sm text-gray-600">Size in PDF:</label>
-							<input type="number" min="20" max="300" bind:value={settings.qr_size} class="w-20 rounded border border-gray-300 px-2 py-1.5 text-sm text-gray-900" title="Width in points (20–300)" />
+							<label for="quote-qr-size" class="text-sm text-gray-600">Size in PDF:</label>
+							<input id="quote-qr-size" type="number" min="20" max="300" bind:value={settings.qr_size} class="w-20 rounded border border-gray-300 px-2 py-1.5 text-sm text-gray-900" title="Width in points (20–300)" />
 							<span class="text-xs text-gray-500">pt</span>
 						</div>
 					</div>
 					<p class="text-xs text-gray-500 mt-1">PNG, JPEG, GIF, WebP or SVG. Max 2MB. Size sets width in the quote PDF (points).</p>
 				</div>
 				<div>
-					<label class="block text-sm font-medium text-gray-700 mb-1">QR code title</label>
-					<input type="text" bind:value={settings.barcode_title} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="Call Us or Visit Website" />
+					<label for="quote-barcode-title" class="block text-sm font-medium text-gray-700 mb-1">QR code title</label>
+					<input id="quote-barcode-title" type="text" bind:value={settings.barcode_title} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="Call Us or Visit Website" />
 				</div>
 			</div>
 		</section>
@@ -286,8 +305,8 @@
 				{#each settings.line_items as item, i}
 					<div class="flex flex-wrap items-end gap-3 p-3 rounded-lg bg-gray-50">
 						<div class="flex-1 min-w-[180px]">
-							<label class="block text-xs font-medium text-gray-500 mb-1">Description</label>
-							<input type="text" bind:value={item.desc} class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm" placeholder="e.g. Roof coating per m²" />
+							<label for="quote-line-desc-{i}" class="block text-xs font-medium text-gray-500 mb-1">Description</label>
+							<input id="quote-line-desc-{i}" type="text" bind:value={item.desc} class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm" placeholder="e.g. Roof coating per m²" />
 						</div>
 						<div class="flex items-center gap-2">
 							<label class="flex items-center gap-1.5 text-sm">
@@ -297,13 +316,13 @@
 						</div>
 						{#if item.fixed}
 							<div class="w-24">
-								<label class="block text-xs font-medium text-gray-500 mb-1">Total</label>
-								<input type="number" step="0.01" bind:value={item.total} class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
+								<label for="quote-line-total-{i}" class="block text-xs font-medium text-gray-500 mb-1">Total</label>
+								<input id="quote-line-total-{i}" type="number" step="0.01" bind:value={item.total} class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
 							</div>
 						{:else}
 							<div class="w-24">
-								<label class="block text-xs font-medium text-gray-500 mb-1">Price / m²</label>
-								<input type="number" step="0.01" bind:value={item.price} class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
+								<label for="quote-line-price-{i}" class="block text-xs font-medium text-gray-500 mb-1">Price / m²</label>
+								<input id="quote-line-price-{i}" type="number" step="0.01" bind:value={item.price} class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
 							</div>
 						{/if}
 						<button type="button" class="text-red-600 hover:text-red-800 text-sm" onclick={() => removeLineItem(i)}>Remove</button>
@@ -313,20 +332,20 @@
 			</div>
 			<div class="mt-4 grid grid-cols-2 gap-4 max-w-md">
 				<div>
-					<label class="block text-sm font-medium text-gray-700 mb-1">Deposit %</label>
-					<input type="number" min="0" max="100" bind:value={settings.deposit_percent} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" />
+					<label for="quote-deposit-percent" class="block text-sm font-medium text-gray-700 mb-1">Deposit %</label>
+					<input id="quote-deposit-percent" type="number" min="0" max="100" bind:value={settings.deposit_percent} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" />
 				</div>
 				<div>
-					<label class="block text-sm font-medium text-gray-700 mb-1">Tax (GST) %</label>
-					<input type="number" min="0" max="100" bind:value={settings.tax_percent} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" />
+					<label for="quote-tax-percent" class="block text-sm font-medium text-gray-700 mb-1">Tax (GST) %</label>
+					<input id="quote-tax-percent" type="number" min="0" max="100" bind:value={settings.tax_percent} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" />
 				</div>
 				<div>
-					<label class="block text-sm font-medium text-gray-700 mb-1">Quote valid (days)</label>
-					<input type="number" min="1" max="365" bind:value={settings.valid_days} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" />
+					<label for="quote-valid-days" class="block text-sm font-medium text-gray-700 mb-1">Quote valid (days)</label>
+					<input id="quote-valid-days" type="number" min="1" max="365" bind:value={settings.valid_days} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" />
 				</div>
 				<div>
-					<label class="block text-sm font-medium text-gray-700 mb-1">Currency</label>
-					<input type="text" bind:value={settings.currency} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="USD" />
+					<label for="quote-currency" class="block text-sm font-medium text-gray-700 mb-1">Currency</label>
+					<input id="quote-currency" type="text" bind:value={settings.currency} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900" placeholder="USD" />
 				</div>
 			</div>
 		</section>

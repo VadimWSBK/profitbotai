@@ -70,7 +70,7 @@ export const POST: RequestHandler = async (event) => {
 			ownerId,
 			contact: { name, email, phone, address: fullAddress ?? null },
 			contactId,
-			roofSize: Math.max(0, Number(body?.roofSize) ?? 0) || undefined
+			roofSize: Math.max(0, Number(body?.roofSize) || 0) || undefined
 		});
 		pdfUrl = result.pdfUrl;
 	}

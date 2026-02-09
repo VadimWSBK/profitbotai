@@ -93,7 +93,7 @@ export const GET: RequestHandler = async (event) => {
 		}
 		leads = leads.map((l) => {
 			if (!l.contact) return l;
-			const last = lastByContact[l.contact.id];
+			const last = lastByContact[l.contact.id as string];
 			return { ...l, contact: { ...l.contact, lastConversationAt: last ?? null } };
 		});
 	}

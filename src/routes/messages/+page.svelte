@@ -1135,7 +1135,7 @@
 								class="flex {msg.role === 'user' ? 'justify-end' : msg.role === 'human_agent' ? 'justify-end' : 'justify-start'}"
 							>
 								<div
-									class="max-w-[80%] min-w-0 rounded-lg px-4 py-2 text-sm break-words {msg.role === 'user'
+									class="max-w-[80%] min-w-0 rounded-lg px-4 py-2 text-sm wrap-break-word {msg.role === 'user'
 										? 'bg-amber-100 text-gray-900'
 										: msg.role === 'human_agent'
 											? 'bg-blue-100 text-gray-900'
@@ -1155,7 +1155,7 @@
 											<span class="text-xs text-gray-400">via email</span>
 										{/if}
 									</div>
-									<div class="break-words [&_.email-quote]:whitespace-normal [&_a]:break-all {msg.role === 'assistant' ? 'rich-message-content' : 'whitespace-pre-wrap'}">
+									<div class="wrap-break-word [&_.email-quote]:whitespace-normal [&_a]:break-all {msg.role === 'assistant' ? 'rich-message-content' : 'whitespace-pre-wrap'}">
 										{#if msg.role === 'assistant' && msg.checkoutPreview}
 											{#if msg.content && typeof msg.content === 'string' && stripCheckoutBlock(msg.content).trim()}
 												<div class="chat-message-intro">{@html formatAssistantMessage(stripCheckoutBlock(msg.content), msg.channel === 'email')}</div>

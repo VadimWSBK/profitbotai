@@ -19,8 +19,8 @@
 </script>
 
 <div class="rounded-lg border-2 {enabled ? 'border-amber-500 bg-amber-50' : 'border-gray-300 bg-gray-100'} px-4 py-3 min-w-[180px] shadow-sm {enabled ? '' : 'opacity-80'}">
-	<Handle type="target" position={Position.Left} class="!w-3 !h-3 !bg-amber-500 !border-2 !border-white" />
-	<Handle type="source" position={Position.Right} class="!w-3 !h-3 !bg-amber-500 !border-2 !border-white" />
+	<Handle type="target" position={Position.Left} class="w-3! h-3! bg-amber-500! border-2! border-white!" />
+	<Handle type="source" position={Position.Right} class="w-3! h-3! bg-amber-500! border-2! border-white!" />
 	<div class="flex items-center gap-2">
 		<span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full {enabled ? 'bg-amber-500 text-white' : 'bg-gray-400 text-white'}" aria-hidden="true">
 			<ActionIcon class="w-4 h-4" />

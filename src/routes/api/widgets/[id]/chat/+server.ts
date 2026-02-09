@@ -512,18 +512,50 @@ export const POST: RequestHandler = async (event) => {
 				}
 			}
 			} else {
-				// Missing required info: tell the bot to ask for it (do not run workflow yet)
+				// Missing name/email but may have roof size. If user is asking for a price (e.g. "how much to coat 777 sqm"),
+				// use the DIY calculator so they get the bucket breakdown and the widget shows the table.
 				const missing: string[] = [];
 				if (!hasName) missing.push('name');
 				if (!hasEmail) missing.push('email');
 				if (!hasRoofSize) missing.push('roof size in square metres');
-				console.log('[chat/quote] Workflow not run: missing', missing.join(', '));
-				const instruction = `The user wants a quote but we need the following before we can help: ${missing.join(', ')}. Politely ask for only the missing information. Once we have name, email, and roof size, we will ask whether they want DIY (we calculate in chat) or Done For You (we coat the roof for them—PDF quote).`;
-				triggerResult = {
-					triggerId: triggerResult!.triggerId,
-					triggerName: triggerResult!.triggerName,
-					webhookResult: instruction
-				};
+				const roofSqmForDiy =
+					effectiveRoofSize != null && Number(effectiveRoofSize) >= 1
+						? Math.round(Number(effectiveRoofSize) * 10) / 10
+						: null;
+				const isPriceRequest =
+					/\b(how much|price|cost|quote|estimate)\b|coat\s+.*\d+|\d+\s*(sqm|m2|m²)/i.test(message);
+				if (
+					hasRoofSize &&
+					roofSqmForDiy !== null &&
+					isPriceRequest &&
+					!wantsDoneForYou &&
+					ownerId
+				) {
+					const adminSupabaseForDiy = getSupabaseAdmin();
+					const shopifyConnected = Boolean(
+						await getShopifyConfigForUser(adminSupabaseForDiy, ownerId)
+					);
+					if (shopifyConnected) {
+						triggerResult = {
+							triggerId: triggerResult!.triggerId,
+							triggerName: triggerResult!.triggerName,
+							webhookResult: `The customer is asking for a price and we have their roof size (${roofSqmForDiy} m²). You MUST call the shopify_create_diy_checkout_link tool with roof_size_sqm: ${roofSqmForDiy}. After calling it, reply with a short intro that INCLUDES the bucket breakdown so the customer sees what they need, e.g. "Here is your DIY quote for ${roofSqmForDiy} m²: you need 18 x 15L and 1 x 10L NetZero UltraTherm." Use the exact quantities from the tool result (e.g. "X x 15L", "Y x 10L", "Z x 5L"). Do NOT paste the full preview markdown or Items/Subtotal/TOTAL block—the widget will show the table. Do NOT use generate_quote or create a PDF. If they want to proceed to checkout, ask for their name and email.`
+						};
+						console.log(
+							'[chat/quote] Roof size only + price request: forcing DIY calculator',
+							{ roofSqm: roofSqmForDiy }
+						);
+					}
+				}
+				if (!triggerResult?.webhookResult?.includes('shopify_create_diy_checkout_link')) {
+					console.log('[chat/quote] Workflow not run: missing', missing.join(', '));
+					const instruction = `The user wants a quote but we need the following before we can help: ${missing.join(', ')}. Politely ask for only the missing information. Once we have name, email, and roof size, we will ask whether they want DIY (we calculate in chat) or Done For You (we coat the roof for them—PDF quote).`;
+					triggerResult = {
+						triggerId: triggerResult!.triggerId,
+						triggerName: triggerResult!.triggerName,
+						webhookResult: instruction
+					};
+				}
 			}
 		}
 

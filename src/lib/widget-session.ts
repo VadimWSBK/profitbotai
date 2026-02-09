@@ -6,7 +6,7 @@ const SESSION_STORAGE_KEY = (id: string) => `profitbot_session_${id}`;
 export function getSessionId(widgetId: string | undefined, browser: boolean): string {
 	if (!widgetId) return 'preview';
 	if (!browser) return 'preview';
-	const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('session_id') : null;
+	const params = globalThis.window === undefined ? null : new URLSearchParams(globalThis.window.location.search).get('session_id');
 	const fromUrl = typeof params === 'string' ? params.trim() : '';
 	if (fromUrl) return fromUrl;
 	const key = SESSION_STORAGE_KEY(widgetId);

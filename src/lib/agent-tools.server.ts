@@ -80,7 +80,10 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 			if (!c) return { error: 'Missing context' };
 			const contact = c.contact;
 			const primaryEmail = getPrimaryEmail(contact?.email);
-			if (!contact || (!contact.name && !primaryEmail && !contact.phone && !contact.address && contact.roof_size_sqm == null)) {
+			const hasDetails =
+				contact &&
+				(contact.name?.trim() || primaryEmail || contact.phone?.trim() || contact.address?.trim() || contact.roof_size_sqm != null);
+			if (!hasDetails) {
 				return { contact: null, message: 'No contact details stored yet for this conversation.' };
 			}
 			return {
@@ -89,7 +92,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 					email: primaryEmail ?? '',
 					phone: contact.phone ?? '',
 					address: contact.address ?? '',
-					roof_size_sqm: contact.roof_size_sqm != null ? Number(contact.roof_size_sqm) : null,
+					roof_size_sqm: contact.roof_size_sqm == null ? null : Number(contact.roof_size_sqm),
 				},
 			};
 		},
@@ -112,10 +115,10 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 			const c = getContext(experimental_context);
 			if (!c) return { error: 'Missing context' };
 			const updates: Record<string, string | number | string[]> = {};
-			if (name != null && name.trim()) updates.name = name.trim();
-			if (email != null && email.trim()) updates.email = emailsToJsonb(email);
-			if (phone != null && phone.trim()) updates.phone = phone.trim();
-			if (address != null && address.trim()) updates.address = address.trim();
+			if (name?.trim()) updates.name = name.trim();
+			if (email?.trim()) updates.email = emailsToJsonb(email);
+			if (phone?.trim()) updates.phone = phone.trim();
+			if (address?.trim()) updates.address = address.trim();
 			if (roof_size_sqm != null && Number(roof_size_sqm) >= 0) updates.roof_size_sqm = Number(roof_size_sqm);
 			if (Object.keys(updates).length === 0) return { error: 'Provide at least one field (name, email, phone, address, or roof_size_sqm).' };
 			const { error: upsertErr } = await admin.from('contacts').upsert(
@@ -148,11 +151,11 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 			const c = getContext(experimental_context);
 			if (!c) return { error: 'Missing context' };
 			const updates: Record<string, string | number | string[]> = {};
-			if (name != null && name.trim()) updates.name = name.trim();
-			if (phone != null && phone.trim()) updates.phone = phone.trim();
-			if (address != null && address.trim()) updates.address = address.trim();
+			if (name?.trim()) updates.name = name.trim();
+			if (phone?.trim()) updates.phone = phone.trim();
+			if (address?.trim()) updates.address = address.trim();
 			if (roof_size_sqm != null && Number(roof_size_sqm) >= 0) updates.roof_size_sqm = Number(roof_size_sqm);
-			if (email != null && email.trim()) {
+			if (email?.trim()) {
 				const { data: cur } = await admin
 					.from('contacts')
 					.select('email')
@@ -207,7 +210,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 			const contact = c.contact;
 			if (!contact?.name?.trim()) return { error: 'Contact name is required for a quote. Ask the user for their name.' };
 			if (!getPrimaryEmail(contact?.email)?.trim()) return { error: 'Contact email is required for a quote. Ask the user for their email.' };
-			const roofSize = roof_size_sqm ?? c.extractedRoofSize ?? (c.contact?.roof_size_sqm != null ? Number(c.contact.roof_size_sqm) : undefined);
+			const roofSize = roof_size_sqm ?? c.extractedRoofSize ?? (c.contact?.roof_size_sqm == null ? undefined : Number(c.contact.roof_size_sqm));
 			if (roofSize == null || Number(roofSize) < 0) {
 				return { error: 'Roof size (square metres) is required. Ask the user for their roof size or area.' };
 			}

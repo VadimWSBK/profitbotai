@@ -498,12 +498,12 @@
 					<div class="space-y-4">
 						<label class="block">
 							<span class="text-sm font-medium text-gray-700 mb-1">Role</span>
-							<textarea bind:value={botRole} placeholder="e.g. You are a helpful sales assistant for NetZero Coating." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm min-h-[120px] font-mono text-xs" rows="4"></textarea>
+							<textarea bind:value={botRole} placeholder="e.g. You are a helpful sales assistant for NetZero Coating." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm min-h-[120px] font-mono" rows="4"></textarea>
 							<p class="mt-1 text-xs text-gray-500">Multi-line supported. Define who the bot is in as much detail as needed.</p>
 						</label>
 						<label class="block">
 							<span class="text-sm font-medium text-gray-700 mb-1">Tone</span>
-							<textarea bind:value={botTone} placeholder="e.g. Professional and friendly, concise. Or paste a longer style guide." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm min-h-[120px] font-mono text-xs" rows="4"></textarea>
+							<textarea bind:value={botTone} placeholder="e.g. Professional and friendly, concise. Or paste a longer style guide." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm min-h-[120px] font-mono" rows="4"></textarea>
 							<p class="mt-1 text-xs text-gray-500">Multi-line supported. Describe how the bot should sound.</p>
 						</label>
 						<div class="border-t border-gray-200 pt-4 mt-4">
@@ -568,7 +568,7 @@
 						</div>
 						<label class="block mt-4">
 							<span class="text-sm font-medium text-gray-700 mb-1">Additional instructions (optional)</span>
-							<textarea bind:value={botInstructions} placeholder="e.g. Keep replies under 3 sentences. Always ask for roof size." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm min-h-[80px] font-mono text-xs" rows="3"></textarea>
+							<textarea bind:value={botInstructions} placeholder="e.g. Keep replies under 3 sentences. Always ask for roof size." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm min-h-[80px] font-mono" rows="3"></textarea>
 							<p class="mt-1 text-xs text-gray-500">Sent with every message. Use for short, always-applicable rules.</p>
 						</label>
 					</div>

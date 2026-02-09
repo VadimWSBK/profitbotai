@@ -5,10 +5,10 @@
 
 function escapeHtml(s: string): string {
 	return String(s)
-		.replace(/&/g, '&amp;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;')
-		.replace(/"/g, '&quot;');
+		.replaceAll('&', '&amp;')
+		.replaceAll('<', '&lt;')
+		.replaceAll('>', '&gt;')
+		.replaceAll('"', '&quot;');
 }
 
 /** Split message into table blocks and text blocks. Tables are consecutive lines that look like markdown table rows (| ... |). */
@@ -17,7 +17,7 @@ export function splitTablesAndText(message: string): Array<{ type: 'table' | 'te
 	const lines = message.split('\n');
 	const parts: Array<{ type: 'table' | 'text'; content: string }> = [];
 	let i = 0;
-	const isTableRow = (line: string) => /^\|.+\|[\s]*$/.test(line.trim());
+	const isTableRow = (line: string) => /^\|.+\|\s*$/.test(line.trim());
 	while (i < lines.length) {
 		if (isTableRow(lines[i])) {
 			const tableLines: string[] = [];
@@ -49,12 +49,12 @@ function renderTableCell(
 	opts: { colIndex: number; isCheckoutTable: boolean; header?: string }
 ): string {
 	const imgRe = /!\[([^\]]*)\]\s*\((https?:\/\/[^)\s]+)\)?/;
-	const m = cell.match(imgRe);
+	const m = imgRe.exec(cell);
 	if (m) {
 		const alt = escape(m[1] || '');
 		const url = escape(m[2] || '');
 		const rest = cell.replace(imgRe, '').trim();
-		const qtyMatch = rest.match(/×\s*(\d+)\s*$/);
+		const qtyMatch = /×\s*(\d+)\s*$/.exec(rest);
 		const qty = qtyMatch ? qtyMatch[1] : '';
 		const imgHtml = `<img src="${url}" alt="${alt}" class="chat-table-cell-image" loading="lazy" />`;
 		if (qty && opts.isCheckoutTable) {
@@ -115,7 +115,7 @@ function renderTableCell(
 		return html;
 	}
 	const escaped = escape(cell);
-	const withBr = escaped.replace(/\n/g, '<br />');
+	const withBr = escaped.replaceAll('\n', '<br />');
 	if (opts.isCheckoutTable && opts.header?.toLowerCase() === 'total') {
 		return `<span class="checkout-total-cell">${withBr}</span>`;
 	}
@@ -142,11 +142,9 @@ export function markdownTableToHtml(tableContent: string): string {
 		headerCells[1]?.toLowerCase() === 'product' &&
 		headerCells[2]?.toLowerCase() === 'total';
 	const isSummaryTable = !isCheckoutTable && headerCells.every((c) => !c);
-	const tableClass = isCheckoutTable
-		? 'chat-message-table chat-checkout-table'
-		: isSummaryTable
-			? 'chat-summary-table'
-			: 'chat-message-table';
+	let tableClass = 'chat-message-table';
+	if (isCheckoutTable) tableClass = 'chat-message-table chat-checkout-table';
+	else if (isSummaryTable) tableClass = 'chat-summary-table';
 	let html = `<table class="${tableClass}"><thead${isSummaryTable ? ' class="chat-summary-head"' : ''}><tr>`;
 	for (const c of headerCells) html += `<th>${escapeHtml(c)}</th>`;
 	html += '</tr></thead><tbody>';
@@ -156,7 +154,9 @@ export function markdownTableToHtml(tableContent: string): string {
 		html += '<tr>';
 		for (let i = 0; i < cells.length; i++) {
 			const tdClass = isCheckoutTable && i === cells.length - 1 ? 'chat-checkout-total-td' : '';
-			html += `<td${tdClass ? ` class="${tdClass}"` : ''}>${renderTableCell(cells[i], escapeHtml, { colIndex: i, isCheckoutTable, header: headerCells[i] })}</td>`;
+			const tdAttr = tdClass ? ` class="${tdClass}"` : '';
+			const cellHtml = renderTableCell(cells[i], escapeHtml, { colIndex: i, isCheckoutTable, header: headerCells[i] });
+			html += `<td${tdAttr}>${cellHtml}</td>`;
 		}
 		html += '</tr>';
 	}
@@ -230,7 +230,7 @@ export function formatMessageWithLinks(text: string): string {
 		lastIndex = match.end;
 	}
 	parts.push(escapeHtml(text.slice(lastIndex)));
-	return parts.join('').replace(/\n/g, '<br />');
+	return parts.join('').replaceAll('\n', '<br />');
 }
 
 /** Format full message: tables as HTML tables (wrapped in scrollable div), rest as links/images/line breaks. */

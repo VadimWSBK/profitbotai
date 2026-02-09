@@ -261,7 +261,7 @@
 </script>
 
 <div
-	class="widget-preview-wrapper fixed z-[9999] flex flex-col items-end"
+	class="widget-preview-wrapper fixed z-9999 flex flex-col items-end"
 	style="right: {bubble.rightPositionPx}px; bottom: {bubble.bottomPositionPx}px; position: fixed;"
 >
 	{#if open}
@@ -307,7 +307,7 @@
 		{/if}
 		<button
 		type="button"
-		class="bubble-preview bubble-attention flex items-center justify-center flex-shrink-0 cursor-pointer hover:opacity-90 transition-all border-0 rounded-none relative z-20"
+		class="bubble-preview bubble-attention flex items-center justify-center shrink-0 cursor-pointer hover:opacity-90 transition-all border-0 rounded-none relative z-20"
 		class:bubble-open={open}
 		style="
 			width: {bubble.bubbleSizePx}px;

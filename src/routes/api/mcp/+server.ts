@@ -25,7 +25,7 @@ import {
 	listProductsWithImages
 } from '$lib/shopify.server';
 import { createDiyCheckoutForOwner } from '$lib/diy-checkout.server';
-import { getProductPricingForOwner } from '$lib/product-pricing.server';
+import { getProductPricingForOwner, flattenProductVariants } from '$lib/product-pricing.server';
 
 interface AuthInfo {
 	workspaceId: string;
@@ -98,7 +98,7 @@ export const POST: RequestHandler = async (event) => {
 	const supabase = createClient(supabaseUrl, serviceRoleKey);
 
 	try {
-		switch (action) {
+		switch (action) { // NOSONAR - MCP router: many actions by design (list_widgets, leads, shopify, etc.)
 			case 'list_widgets': {
 				const { data, error } = await supabase
 					.from('widgets')
@@ -473,7 +473,8 @@ export const POST: RequestHandler = async (event) => {
 				}
 
 				// Get contact and verify workspace access
-				let contactRow: { id: string; name: string | null; email: unknown; conversation_id: string | null } | null = null;
+				type ContactRow = { id: string; name: string | null; email: unknown; conversation_id: string | null };
+				let contactRow: ContactRow | null = null;
 				if (contactId) {
 					const { data, error } = await supabase
 						.from('contacts')
@@ -485,7 +486,7 @@ export const POST: RequestHandler = async (event) => {
 						if (error.code === 'PGRST116') return json({ error: 'Contact not found' }, { status: 404 });
 						throw new Error(error.message);
 					}
-					contactRow = data as typeof contactRow;
+					contactRow = data as unknown as ContactRow;
 				} else if (conversationId) {
 					const { data, error } = await supabase
 						.from('contacts')
@@ -494,7 +495,7 @@ export const POST: RequestHandler = async (event) => {
 						.eq('widgets.workspace_id', authInfo.workspaceId)
 						.maybeSingle();
 					if (error) throw new Error(error.message);
-					contactRow = data as typeof contactRow;
+					contactRow = data as unknown as ContactRow;
 				}
 
 				if (!contactRow) {
@@ -689,7 +690,7 @@ export const POST: RequestHandler = async (event) => {
 				} else if (imageData) {
 					// Handle base64 image data
 					const base64Data = String(imageData);
-					const base64Match = base64Data.match(/^data:image\/(\w+);base64,(.+)$/);
+					const base64Match = /^data:image\/(\w+);base64,(.+)$/.exec(base64Data);
 					if (!base64Match) {
 						return json({ error: 'Invalid base64 image format. Expected: data:image/type;base64,...' }, { status: 400 });
 					}
@@ -707,7 +708,7 @@ export const POST: RequestHandler = async (event) => {
 					}
 
 					const safeExt = imageType.toLowerCase() === 'jpg' ? 'jpeg' : imageType.toLowerCase();
-					const fileName = imageName ? `${String(imageName).replace(/[^a-zA-Z0-9_-]/g, '_')}.${safeExt}` : `${randomUUID()}.${safeExt}`;
+					const fileName = imageName ? `${String(imageName).replaceAll(/[^a-zA-Z0-9_-]/g, '_')}.${safeExt}` : `${randomUUID()}.${safeExt}`;
 					const path = `${authInfo.userId}/images/${fileName}`;
 
 					const contentType = `image/${safeExt === 'svg' ? 'svg+xml' : safeExt}`;
@@ -783,13 +784,16 @@ export const POST: RequestHandler = async (event) => {
 					return json({ error: 'Quote settings not found. Configure quote template first.' }, { status: 400 });
 				}
 
+				const dep = Number(settingsRow.deposit_percent);
+				const tax = Number(settingsRow.tax_percent);
+				const valid = Number(settingsRow.valid_days);
 				const settings: QuoteSettings = {
 					company: (settingsRow.company as QuoteSettings['company']) ?? {},
 					bank_details: (settingsRow.bank_details as QuoteSettings['bank_details']) ?? {},
 					line_items: (settingsRow.line_items as QuoteSettings['line_items']) ?? [],
-					deposit_percent: Number(settingsRow.deposit_percent) ?? 40,
-					tax_percent: Number(settingsRow.tax_percent) ?? 10,
-					valid_days: Number(settingsRow.valid_days) ?? 30,
+					deposit_percent: Number.isFinite(dep) ? dep : 40,
+					tax_percent: Number.isFinite(tax) ? tax : 10,
+					valid_days: Number.isFinite(valid) ? valid : 30,
 					logo_url: settingsRow.logo_url,
 					barcode_url: settingsRow.barcode_url,
 					barcode_title: settingsRow.barcode_title ?? 'Call Us or Visit Website',
@@ -843,12 +847,13 @@ export const POST: RequestHandler = async (event) => {
 
 				const BUCKET = 'roof_quotes';
 				const customerName = ((customerData.name || customerData.email || 'Customer') as string)
-					.replace(/\s+/g, '_')
-					.replace(/[^a-zA-Z0-9_-]/g, '');
-				const ts = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
+					.replaceAll(/\s+/g, '_')
+					.replaceAll(/[^a-zA-Z0-9_-]/g, '');
+				const ts = new Date().toISOString().replaceAll(/\D/g, '').slice(0, 14);
+				const emailPart = typeof email === 'string' ? String(email).replaceAll(/[@.]/g, '_') || 'unknown' : 'unknown';
 				const fileName = convId
 					? `${convId}/quote_${customerName}_${ts}.pdf`
-					: `email_${String(email).replace(/[@.]/g, '_') ?? 'unknown'}_${ts}.pdf`;
+					: `email_${emailPart}_${ts}.pdf`;
 
 				const metadata: Record<string, string> = {
 					widget_id: resolvedWidgetId
@@ -898,20 +903,23 @@ export const POST: RequestHandler = async (event) => {
 						}
 					});
 				}
+				const dp = Number(data.deposit_percent);
+				const tp = Number(data.tax_percent);
+				const vd = Number(data.valid_days);
 				return json({
 					success: true,
 					data: {
 						company: data.company ?? {},
 						bank_details: data.bank_details ?? {},
 						line_items: data.line_items ?? [],
-						deposit_percent: Number(data.deposit_percent) ?? 40,
-						tax_percent: Number(data.tax_percent) ?? 10,
-						valid_days: Number(data.valid_days) ?? 30,
+						deposit_percent: Number.isFinite(dp) ? dp : 40,
+						tax_percent: Number.isFinite(tp) ? tp : 10,
+						valid_days: Number.isFinite(vd) ? vd : 30,
 						logo_url: data.logo_url,
 						barcode_url: data.barcode_url,
 						barcode_title: data.barcode_title ?? 'Call Us or Visit Website',
-						logo_size: data.logo_size != null ? Math.min(80, Number(data.logo_size)) : 60,
-						qr_size: data.qr_size != null ? Number(data.qr_size) : 80,
+						logo_size: data.logo_size == null ? 60 : Math.min(80, Number(data.logo_size)),
+						qr_size: data.qr_size == null ? 80 : Number(data.qr_size),
 						currency: data.currency ?? 'USD'
 					}
 				});
@@ -936,14 +944,17 @@ export const POST: RequestHandler = async (event) => {
 				const logoSize = Math.max(20, Math.min(80, Number(logo_size) || 60));
 				const qrSize = Math.max(20, Math.min(300, Number(qr_size) || 80));
 
+				const dpVal = Number(deposit_percent);
+				const tpVal = Number(tax_percent);
+				const vdVal = Number(valid_days);
 				const row = {
 					user_id: authInfo.userId,
 					company: company ?? {},
 					bank_details: bank_details ?? {},
 					line_items: line_items ?? [],
-					deposit_percent: Math.max(0, Math.min(100, Number(deposit_percent) ?? 40)),
-					tax_percent: Math.max(0, Math.min(100, Number(tax_percent) ?? 10)),
-					valid_days: Math.max(1, Math.min(365, Number(valid_days) ?? 30)),
+					deposit_percent: Math.max(0, Math.min(100, Number.isFinite(dpVal) ? dpVal : 40)),
+					tax_percent: Math.max(0, Math.min(100, Number.isFinite(tpVal) ? tpVal : 10)),
+					valid_days: Math.max(1, Math.min(365, Number.isFinite(vdVal) ? vdVal : 30)),
 					logo_url: logo_url ?? null,
 					barcode_url: barcode_url ?? null,
 					barcode_title: typeof barcode_title === 'string' ? barcode_title : 'Call Us or Visit Website',
@@ -1163,8 +1174,10 @@ export const POST: RequestHandler = async (event) => {
 					return json({ error: fetchError.message }, { status: 500 });
 				}
 
-				// If contact doesn't exist, create a placeholder contact
-				if (!existingContact) {
+				// If contact exists, use it; otherwise create a placeholder contact
+				if (existingContact) {
+					data = existingContact;
+				} else {
 					const { data: newContact, error: createError } = await supabase
 						.from('contacts')
 						.insert({
@@ -1191,8 +1204,6 @@ export const POST: RequestHandler = async (event) => {
 					} else {
 						data = newContact;
 					}
-				} else {
-					data = existingContact;
 				}
 
 				if (!data) {
@@ -1215,7 +1226,7 @@ export const POST: RequestHandler = async (event) => {
 							state: data.state ?? null,
 							postcode: data.postcode ?? null,
 							country: data.country ?? null,
-							roofSizeSqm: data.roof_size_sqm != null ? Number(data.roof_size_sqm) : null,
+							roofSizeSqm: data.roof_size_sqm == null ? null : Number(data.roof_size_sqm),
 							conversationId: data.conversation_id,
 							widgetId: data.widget_id,
 							createdAt: data.created_at
@@ -1341,10 +1352,11 @@ export const POST: RequestHandler = async (event) => {
 
 				try {
 					const products = await getProductPricingForOwner(ownerId);
+					const flat = flattenProductVariants(products);
 					return json({
 						success: true,
 						data: {
-							products: products.map((p) => ({
+							products: flat.map((p) => ({
 								id: p.id,
 								name: p.name,
 								sizeLitres: p.sizeLitres,

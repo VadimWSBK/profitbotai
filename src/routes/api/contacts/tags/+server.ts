@@ -20,6 +20,6 @@ export const GET: RequestHandler = async (event) => {
 	const raw = rows ?? [];
 	const tags = raw
 		.map((r: string | { tag?: string }) => (typeof r === 'string' ? r : r?.tag))
-		.filter((t): t is string => typeof t === 'string');
+		.filter((t: unknown): t is string => typeof t === 'string');
 	return json({ tags });
 };

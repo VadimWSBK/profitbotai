@@ -22,7 +22,7 @@ export async function chatWithLlm(
 		const openai = new OpenAI({ apiKey: trimmedKey });
 		const res = await openai.chat.completions.create({
 			model: model || 'gpt-4o-mini',
-			messages: messages.map((m) => ({ role: m.role as 'system' | 'user' | 'assistant', content: m.content })),
+			messages: messages.map((m) => ({ role: m.role, content: m.content })),
 			max_tokens: 1024
 		});
 		const text = res.choices[0]?.message?.content;
@@ -41,7 +41,7 @@ export async function chatWithLlm(
 			messages: chatMessages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
 		});
 		const block = res.content.find((b) => b.type === 'text');
-		if (!block || block.type !== 'text') throw new Error('Empty Anthropic response');
+		if (block?.type !== 'text') throw new Error('Empty Anthropic response');
 		return block.text;
 	}
 

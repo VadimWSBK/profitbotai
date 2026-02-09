@@ -167,8 +167,9 @@ export const PATCH: RequestHandler = async (event) => {
 	}
 
 	// Fetch contact before update to detect newly added tags (for "Tag added" workflows)
+	type ContactBeforeRow = { widget_id: string | null; conversation_id: string | null; name: string | null; email: unknown; phone: string | null; address: string | null; tags?: unknown };
 	let tagsAdded: string[] = [];
-	let contactBefore: { widget_id: string | null; conversation_id: string | null; name: string | null; email: unknown; phone: string | null; address: string | null } | null = null;
+	let contactBefore: ContactBeforeRow | null = null;
 	if (Array.isArray(updates.tags)) {
 		const { data: before } = await supabase
 			.from('contacts')
@@ -176,9 +177,9 @@ export const PATCH: RequestHandler = async (event) => {
 			.eq('id', id)
 			.maybeSingle();
 		if (before) {
-			contactBefore = before as typeof contactBefore & { tags: unknown };
-			const oldTags: string[] = Array.isArray((before as { tags?: unknown }).tags)
-				? ((before as { tags: unknown[] }).tags as unknown[]).filter((t): t is string => typeof t === 'string')
+			contactBefore = before as ContactBeforeRow;
+			const oldTags: string[] = Array.isArray(contactBefore.tags)
+				? (contactBefore.tags as unknown[]).filter((t): t is string => typeof t === 'string')
 				: [];
 			const newTags = updates.tags as string[];
 			tagsAdded = newTags.filter((t) => !oldTags.includes(t));

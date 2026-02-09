@@ -26,7 +26,7 @@
 	let emailFooterEmail = $state('');
 	let emailFooterSaving = $state(false);
 	// Logo upload
-	let logoFileInput: HTMLInputElement | undefined;
+	let logoFileInput = $state<HTMLInputElement | undefined>(undefined);
 	let logoUploading = $state(false);
 	let logoUploadError = $state<string | null>(null);
 	let logoPreviewUrl = $state<string | null>(null);

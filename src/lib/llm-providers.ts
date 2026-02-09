@@ -16,5 +16,6 @@ export function getProvider(id: string) {
 }
 
 export function getModels(providerId: string): string[] {
-	return getProvider(providerId)?.models ?? [];
+	const models = getProvider(providerId)?.models;
+	return models ? [...models] : [];
 }

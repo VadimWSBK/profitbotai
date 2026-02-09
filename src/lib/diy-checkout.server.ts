@@ -6,7 +6,7 @@
 
 import { env } from '$env/dynamic/private';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getProductPricingForOwner } from '$lib/product-pricing.server';
+import { flattenProductVariants, getProductPricingForOwner } from '$lib/product-pricing.server';
 import type { ProductPricing } from '$lib/product-pricing.server';
 import {
 	buildShopifyCartUrl,
@@ -18,8 +18,10 @@ import {
 import {
 	calculateRoofKitBreakdown,
 	productListToRoofKitVariants,
-	type RoofKitLineItem
+	type RoofKitLineItem,
+	type RoofKitRoleHandles
 } from '$lib/roof-kit-calculator.server';
+import { getDefaultKitBuilderConfig } from '$lib/diy-kit-builder.server';
 
 export type DiyCheckoutInput = {
 	roof_size_sqm?: number;
@@ -75,33 +77,41 @@ function calculateBucketsFromRoofSize(
 	return { countsBySize, litres };
 }
 
-/** Resolve roof-kit breakdown to checkout line items using product_pricing (match by handle + size). */
+const normHandle = (h: string | null | undefined) => h?.trim().toLowerCase() ?? '';
+
+/** Resolve roof-kit breakdown to checkout line items (match by role → handles from config, then size). */
 function resolveRoofKitToLineItems(
 	kitItems: RoofKitLineItem[],
 	products: ProductPricing[],
+	roleHandles: RoofKitRoleHandles,
 	imageBySize: Record<number, string>
 ): Array<{ title: string; quantity: number; price: string; imageUrl?: string; variantId?: number }> {
 	const out: Array<{ title: string; quantity: number; price: string; imageUrl?: string; variantId?: number }> = [];
 	for (const item of kitItems) {
-		const handle = item.handle;
-		const productsForHandle = products.filter(
-			(p) => (p.productHandle ?? 'waterproof-sealant') === handle
+		const handlesForRole = roleHandles[item.role];
+		const handleSet = new Set(
+			Array.isArray(handlesForRole) ? handlesForRole.filter(Boolean).map((h) => normHandle(h)) : []
 		);
-		// Match by sizeLitres; for brush-roller prefer label match if we have two variants
-		let match = productsForHandle.find((p) => p.sizeLitres === item.sizeLitres);
-		if (!match && handle === 'brush-roller' && productsForHandle.length) {
+		const productsForRole = products.filter((p) => handleSet.has(normHandle(p.productHandle)));
+		let product: ProductPricing | undefined = productsForRole.find((p) =>
+			p.variants.some((v) => v.sizeLitres === item.sizeLitres)
+		);
+		if (!product && item.role === 'brushRoller' && productsForRole.length) {
 			const brushOnly = item.label.toLowerCase().includes('brush kit') && !item.label.toLowerCase().includes('roller');
-			match = brushOnly
-				? productsForHandle.find((p) => p.name.toLowerCase().includes('brush') && !p.name.toLowerCase().includes('roller')) ?? productsForHandle[0]
-				: productsForHandle.find((p) => p.name.toLowerCase().includes('roller')) ?? productsForHandle[productsForHandle.length - 1];
+			product = brushOnly
+				? productsForRole.find((p) => p.name.toLowerCase().includes('brush') && !p.name.toLowerCase().includes('roller')) ?? productsForRole[0]
+				: productsForRole.find((p) => p.name.toLowerCase().includes('roller')) ?? productsForRole.at(-1);
 		}
-		if (!match) continue;
+		if (!product) continue;
+		const variant = product.variants.find((v) => v.sizeLitres === item.sizeLitres) ?? product.variants[0];
+		if (!variant) continue;
+		const title = product.name + (variant.sizeLitres > 0 ? ` ${variant.sizeLitres}L` : '');
 		out.push({
-			title: match.name,
+			title,
 			quantity: item.quantity,
-			price: match.price.toFixed(2),
-			imageUrl: match.imageUrl ?? imageBySize[match.sizeLitres],
-			variantId: match.shopifyVariantId ?? undefined
+			price: variant.price.toFixed(2),
+			imageUrl: variant.imageUrl ?? imageBySize[variant.sizeLitres],
+			variantId: variant.shopifyVariantId ?? undefined
 		});
 	}
 	return out;
@@ -137,11 +147,20 @@ export async function createDiyCheckoutForOwner(
 	let litres = 0;
 	let notePrefix = 'DIY quote';
 
+	const flat = flattenProductVariants(products);
+	// Unique (productHandle, sizeLitres) with first variant's price for roof-kit
+	const roofKitOptions = products.flatMap((p) => {
+		const seen = new Set<number>();
+		return p.variants
+			.filter((v) => !seen.has(v.sizeLitres) && (seen.add(v.sizeLitres), true))
+			.map((v) => ({ productHandle: p.productHandle, sizeLitres: v.sizeLitres, price: v.price }));
+	});
+
 	let imageBySize: Record<number, string> = {};
 	try {
 		imageBySize = await getDiyProductImages(
 			config,
-			products.map((p) => ({ size: p.sizeLitres, price: String(p.price), title: p.name }))
+			flat.map((row) => ({ size: row.sizeLitres, price: String(row.price), title: row.name }))
 		);
 	} catch {
 		// ignore
@@ -151,39 +170,77 @@ export async function createDiyCheckoutForOwner(
 	if (!imageBySize[5] && env.DIY_PRODUCT_IMAGE_5L?.trim()) imageBySize[5] = env.DIY_PRODUCT_IMAGE_5L.trim();
 
 	if (roof_size_sqm != null && roof_size_sqm >= 1) {
-		// Roof-kit calculator (LRDIY logic): area → sealant, thermal, sealer, geo, rapid-cure, bonus kit. Corrugated/painted only.
-		const variants = productListToRoofKitVariants(
-			products.map((p) => ({
-				productHandle: p.productHandle,
-				sizeLitres: p.sizeLitres,
-				price: p.price
-			}))
-		);
-		const breakdown = calculateRoofKitBreakdown(Number(roof_size_sqm), variants);
-		litres = breakdown.sealantLitres;
-		notePrefix = `Roof-Kit ${roof_size_sqm}m²`;
-		lineItems = resolveRoofKitToLineItems(breakdown.lineItems, products, imageBySize);
+		const kitConfig = await getDefaultKitBuilderConfig(admin, ownerId);
+		const roleHandles = kitConfig?.role_handles;
+		const hasRoleConfig =
+			roleHandles &&
+			Object.values(roleHandles).some((arr) => Array.isArray(arr) && arr.length > 0);
+
+		if (hasRoleConfig && roleHandles) {
+			const variants = productListToRoofKitVariants(roofKitOptions, roleHandles);
+			const breakdown = calculateRoofKitBreakdown(
+				Number(roof_size_sqm),
+				variants,
+				kitConfig.coverage_overrides
+			);
+			litres = breakdown.sealantLitres;
+			notePrefix = `${kitConfig.name ?? 'DIY'} ${roof_size_sqm}m²`;
+			lineItems = resolveRoofKitToLineItems(breakdown.lineItems, products, roleHandles, imageBySize);
+		}
+
+		// Fallback: no calculator config or roof-kit yielded no items → simple coating-only (litres = roof/2, any bucket product).
+		if (lineItems.length === 0) {
+			const bucketSizes = flat.filter((r) => r.sizeLitres >= 1);
+			const seenSize = new Set<number>();
+			const firstPerSize = bucketSizes.filter((r) => {
+				if (seenSize.has(r.sizeLitres)) return false;
+				seenSize.add(r.sizeLitres);
+				return true;
+			});
+			if (firstPerSize.length > 0) {
+				const { countsBySize, litres: fallbackLitres } = calculateBucketsFromRoofSize(
+					Number(roof_size_sqm),
+					firstPerSize.map((r) => ({ sizeLitres: r.sizeLitres, coverageSqm: r.coverageSqm || 2 }))
+				);
+				litres = fallbackLitres;
+				notePrefix = `DIY ${roof_size_sqm}m²`;
+				for (const row of firstPerSize) {
+					const qty = countsBySize[row.sizeLitres] ?? 0;
+					if (qty > 0) {
+						lineItems.push({
+							title: row.name,
+							quantity: qty,
+							price: row.price.toFixed(2),
+							imageUrl: row.imageUrl ?? imageBySize[row.sizeLitres],
+							variantId: row.shopifyVariantId ?? undefined
+						});
+					}
+				}
+			}
+		}
 	} else if (
 		(count_15l ?? 0) > 0 ||
 		(count_10l ?? 0) > 0 ||
 		(count_5l ?? 0) > 0
 	) {
-		const countsBySize: Record<number, number> = {};
-		const sorted = [...products].sort((a, b) => b.sizeLitres - a.sizeLitres);
-		const explicitCounts = [Math.max(0, count_15l ?? 0), Math.max(0, count_10l ?? 0), Math.max(0, count_5l ?? 0)];
-		sorted.forEach((p, i) => {
-			if (i < 3 && explicitCounts[i] > 0) countsBySize[p.sizeLitres] = explicitCounts[i];
-		});
+		const countsBySize: Record<number, number> = {
+			15: Math.max(0, count_15l ?? 0),
+			10: Math.max(0, count_10l ?? 0),
+			5: Math.max(0, count_5l ?? 0)
+		};
 		litres = Object.entries(countsBySize).reduce((sum, [size, qty]) => sum + Number(size) * qty, 0);
-		for (const p of products) {
-			const qty = countsBySize[p.sizeLitres] ?? 0;
-			if (qty > 0) {
+		// One variant per size (first from flattened list)
+		const seenSize = new Set<number>();
+		for (const row of flat) {
+			const qty = countsBySize[row.sizeLitres] ?? 0;
+			if (qty > 0 && !seenSize.has(row.sizeLitres)) {
+				seenSize.add(row.sizeLitres);
 				lineItems.push({
-					title: p.name,
+					title: row.name,
 					quantity: qty,
-					price: p.price.toFixed(2),
-					imageUrl: p.imageUrl ?? imageBySize[p.sizeLitres],
-					variantId: p.shopifyVariantId ?? undefined
+					price: row.price.toFixed(2),
+					imageUrl: row.imageUrl ?? imageBySize[row.sizeLitres],
+					variantId: row.shopifyVariantId ?? undefined
 				});
 			}
 		}
@@ -195,7 +252,7 @@ export async function createDiyCheckoutForOwner(
 		return { ok: false, error: 'No items to add. Provide roof_size_sqm or bucket counts.' };
 	}
 
-	const currency = products[0]?.currency ?? 'AUD';
+	const currency = products[0]?.variants?.[0]?.currency ?? flat[0]?.currency ?? 'AUD';
 	const subtotal = lineItems.reduce((sum, li) => sum + Number.parseFloat(li.price) * li.quantity, 0);
 	let appliedDiscount:
 		| { title: string; description: string; value_type: 'percentage'; value: string; amount: string }

@@ -29,7 +29,7 @@ export const GET: RequestHandler = async (event) => {
 		
 		if (!convError && conv) {
 			// Conversation exists - always load from widget_conversation_messages (even if empty)
-			const { data: rows, error } = await supabase.rpc('get_conversation_messages_for_embed', {
+			const { data: rows } = await supabase.rpc('get_conversation_messages_for_embed', {
 				p_conv_id: conv.id
 			});
 			// Use widget_conversation_messages even if empty (don't fall back to n8n)
@@ -46,7 +46,7 @@ export const GET: RequestHandler = async (event) => {
 			const rawRows = (rows ?? []) as Row[];
 			const messages = rawRows.map((r) => ({
 				id: r.id,
-				role: r.role === 'human_agent' ? 'bot' : r.role === 'assistant' ? 'bot' : 'user',
+				role: (r.role === 'human_agent' || r.role === 'assistant') ? 'bot' : 'user',
 				content: r.content,
 				createdAt: r.created_at,
 				avatarUrl: r.role === 'human_agent' ? r.avatar_url : undefined,

@@ -136,7 +136,7 @@ export const GET: RequestHandler = async (event) => {
 			...(preview && {
 				checkoutPreview: {
 					lineItemsUI: Array.isArray(preview.line_items_ui) ? preview.line_items_ui : [],
-					summary: preview.summary != null && typeof preview.summary === 'object' ? preview.summary : {},
+					summary: (preview.summary != null && typeof preview.summary === 'object' ? preview.summary : {}) as Record<string, unknown>,
 					checkoutUrl: preview.checkout_url
 				}
 			})

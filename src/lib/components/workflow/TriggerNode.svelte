@@ -22,7 +22,7 @@
 </script>
 
 <div class="rounded-lg border-2 border-emerald-500 bg-emerald-50 px-4 py-3 min-w-[180px] shadow-sm">
-	<Handle type="source" position={Position.Right} class="!w-3 !h-3 !bg-emerald-500 !border-2 !border-white" />
+	<Handle type="source" position={Position.Right} class="w-3! h-3! bg-emerald-500! border-2! border-white!" />
 	<div class="flex items-center gap-2">
 		<span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white" aria-hidden="true">
 			<TriggerIcon class="w-4 h-4" />

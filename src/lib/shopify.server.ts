@@ -235,10 +235,14 @@ export async function searchOrders(
 export type ShopifyProductWithImage = {
 	id: number;
 	title: string;
+	/** Shopify URL slug (e.g. netzero-ultratherm-roof-coating). Used to infer roof-kit product_handle. */
+	handle: string | null;
 	imageSrc: string | null;
+	/** All product images for resolving variant image_id */
+	images: Array<{ id: number; src: string }>;
 	bodyHtml: string | null;
 	options: Array<{ name: string; values: string[] }>;
-	variants: Array<{ id: number; price: string; option1?: string | null; option2?: string | null; option3?: string | null }>;
+	variants: Array<{ id: number; price: string; image_id?: number | null; option1?: string | null; option2?: string | null; option3?: string | null }>;
 };
 
 /**
@@ -261,31 +265,37 @@ export async function listProductsWithImages(
 			// Shopify cursor pagination: only limit + page_info allowed (no fields)
 			query.page_info = pageInfo;
 		} else {
-			query.fields = 'id,title,image,variants,body_html,options';
+			query.fields = 'id,title,handle,image,images,variants,body_html,options';
 		}
 
 		const res = await shopifyRequest<{ products?: Array<{
 			id: number;
 			title: string;
+			handle?: string | null;
 			body_html?: string | null;
 			image?: { src?: string } | null;
+			images?: Array<{ id: number; src?: string }>;
 			options?: Array<{ name: string; values: string[] }>;
-			variants?: Array<{ id: number; price: string; option1?: string | null; option2?: string | null; option3?: string | null }>;
+			variants?: Array<{ id: number; price: string; image_id?: number | null; option1?: string | null; option2?: string | null; option3?: string | null }>;
 		}> }>(config, 'products.json', { query });
 
 		if (!res.ok) return { error: res.error ?? 'Failed to fetch products' };
 		const raw = res.data?.products ?? [];
 		for (const p of raw) {
+			const images = Array.isArray(p.images) ? p.images.map((img) => ({ id: img.id, src: img.src ?? '' })) : [];
 			allProducts.push({
 				id: p.id,
 				title: p.title ?? '',
+				handle: p.handle && String(p.handle).trim() ? String(p.handle).trim() : null,
 				imageSrc: (p.image && typeof p.image === 'object' && p.image.src) ? p.image.src : null,
+				images,
 				bodyHtml: p.body_html ?? null,
 				options: Array.isArray(p.options) ? p.options.map((o) => ({ name: o.name ?? '', values: Array.isArray(o.values) ? o.values : [] })) : [],
 				variants: Array.isArray(p.variants)
 					? p.variants.map((v) => ({
 							id: v.id,
 							price: String(v.price ?? ''),
+							image_id: v.image_id ?? null,
 							option1: v.option1 ?? null,
 							option2: v.option2 ?? null,
 							option3: v.option3 ?? null
@@ -296,7 +306,7 @@ export async function listProductsWithImages(
 
 		// Check for next page
 		if (!res.link) break;
-		const nextMatch = res.link.match(/<[^>]*[?&]page_info=([^>&]+)>;\s*rel="next"/);
+		const nextMatch = /<[^>]*[?&]page_info=([^>&]+)>;\s*rel="next"/.exec(res.link);
 		if (!nextMatch) break;
 		pageInfo = decodeURIComponent(nextMatch[1]);
 	}
@@ -502,7 +512,7 @@ export async function listCustomers(
 	const customers = res.data?.customers ?? [];
 	let nextPageInfo: string | undefined;
 	if (res.link) {
-		const nextMatch = res.link.match(/<[^>]*[?&]page_info=([^>&]+)>;\s*rel="next"/);
+		const nextMatch = /<[^>]*[?&]page_info=([^>&]+)>;\s*rel="next"/.exec(res.link);
 		if (nextMatch) nextPageInfo = decodeURIComponent(nextMatch[1]);
 	}
 	return { customers, nextPageInfo };

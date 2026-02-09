@@ -78,7 +78,7 @@ export async function sendEmailWithResend(
 			to: opts.to,
 			subject: opts.subject,
 			html: opts.html,
-			reply_to: opts.replyTo,
+			replyTo: opts.replyTo,
 			...(opts.attachments?.length && {
 				attachments: opts.attachments.map((a) => ({ filename: a.filename, content: a.content }))
 			})
@@ -98,7 +98,16 @@ export async function listReceivedEmails(
 ): Promise<{ data?: { id: string; to: string[]; from: string; subject: string; created_at: string }[]; hasMore?: boolean; error?: string }> {
 	try {
 		const resend = new Resend(apiKey);
-		const { data, error } = await resend.emails.receiving.list(opts);
+		// Resend API: use either 'after' or 'before', not both
+		let listOpts: { limit?: number; after: string } | { limit?: number; before: string } | { limit?: number } | undefined;
+		if (opts?.after != null) {
+			listOpts = { limit: opts.limit, after: opts.after };
+		} else if (opts?.before != null) {
+			listOpts = { limit: opts.limit, before: opts.before };
+		} else if (opts?.limit != null) {
+			listOpts = { limit: opts.limit };
+		}
+		const { data, error } = await resend.emails.receiving.list(listOpts);
 		if (error) return { error: error.message };
 		return {
 			data: (data?.data ?? []).map((e) => ({

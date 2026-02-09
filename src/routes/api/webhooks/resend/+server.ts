@@ -156,7 +156,7 @@ export const POST: RequestHandler = async (event) => {
 									.select('id, conversation_id, widget_id, name, email, phone')
 									.single();
 								if (!insertErr && newContact) {
-									contactRow = newContact as typeof contactRow;
+									contactRow = newContact as { id: string; conversation_id: string | null; widget_id: string | null; name: string | null; email: string | null; phone: string | null };
 								}
 							}
 

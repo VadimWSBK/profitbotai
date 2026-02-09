@@ -32,14 +32,14 @@ export const load: PageServerLoad = async (event) => {
 			company: data.company ?? {},
 			bank_details: data.bank_details ?? {},
 			line_items: data.line_items ?? [],
-			deposit_percent: Number(data.deposit_percent) ?? 40,
-			tax_percent: Number(data.tax_percent) ?? 10,
-			valid_days: Number(data.valid_days) ?? 30,
+			deposit_percent: Number(data.deposit_percent) || 40,
+			tax_percent: Number(data.tax_percent) || 10,
+			valid_days: Number(data.valid_days) || 30,
 			logo_url: data.logo_url,
 			barcode_url: data.barcode_url,
 			barcode_title: data.barcode_title ?? 'Call Us or Visit Website',
-			logo_size: data.logo_size != null ? Math.min(80, Number(data.logo_size)) : 60,
-			qr_size: data.qr_size != null ? Number(data.qr_size) : 80,
+			logo_size: data.logo_size == null ? 60 : Math.min(80, Number(data.logo_size)),
+			qr_size: data.qr_size == null ? 80 : Number(data.qr_size),
 			currency: data.currency ?? 'USD'
 		}
 	};
