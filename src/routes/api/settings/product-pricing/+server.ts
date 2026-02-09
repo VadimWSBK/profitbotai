@@ -27,6 +27,8 @@ export const PUT: RequestHandler = async (event) => {
 		currency?: string;
 		coverageSqm?: number;
 		imageUrl?: string | null;
+		description?: string | null;
+		colors?: string[] | null;
 		shopifyProductId?: number | null;
 		shopifyVariantId?: number | null;
 		sortOrder?: number;
@@ -60,6 +62,8 @@ export const PUT: RequestHandler = async (event) => {
 		currency: String(p.currency ?? 'AUD').trim() || 'AUD',
 		coverage_sqm: Math.max(0, Number(p.coverageSqm) ?? 0),
 		image_url: p.imageUrl && String(p.imageUrl).trim() ? String(p.imageUrl).trim() : null,
+		description: p.description && String(p.description).trim() ? String(p.description).trim() : null,
+		colors: Array.isArray(p.colors) && p.colors.length > 0 ? p.colors : null,
 		shopify_product_id: p.shopifyProductId != null && Number.isFinite(Number(p.shopifyProductId)) ? Number(p.shopifyProductId) : null,
 		shopify_variant_id: p.shopifyVariantId != null && Number.isFinite(Number(p.shopifyVariantId)) ? Number(p.shopifyVariantId) : null,
 		sort_order: i

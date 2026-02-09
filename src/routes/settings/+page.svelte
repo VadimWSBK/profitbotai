@@ -13,7 +13,7 @@
 	let profileUploading = $state(false);
 	let fileInput: HTMLInputElement;
 
-	type ProductRow = { id?: string; name: string; sizeLitres: number; price: number; currency: string; coverageSqm: number; imageUrl: string };
+	type ProductRow = { id?: string; name: string; sizeLitres: number; price: number; currency: string; coverageSqm: number; imageUrl: string; description: string; colors: string[] };
 	let products = $state<ProductRow[]>([]);
 	let productsSaving = $state(false);
 
@@ -51,19 +51,21 @@
 		mcpKeys = (mcpKeysData.keys as MCPKey[]) ?? [];
 		const raw = productsData.products ?? [];
 		products = raw.length > 0
-			? raw.map((p: { id?: string; name: string; sizeLitres: number; price: number; currency?: string; coverageSqm: number; imageUrl?: string | null }) => ({
+			? raw.map((p: { id?: string; name: string; sizeLitres: number; price: number; currency?: string; coverageSqm: number; imageUrl?: string | null; description?: string | null; colors?: string[] | null }) => ({
 					id: p.id,
 					name: p.name ?? '',
 					sizeLitres: Number(p.sizeLitres) ?? 0,
 					price: Number(p.price) ?? 0,
 					currency: p.currency ?? 'AUD',
 					coverageSqm: Number(p.coverageSqm) ?? 0,
-					imageUrl: p.imageUrl ?? ''
+					imageUrl: p.imageUrl ?? '',
+					description: p.description ?? '',
+					colors: Array.isArray(p.colors) ? p.colors : []
 				}))
 			: [
-					{ name: 'NetZero UltraTherm 15L Bucket', sizeLitres: 15, price: 389.99, currency: 'AUD', coverageSqm: 30, imageUrl: '' },
-					{ name: 'NetZero UltraTherm 10L Bucket', sizeLitres: 10, price: 285.99, currency: 'AUD', coverageSqm: 20, imageUrl: '' },
-					{ name: 'NetZero UltraTherm 5L Bucket', sizeLitres: 5, price: 149.99, currency: 'AUD', coverageSqm: 10, imageUrl: '' }
+					{ name: 'NetZero UltraTherm 15L Bucket', sizeLitres: 15, price: 389.99, currency: 'AUD', coverageSqm: 2, imageUrl: '', description: '', colors: [] as string[] },
+					{ name: 'NetZero UltraTherm 10L Bucket', sizeLitres: 10, price: 285.99, currency: 'AUD', coverageSqm: 2, imageUrl: '', description: '', colors: [] as string[] },
+					{ name: 'NetZero UltraTherm 5L Bucket', sizeLitres: 5, price: 149.99, currency: 'AUD', coverageSqm: 2, imageUrl: '', description: '', colors: [] as string[] }
 				];
 		loaded = true;
 	}
@@ -81,7 +83,9 @@
 						price: p.price,
 						currency: p.currency || 'AUD',
 						coverageSqm: p.coverageSqm,
-						imageUrl: p.imageUrl.trim() || null
+						imageUrl: p.imageUrl.trim() || null,
+						description: p.description.trim() || null,
+						colors: p.colors.length > 0 ? p.colors : null
 					}))
 				})
 			});
@@ -96,7 +100,7 @@
 	}
 
 	function addProduct() {
-		products = [...products, { name: '', sizeLitres: 5, price: 0, currency: 'AUD', coverageSqm: 10, imageUrl: '' }];
+		products = [...products, { name: '', sizeLitres: 5, price: 0, currency: 'AUD', coverageSqm: 2, imageUrl: '', description: '', colors: [] }];
 	}
 
 	function removeProduct(i: number) {
@@ -315,7 +319,7 @@
 							<input type="number" bind:value={product.sizeLitres} min="1" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
 						</label>
 						<label>
-							<span class="text-xs text-gray-500">Coverage (m²)</span>
+							<span class="text-xs text-gray-500">Coverage (sqm/L)</span>
 							<input type="number" bind:value={product.coverageSqm} min="0" step="0.1" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
 						</label>
 						<label>
@@ -330,6 +334,20 @@
 							<span class="text-xs text-gray-500">Image URL (optional)</span>
 							<input type="url" bind:value={product.imageUrl} placeholder="https://..." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
 						</label>
+						<label class="col-span-2 sm:col-span-4">
+							<span class="text-xs text-gray-500">Description (optional)</span>
+							<textarea bind:value={product.description} placeholder="Product description…" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm resize-y"></textarea>
+						</label>
+						{#if product.colors.length > 0}
+							<div class="col-span-2 sm:col-span-4">
+								<span class="text-xs text-gray-500">Colors</span>
+								<div class="flex flex-wrap gap-1.5 mt-1">
+									{#each product.colors as color}
+										<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">{color}</span>
+									{/each}
+								</div>
+							</div>
+						{/if}
 					</div>
 				</div>
 			{/each}

@@ -43,9 +43,11 @@ export type DiyCheckoutResult = {
 
 function calculateBucketsFromRoofSize(
 	roofSqm: number,
-	products: Array<{ sizeLitres: number }>
+	products: Array<{ sizeLitres: number; coverageSqm: number }>
 ): { countsBySize: Record<number, number>; litres: number } {
-	const litres = Math.ceil(roofSqm / 2);
+	// coverageSqm is now sqm/L rate. Use the first product's rate (they should all be the same) or default to 2.
+	const sqmPerLitre = products[0]?.coverageSqm || 2;
+	const litres = Math.ceil(roofSqm / sqmPerLitre);
 	const sorted = [...products].sort((a, b) => b.sizeLitres - a.sizeLitres);
 	const countsBySize: Record<number, number> = {};
 	let remaining = litres;

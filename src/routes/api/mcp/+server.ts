@@ -1350,8 +1350,11 @@ export const POST: RequestHandler = async (event) => {
 								sizeLitres: p.sizeLitres,
 								price: p.price,
 								currency: p.currency,
-								coverageSqm: p.coverageSqm,
+								coverageSqmPerLitre: p.coverageSqm,
+								totalCoverageSqm: p.coverageSqm * p.sizeLitres,
 								imageUrl: p.imageUrl,
+								description: p.description,
+								colors: p.colors,
 								shopifyProductId: p.shopifyProductId,
 								shopifyVariantId: p.shopifyVariantId,
 								sortOrder: p.sortOrder
