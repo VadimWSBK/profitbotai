@@ -426,7 +426,41 @@
 		let botReply = config.window.customErrorMessage;
 		let n8nCheckoutPreview: CheckoutPreview | undefined;
 		const useN8n = !!config.n8nWebhookUrl;
-		if (useN8n) {
+		const useDirectChat = !useN8n && !!widgetId && config.chatBackend === 'direct';
+		if (useDirectChat) {
+			// Direct LLM (agent): POST to our chat API so we get checkoutPreview and the DIY table shows
+			try {
+				const effectiveSessionId = sessionId && sessionId !== 'preview' ? sessionId : 'preview';
+				const res = await fetch(`/api/widgets/${widgetId}/chat`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ message: trimmed, sessionId: effectiveSessionId })
+				});
+				const data = await res.json().catch(() => ({}));
+				if (data.error) {
+					botReply = data.error || config.window.customErrorMessage;
+				} else {
+					botReply = data.message ?? data.output ?? data.content ?? '';
+					const preview = data.checkoutPreview;
+					if (
+						preview &&
+						typeof preview === 'object' &&
+						Array.isArray(preview.lineItemsUI) &&
+						preview.summary &&
+						typeof preview.checkoutUrl === 'string'
+					) {
+						n8nCheckoutPreview = preview as CheckoutPreview;
+					}
+				}
+				addBotMessage(botReply, n8nCheckoutPreview);
+				if (widgetId && sessionId && sessionId !== 'preview') {
+					setTimeout(() => fetchStoredMessages(), 2000);
+				}
+			} catch (err) {
+				console.error('Direct chat error:', err);
+				addBotMessage(config.window.customErrorMessage);
+			}
+		} else if (useN8n) {
 			let n8nStreamHandled = false;
 			try {
 				const effectiveSessionId = sessionId && sessionId !== 'preview' ? sessionId : 'preview';
@@ -819,7 +853,7 @@
 									border-radius: {win.messageBorderRadius}px;
 								"
 							>
-								<div class="flex-1 min-w-0 overflow-x-auto overflow-y-visible max-w-full break-words">
+								<div class="flex-1 min-w-0 overflow-x-auto overflow-y-visible max-w-full wrap-break-word">
 									{#if preview}
 										{#if stripCheckoutBlock(msg.content, preview.checkoutUrl).trim()}
 											<div class="chat-message-intro">{@html formatMessage(stripCheckoutBlock(msg.content, preview.checkoutUrl))}</div>
@@ -903,7 +937,7 @@
 					<div class="flex justify-end min-w-0 max-w-full" in:fly={{ x: 12, duration: dur(280), easing: cubicOut }}>
 						<div class="flex flex-col items-end max-w-[85%] min-w-0">
 							<div
-								class="px-3 py-2 rounded-lg break-words"
+								class="px-3 py-2 rounded-lg wrap-break-word"
 								style="
 									background-color: {bubble.backgroundColor};
 									color: {bubble.colorOfInternalIcons};

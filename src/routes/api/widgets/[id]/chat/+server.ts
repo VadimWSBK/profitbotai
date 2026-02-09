@@ -15,6 +15,28 @@ import { getShopifyConfigForUser } from '$lib/shopify.server';
 import type { WebhookTrigger } from '$lib/widget-config';
 import { getPrimaryEmail } from '$lib/contact-email-jsonb';
 
+/** Extract roof size (sqm) from conversation history so DIY trigger works when user says "DIY" after earlier "400 sqm". */
+function roofSizeFromHistory(turns: { role: string; content: string }[]): number | null {
+	const roofRe =
+		/(?:about|approximately|approx\.?)\s*(\d+(?:\.\d+)?)\s*(?:sqm|m2|m²|sq\s*m|square\s*metre[s]?|sq\.?\s*metre[s]?|sq\.?\s*m\.?)/i;
+	const roofRe2 = /(\d+(?:\.\d+)?)\s*(?:sqm|m2|m²|sq\s*m|square\s*metre[s]?|sq\.?\s*metre[s]?|sq\.?\s*m\.?)/i;
+	const roofRe3 = /roof\s*(?:is|size)?\s*:?\s*(?:about|approximately|approx\.?)?\s*(\d+(?:\.\d+)?)/i;
+	const roofRe4 = /(?:size|area)\s*(?:is|of)?\s*(?:about|approximately|approx\.?)?\s*(\d+(?:\.\d+)?)/i;
+	for (let i = turns.length - 1; i >= 0; i--) {
+		const content = turns[i]?.content ?? '';
+		const m =
+			roofRe.exec(content) ??
+			roofRe2.exec(content) ??
+			roofRe3.exec(content) ??
+			roofRe4.exec(content);
+		if (m?.[1]) {
+			const n = Number.parseFloat(m[1]);
+			if (n >= 1) return n;
+		}
+	}
+	return null;
+}
+
 /**
  * POST /api/widgets/[id]/chat – Direct LLM chat (no n8n).
  * Body: { message: string, sessionId?: string }
@@ -243,7 +265,7 @@ export const POST: RequestHandler = async (event) => {
 			extractedContact.address ||
 			extractedContact.roofSize != null;
 		if (hasExtractedFields) {
-			const updates: Record<string, string | number> = {};
+			const updates: Record<string, string | number | string[]> = {};
 			if (extractedContact.name) updates.name = extractedContact.name;
 			if (extractedContact.phone) updates.phone = extractedContact.phone;
 			if (extractedContact.address) updates.address = extractedContact.address;
@@ -270,13 +292,22 @@ export const POST: RequestHandler = async (event) => {
 			}
 		}
 
-		// Merge extracted fields into contact (for system prompt + webhook payload)
-		const effectiveRoofSize =
-			extractedContact.roofSize != null
-				? Number(extractedContact.roofSize)
-				: contact?.roof_size_sqm != null
-					? Number(contact.roof_size_sqm)
-					: undefined;
+		// Merge extracted fields into contact (for system prompt + webhook payload).
+		// Use conversation history for roof size when user said "400 sqm" earlier and now says "DIY".
+		const fromExtracted =
+			extractedContact.roofSize == null ? undefined : Number(extractedContact.roofSize);
+		const fromContact =
+			contact?.roof_size_sqm == null ? undefined : Number(contact.roof_size_sqm);
+		const fromHistory = roofSizeFromHistory(llmHistory);
+		const effectiveRoofSize = fromExtracted ?? fromContact ?? (fromHistory != null ? fromHistory : undefined);
+		// Persist history-derived roof size to contact so DIY fallback and future turns have it
+		if (effectiveRoofSize != null && fromHistory != null && (fromExtracted == null && fromContact == null) && contact) {
+			await admin
+				.from('contacts')
+				.update({ roof_size_sqm: effectiveRoofSize })
+				.eq('conversation_id', conv.id)
+				.eq('widget_id', widgetId);
+		}
 		const contactForPrompt = contact
 			? {
 					...contact,
@@ -311,21 +342,22 @@ export const POST: RequestHandler = async (event) => {
 						conversationContext: llmHistory,
 						contact: contactForPrompt,
 						extracted:
-							extractedContact.roofSize != null
-								? { roofSize: extractedContact.roofSize }
-								: null
+							extractedContact.roofSize == null
+								? null
+								: { roofSize: extractedContact.roofSize }
 					})
 				: null;
 
 		// Fallback: if classifier missed it but we have all required fields for a quote
-		const hasQuoteKeyword = /quote|cost|price|estimate|sqm|m2|m²|square\s*metre[s]?|sq\.?\s*metre[s]?|roof\s*size|area\s*is|square\s*foot/i.test(message);
+		const QUOTE_KEYWORDS = /quote|cost|price|estimate|sqm|m2|m²|square\s*metres?|sq\.?\s*metres?|roof\s*size|area\s*is|square\s*foot/i; // NOSONAR - intentional keyword set
+		const hasQuoteKeyword = QUOTE_KEYWORDS.test(message);
 		const fallbackHasRoofSize = extractedContact.roofSize != null;
 		const fallbackHasEmail = !!(contactForPrompt?.email ?? extractedContact.email);
 		const fallbackHasName = !!(contactForPrompt?.name ?? extractedContact.name);
 		// Multi-turn fallback: assistant recently asked for quote info (name/email/roof) and user is providing it
 		const lastAssistantMsg = llmHistory.findLast((t) => t.role === 'assistant')?.content ?? '';
 		const assistantAskedForQuote = /quote|name|email|roof|sqm|square\s*metre|cost|estimate|price/i.test(lastAssistantMsg);
-		if (!triggerResult && fallbackHasRoofSize && fallbackHasEmail && fallbackHasName) {
+		if (triggerResult === null && fallbackHasRoofSize && fallbackHasEmail && fallbackHasName) {
 			if (hasQuoteKeyword || assistantAskedForQuote) {
 				triggerResult = {
 					triggerId: 'quote',
@@ -339,10 +371,10 @@ export const POST: RequestHandler = async (event) => {
 			}
 		}
 
-		if (!triggerResult) {
-			console.log('[chat/quote] no trigger matched for message (intent classification returned none)');
-		} else {
+		if (triggerResult) {
 			console.log('[chat/quote] trigger matched', { triggerId: triggerResult.triggerId, triggerName: triggerResult.triggerName });
+		} else {
+			console.log('[chat/quote] no trigger matched for message (intent classification returned none)');
 		}
 
 		// When quote intent matches: run widget's "Message in the chat" / "Customer requests quote" workflow instead of hardcoded generate+email
@@ -359,7 +391,7 @@ export const POST: RequestHandler = async (event) => {
 			const hasEmail = !!(contact.email ?? extractedContact.email);
 			const hasRoofSize =
 			(extractedContact.roofSize != null && Number(extractedContact.roofSize) >= 0) ||
-			(contact?.roof_size_sqm != null && Number(contact.roof_size_sqm) >= 0);
+			('roof_size_sqm' in contact && contact.roof_size_sqm != null && Number(contact.roof_size_sqm) >= 0);
 
 			// DIY vs Done For You: only generate PDF when user wants us to do the work
 			const msg = message.toLowerCase();
@@ -379,24 +411,28 @@ export const POST: RequestHandler = async (event) => {
 				// If DIY: use checkout tool when Shopify connected so widget shows table + button; else calculate in chat
 				if (wantsDiy) {
 					const adminSupabaseForQuote = getSupabaseAdmin();
-					const shopifyConnected = ownerId ? !!(await getShopifyConfigForUser(adminSupabaseForQuote, ownerId)) : false;
-					const roofSqm = effectiveRoofSize != null ? Math.round(Number(effectiveRoofSize) * 10) / 10 : null;
-					if (shopifyConnected && roofSqm != null && roofSqm >= 1) {
+					const shopifyConfig = ownerId ? await getShopifyConfigForUser(adminSupabaseForQuote, ownerId) : null;
+					const shopifyConnected = Boolean(shopifyConfig);
+					const roofSqm = effectiveRoofSize == null ? null : Math.round(Number(effectiveRoofSize) * 10) / 10;
+					if (shopifyConnected && roofSqm !== null && roofSqm >= 1) {
 						triggerResult = {
-							...triggerResult,
+							triggerId: triggerResult!.triggerId,
+							triggerName: triggerResult!.triggerName,
 							webhookResult: `The customer wants DIY and we have their roof size (${roofSqm} m²). You MUST call the shopify_create_diy_checkout_link tool with roof_size_sqm: ${roofSqm}. After calling it, reply with a short intro that INCLUDES the bucket breakdown so the customer sees what they need, e.g. "Here is your DIY quote for ${roofSqm} m²: you need 18 x 15L and 1 x 10L NetZero UltraTherm." Use the exact quantities from the tool result (e.g. "X x 15L", "Y x 10L", "Z x 5L"). Do NOT paste the full preview markdown or Items/Subtotal/TOTAL block—the widget will show the table. Do NOT use generate_quote or create a PDF for DIY.`
 						};
 					} else {
 						triggerResult = {
-							...triggerResult,
+							triggerId: triggerResult!.triggerId,
+							triggerName: triggerResult!.triggerName,
 							webhookResult:
 								'The customer wants DIY. Calculate litres (roof size ÷ 2), buckets (15L $389.99, 10L $285.99, 5L $149.99), and total cost in chat. Do NOT use generate_quote or create a PDF.'
 						};
 					}
-				} else if (!wantsDoneForYou && !wantsDiy) {
+				} else if (wantsDoneForYou === false && wantsDiy === false) {
 					// Ambiguous: ask DIY vs Done For You before generating
 					triggerResult = {
-						...triggerResult,
+						triggerId: triggerResult!.triggerId,
+						triggerName: triggerResult!.triggerName,
 						webhookResult:
 							'We have name, email, and roof size. Ask: "Do you plan to do it yourself (DIY) or would you like us to coat the roof for you?" For DIY, use shopify_create_diy_checkout_link (if available) so the chat shows the product table and checkout button. For Done For You, they will confirm and you can use generate_quote.'
 					};
@@ -425,7 +461,8 @@ export const POST: RequestHandler = async (event) => {
 					} catch (e) {
 						console.error('[chat/quote] runQuoteWorkflow threw:', e);
 						triggerResult = {
-							...triggerResult,
+							triggerId: triggerResult!.triggerId,
+							triggerName: triggerResult!.triggerName,
 							webhookResult: `(Workflow failed: ${e instanceof Error ? e.message : 'Unknown error'}. ${triggerResult?.webhookResult ?? ''})`
 						};
 					}
@@ -437,7 +474,7 @@ export const POST: RequestHandler = async (event) => {
 							conv.id,
 							widgetId,
 							contact,
-							effectiveRoofSize != null ? { roofSize: effectiveRoofSize } : null,
+							effectiveRoofSize == null ? null : { roofSize: effectiveRoofSize },
 							ownerId ?? undefined
 						);
 						if (gen.signedUrl && gen.storagePath) {
@@ -452,20 +489,23 @@ export const POST: RequestHandler = async (event) => {
 							// (it generates a fresh signed URL on each click)
 							const downloadUrl = `${event.url.origin}/api/quote/download?path=${encodeURIComponent(gen.storagePath)}`;
 							triggerResult = {
-								...triggerResult,
+								triggerId: triggerResult!.triggerId,
+								triggerName: triggerResult!.triggerName,
 								webhookResult: `Quote generated successfully. You MUST include this exact clickable link in your reply on a single line: [Download PDF Quote](${downloadUrl}). Confirm the quote is ready and share the link.`
 							};
 							console.log('[chat/quote] Generated quote directly (no workflow)');
 						} else {
 							triggerResult = {
-								...triggerResult,
+								triggerId: triggerResult!.triggerId,
+								triggerName: triggerResult!.triggerName,
 								webhookResult: `Quote could not be generated: ${gen.error ?? 'Unknown error'}. Apologise and offer to have a specialist follow up.`
 							};
 						}
 					} catch (e) {
 						console.error('[chat/quote] generateQuoteForConversation threw:', e);
 						triggerResult = {
-							...triggerResult,
+							triggerId: triggerResult!.triggerId,
+							triggerName: triggerResult!.triggerName,
 							webhookResult: `Quote generation failed: ${e instanceof Error ? e.message : 'Unknown error'}. Apologise and offer to have a specialist follow up.`
 						};
 					}
@@ -479,7 +519,43 @@ export const POST: RequestHandler = async (event) => {
 				if (!hasRoofSize) missing.push('roof size in square metres');
 				console.log('[chat/quote] Workflow not run: missing', missing.join(', '));
 				const instruction = `The user wants a quote but we need the following before we can help: ${missing.join(', ')}. Politely ask for only the missing information. Once we have name, email, and roof size, we will ask whether they want DIY (we calculate in chat) or Done For You (we coat the roof for them—PDF quote).`;
-				triggerResult = { ...triggerResult, webhookResult: instruction };
+				triggerResult = {
+					triggerId: triggerResult!.triggerId,
+					triggerName: triggerResult!.triggerName,
+					webhookResult: instruction
+				};
+			}
+		}
+
+		// Fallback: user replied "yes DIY" / "as i said DIY" but quote intent wasn't triggered (short message).
+		// Force the DIY checkout tool so the widget gets checkoutPreview and shows the table + button.
+		const msgLower = message.toLowerCase();
+		const wantsDiyFallback = /\b(myself|diy|do it myself|buy the product|supply only|product only)\b/i.test(msgLower);
+		const hasRoofForDiy =
+			effectiveRoofSize != null && Number(effectiveRoofSize) >= 1 ||
+			(extractedContact.roofSize != null && Number(extractedContact.roofSize) >= 0) ||
+			(contactForPrompt?.roof_size_sqm != null && Number(contactForPrompt.roof_size_sqm) >= 0);
+		const hasNameForDiy = !!(contactForPrompt?.name ?? extractedContact.name);
+		const hasEmailForDiy = !!(contactForPrompt?.email ?? extractedContact.email);
+		const alreadyHasDiyInstruction = triggerResult?.webhookResult?.includes('shopify_create_diy_checkout_link');
+		if (
+			wantsDiyFallback &&
+			hasRoofForDiy &&
+			hasNameForDiy &&
+			hasEmailForDiy &&
+			!alreadyHasDiyInstruction &&
+			ownerId
+		) {
+			const adminSupabaseForDiy = getSupabaseAdmin();
+			const shopifyConnected = Boolean(await getShopifyConfigForUser(adminSupabaseForDiy, ownerId));
+			const roofSqm = effectiveRoofSize == null ? null : Math.round(Number(effectiveRoofSize) * 10) / 10;
+			if (shopifyConnected && roofSqm !== null && roofSqm >= 1) {
+				triggerResult = {
+					triggerId: 'quote',
+					triggerName: 'Quote',
+					webhookResult: `The customer wants DIY and we have their roof size (${roofSqm} m²). You MUST call the shopify_create_diy_checkout_link tool with roof_size_sqm: ${roofSqm}. After calling it, reply with a short intro that INCLUDES the bucket breakdown so the customer sees what they need, e.g. "Here is your DIY quote for ${roofSqm} m²: you need 18 x 15L and 1 x 10L NetZero UltraTherm." Use the exact quantities from the tool result (e.g. "X x 15L", "Y x 10L", "Z x 5L"). Do NOT paste the full preview markdown or Items/Subtotal/TOTAL block—the widget will show the table. Do NOT use generate_quote or create a PDF for DIY.`
+				};
+				console.log('[chat/quote] DIY fallback: forcing tool call so widget shows table + button');
 			}
 		}
 
@@ -546,13 +622,15 @@ export const POST: RequestHandler = async (event) => {
 				const signedUrls: string[] = [];
 				for (const q of currentContact.pdf_quotes) {
 					const stored = typeof q === 'object' && q !== null && 'url' in q ? (q as { url: string }).url : String(q);
-					const filePath = stored.match(/roof_quotes\/(.+)$/)?.[1] ?? stored.trim();
+					const pathMatch = /roof_quotes\/(.+)$/.exec(stored);
+					const filePath = pathMatch?.[1] ?? stored.trim();
 					if (!filePath) continue;
 					const { data } = await adminSupabase.storage.from('roof_quotes').createSignedUrl(filePath, 31536000 /* 1 year */);
 					if (data?.signedUrl) signedUrls.push(data.signedUrl);
 				}
 				if (signedUrls.length > 0) {
-					contactLines.push(`- PDF quotes: ${signedUrls.map((u) => `[Download Quote](${u})`).join(', ')}`);
+					const pdfQuoteLinks = signedUrls.map((u) => `[Download Quote](${u})`).join(', ');
+					contactLines.push(`- PDF quotes: ${pdfQuoteLinks}`);
 				}
 			}
 		}
@@ -581,7 +659,8 @@ export const POST: RequestHandler = async (event) => {
 						const signedUrls: string[] = [];
 						for (const q of found.pdf_quotes) {
 							const stored = typeof q === 'object' && q !== null && 'url' in q ? (q as { url: string }).url : String(q);
-							const filePath = stored.match(/roof_quotes\/(.+)$/)?.[1] ?? stored.trim();
+							const pathMatch = /roof_quotes\/(.+)$/.exec(stored);
+							const filePath = pathMatch?.[1] ?? stored.trim();
 							if (!filePath) continue;
 							const { data } = await adminSupabase.storage.from('roof_quotes').createSignedUrl(filePath, 31536000 /* 1 year */);
 							if (data?.signedUrl) signedUrls.push(data.signedUrl);
@@ -603,11 +682,15 @@ export const POST: RequestHandler = async (event) => {
 		if (triggerResult?.webhookResult) {
 			const isQuote = quoteTriggerIds.has(triggerResult.triggerId.toLowerCase());
 			const quoteHasLink = isQuote && triggerResult.webhookResult.includes('[Download Quote]');
-			const instruction = quoteHasLink
-				? `A quote was generated.${quoteEmailSent === true ? ' They will also receive it by email.' : ''} Include this download link in your reply as a clickable markdown link: [Download Quote](url).`
-				: isQuote
-					? `The user wants a quote but information is missing. Ask only for what is missing.`
-					: `Use this data to answer the customer naturally.`;
+			let instruction: string;
+			if (quoteHasLink) {
+				const emailNote = quoteEmailSent === true ? ' They will also receive it by email.' : '';
+				instruction = `A quote was generated.${emailNote} Include this download link in your reply as a clickable markdown link: [Download Quote](url).`;
+			} else if (isQuote) {
+				instruction = 'The user wants a quote but information is missing. Ask only for what is missing.';
+			} else {
+				instruction = 'Use this data to answer the customer naturally.';
+			}
 			parts.push(`${instruction}\n\n${triggerResult.webhookResult}`);
 		}
 
@@ -629,6 +712,7 @@ export const POST: RequestHandler = async (event) => {
 			: null;
 
 		async function clearAiTyping() {
+			if (!conv) return;
 			await adminSupabaseForTyping
 				.from('widget_conversations')
 				.update({ agent_typing_until: null, agent_typing_by: null })
@@ -749,7 +833,7 @@ export const POST: RequestHandler = async (event) => {
 				output: text,
 				...(checkoutPreview && { checkoutPreview })
 			});
-		} catch (primaryErr) {
+		} catch (error_) {
 			if (llmFallbackProvider && llmFallbackModel) {
 				let fallbackKey: string | null = null;
 				if (agentId && effectiveConfig.keyOwnerId) {
@@ -769,20 +853,20 @@ export const POST: RequestHandler = async (event) => {
 				}
 				if (fallbackKey) {
 					try {
-						const text = await runGenerate(llmFallbackProvider, llmFallbackModel, fallbackKey);
+						const { text: fallbackText } = await runGenerate(llmFallbackProvider, llmFallbackModel, fallbackKey);
 						await clearAiTyping();
-						if (text) {
+						if (fallbackText) {
 							await supabase
 								.from('widget_conversation_messages')
-								.insert({ conversation_id: conv.id, role: 'assistant', content: text });
+								.insert({ conversation_id: conv.id, role: 'assistant', content: fallbackText });
 						}
-						return json({ message: text, output: text });
+						return json({ message: fallbackText, output: fallbackText });
 					} catch {
 						// fallthrough to error response
 					}
 				}
 			}
-			const reply = (primaryErr instanceof Error ? primaryErr.message : 'Sorry, I could not respond.') as string;
+			const reply = (error_ instanceof Error ? error_.message : 'Sorry, I could not respond.') as string;
 			await clearAiTyping();
 			return json({ error: reply, output: reply }, { status: 500 });
 		}
