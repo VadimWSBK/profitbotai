@@ -14,7 +14,7 @@ export const GET = () => {
 	return new Response(EMBED_SCRIPT, {
 		headers: {
 			'Content-Type': 'application/javascript; charset=utf-8',
-			'Cache-Control': 'public, max-age=300'
+			'Cache-Control': 'public, max-age=60'
 		}
 	});
 };

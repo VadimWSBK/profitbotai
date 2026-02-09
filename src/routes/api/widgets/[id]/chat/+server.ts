@@ -89,7 +89,8 @@ export const POST: RequestHandler = async (event) => {
 					tone: (agentRow.bot_tone as string) ?? '',
 					instructions: (agentRow.bot_instructions as string) ?? ''
 				},
-				agentAutonomy: Boolean(config.agentAutonomy),
+				// Default to true when using an agent so DIY/tools run and checkout table is shown
+				agentAutonomy: config.agentAutonomy !== false,
 				agentAllowedTools: Array.isArray(agentRow.allowed_tools) ? (agentRow.allowed_tools as string[]) : null,
 				keyOwnerId: agentRow.created_by as string | null
 			};
@@ -483,7 +484,21 @@ export const POST: RequestHandler = async (event) => {
 		}
 
 		const agentAutonomy = effectiveConfig.agentAutonomy;
-		const agentAllowedTools = effectiveConfig.agentAllowedTools ?? null;
+		let agentAllowedTools = effectiveConfig.agentAllowedTools ?? null;
+		// Ensure DIY checkout tool is available when Shopify is connected so the chat can show the product table
+		if (agentAutonomy && ownerId) {
+			try {
+				const shopify = await getShopifyConfigForUser(adminSupabaseForTyping, ownerId);
+				if (shopify) {
+					const base = Array.isArray(agentAllowedTools) ? agentAllowedTools : [];
+					if (!base.includes('shopify_create_diy_checkout_link')) {
+						agentAllowedTools = [...base, 'shopify_create_diy_checkout_link'];
+					}
+				}
+			} catch {
+				// ignore
+			}
+		}
 		const bot = effectiveConfig.bot;
 
 		// ── System prompt: Role + Tone (identity) ──────────────────────────
@@ -620,7 +635,8 @@ export const POST: RequestHandler = async (event) => {
 				.eq('id', conv.id);
 		}
 
-		async function runGenerate(provider: string, model: string, key: string): Promise<string> {
+		type GenerateOut = { text: string; lastDiyToolResult?: { lineItemsUI: unknown[]; summary: Record<string, unknown>; checkoutUrl: string } };
+		async function runGenerate(provider: string, model: string, key: string): Promise<GenerateOut> {
 			const modelInstance = getAISdkModel(provider, model, key);
 			const baseOptions = {
 				model: modelInstance,
@@ -628,7 +644,7 @@ export const POST: RequestHandler = async (event) => {
 				messages: modelMessages,
 				maxOutputTokens: 1024
 			};
-			let result;
+			let result: Awaited<ReturnType<typeof generateText>>;
 			if (agentAutonomy && agentContext) {
 				const tools = createAgentTools(adminSupabaseForTyping, agentAllowedTools ?? undefined);
 				result = await generateText({
@@ -640,11 +656,46 @@ export const POST: RequestHandler = async (event) => {
 			} else {
 				result = await generateText(baseOptions);
 			}
-			return result.text ?? '';
+			const text = result.text ?? '';
+			// Extract checkout preview from DIY tool result if present (fallback when DB link is missing)
+			let lastDiyToolResult: GenerateOut['lastDiyToolResult'] | undefined;
+			const pickDiy = (tr: Array<{ toolName?: string; output?: unknown; result?: unknown }> | undefined) => {
+				if (!Array.isArray(tr)) return;
+				const diy = tr.find((r) => r.toolName === 'shopify_create_diy_checkout_link');
+				if (!diy || typeof diy !== 'object') return;
+				const out = (diy as { output?: unknown }).output ?? (diy as { result?: unknown }).result;
+				if (!out || typeof out !== 'object') return;
+				const r = out as { lineItemsUI?: unknown[]; summary?: Record<string, unknown>; checkoutUrl?: string };
+				if (
+					Array.isArray(r.lineItemsUI) &&
+					r.summary != null &&
+					typeof r.summary === 'object' &&
+					typeof r.checkoutUrl === 'string' &&
+					r.checkoutUrl.trim()
+				) {
+					return {
+						lineItemsUI: r.lineItemsUI,
+						summary: r.summary,
+						checkoutUrl: r.checkoutUrl.trim()
+					};
+				}
+			};
+			const raw = result as {
+				steps?: Array<{ toolResults?: Array<{ toolName?: string; output?: unknown; result?: unknown }> }>;
+				toolResults?: Array<{ toolName?: string; output?: unknown; result?: unknown }>;
+			};
+			lastDiyToolResult = pickDiy(raw.toolResults);
+			if (!lastDiyToolResult && Array.isArray(raw.steps)) {
+				for (let i = raw.steps.length - 1; i >= 0; i--) {
+					lastDiyToolResult = pickDiy(raw.steps[i].toolResults);
+					if (lastDiyToolResult) break;
+				}
+			}
+			return { text, lastDiyToolResult };
 		}
 
 		try {
-			const text = await runGenerate(llmProvider, llmModel, apiKey);
+			const { text, lastDiyToolResult } = await runGenerate(llmProvider, llmModel, apiKey);
 			await clearAiTyping();
 			let checkoutPreview: { lineItemsUI: unknown[]; summary: Record<string, unknown>; checkoutUrl: string } | null = null;
 			// Persist assistant message
@@ -688,6 +739,10 @@ export const POST: RequestHandler = async (event) => {
 						}
 					}
 				}
+			}
+			// Use DIY tool result when DB did not yield a preview (e.g. link not yet committed)
+			if (!checkoutPreview && lastDiyToolResult) {
+				checkoutPreview = lastDiyToolResult;
 			}
 			return json({
 				message: text,
