@@ -265,17 +265,41 @@ export const POST: RequestHandler = async (event) => {
 		// But for now, let's just update the contact_emails table if needed
 	}
 
-	// Delete other contacts
-	const otherContactIds = otherContacts.map((c) => c.id);
-	const { error: deleteError } = await supabase
-		.from('contacts')
-		.delete()
-		.in('id', otherContactIds);
+	// Handle other contacts: keep those with conversations (update identity to match base),
+	// delete those without conversations
+	const othersWithConversation = otherContacts.filter((c) => c.conversation_id);
+	const othersWithoutConversation = otherContacts.filter((c) => !c.conversation_id);
 
-	if (deleteError) {
-		console.error('POST /api/contacts/merge delete:', deleteError);
-		// Don't fail the merge if delete fails - the merge itself succeeded
-		console.warn('Failed to delete merged contacts, but merge completed');
+	// Update contacts that have conversations: mirror base contact's identity so they
+	// group together in the Messages sidebar
+	if (othersWithConversation.length > 0) {
+		const { error: aliasError } = await supabase
+			.from('contacts')
+			.update({
+				name: mergedName,
+				email: mergedEmails.length > 0 ? mergedEmails : [],
+				phone: mergedPhones.length > 0 ? mergedPhones : [],
+				tags: mergedTags.length > 0 ? mergedTags : [],
+				updated_at: new Date().toISOString()
+			})
+			.in('id', othersWithConversation.map((c) => c.id));
+
+		if (aliasError) {
+			console.error('POST /api/contacts/merge alias update:', aliasError);
+		}
+	}
+
+	// Delete contacts that have no conversation (no session to preserve)
+	if (othersWithoutConversation.length > 0) {
+		const { error: deleteError } = await supabase
+			.from('contacts')
+			.delete()
+			.in('id', othersWithoutConversation.map((c) => c.id));
+
+		if (deleteError) {
+			console.error('POST /api/contacts/merge delete:', deleteError);
+			console.warn('Failed to delete merged contacts, but merge completed');
+		}
 	}
 
 	return json({

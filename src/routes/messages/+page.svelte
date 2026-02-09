@@ -76,6 +76,21 @@
 		contactEmail?: string | null;
 	};
 
+	type SuggestionContact = {
+		id: string;
+		name: string | null;
+		emails: string[];
+		phones: string[];
+		tags: string[];
+		widgetName: string | null;
+		createdAt: string;
+	};
+	type MergeGroup = {
+		reason: string;
+		confidence: 'high' | 'medium';
+		contacts: SuggestionContact[];
+	};
+
 	const CHANNELS: { id: 'all' | 'chat' | 'email'; label: string; disabled?: boolean }[] = [
 		{ id: 'all', label: 'All' },
 		{ id: 'chat', label: 'Chat' },
@@ -108,6 +123,15 @@
 	const MESSAGES_PAGE_SIZE = 20;
 
 	let expandedGroups = $state<Set<string>>(new Set());
+
+	// Merge suggestions
+	const hasLlmKeys = $derived(Boolean((data as any)?.hasLlmKeys));
+	let showMergeSuggestions = $state(false);
+	let mergeSuggestionsLoading = $state(false);
+	let mergeSuggestionsError = $state<string | null>(null);
+	let mergeGroups = $state<MergeGroup[]>([]);
+	let mergeSuggestionsLlmUsed = $state(false);
+	let mergingGroupIndex = $state<number | null>(null);
 
 	// Group conversations by contact
 	const contactGroups = $derived.by(() => {
@@ -517,6 +541,61 @@
 		sendAgentTyping(false);
 	}
 
+	// ── Merge duplicates ─────────────────────────────────────────────
+	async function findDuplicates() {
+		mergeSuggestionsLoading = true;
+		mergeSuggestionsError = null;
+		mergeGroups = [];
+		mergeSuggestionsLlmUsed = false;
+		showMergeSuggestions = true;
+		try {
+			const res = await fetch('/api/contacts/merge-suggestions');
+			const json = await res.json().catch(() => ({}));
+			if (!res.ok) {
+				mergeSuggestionsError = (json.error as string) ?? 'Failed to find duplicates';
+				return;
+			}
+			mergeGroups = Array.isArray(json.groups) ? json.groups : [];
+			mergeSuggestionsLlmUsed = Boolean(json.llmUsed);
+		} catch {
+			mergeSuggestionsError = 'Failed to analyze contacts';
+		} finally {
+			mergeSuggestionsLoading = false;
+		}
+	}
+
+	async function mergeGroup(index: number) {
+		const group = mergeGroups[index];
+		if (!group || group.contacts.length < 2) return;
+		mergingGroupIndex = index;
+		try {
+			const res = await fetch('/api/contacts/merge', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ contactIds: group.contacts.map((c) => c.id) })
+			});
+			const json = await res.json().catch(() => ({}));
+			if (!res.ok) {
+				mergeSuggestionsError = (json.error as string) ?? 'Merge failed';
+				return;
+			}
+			mergeGroups = mergeGroups.filter((_, i) => i !== index);
+			fetchConversations();
+		} finally {
+			mergingGroupIndex = null;
+		}
+	}
+
+	function dismissGroup(index: number) {
+		mergeGroups = mergeGroups.filter((_, i) => i !== index);
+	}
+
+	function closeMergeSuggestions() {
+		showMergeSuggestions = false;
+		mergeGroups = [];
+		mergeSuggestionsError = null;
+	}
+
 	$effect(() => {
 		const w = selectedWidgetId;
 		if (selectedConversation && w !== null && selectedConversation.widgetId !== w) {
@@ -767,6 +846,25 @@
 	<div class="flex items-center justify-between gap-4 flex-wrap">
 		<h1 class="text-xl font-semibold text-gray-800">Messages</h1>
 		<div class="flex items-center gap-2">
+			<button
+				type="button"
+				disabled={mergeSuggestionsLoading}
+				onclick={findDuplicates}
+				class="inline-flex items-center gap-2 rounded-lg border border-amber-600 bg-white px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-1 disabled:opacity-60 disabled:pointer-events-none"
+			>
+				{#if mergeSuggestionsLoading}
+					<svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+						<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+						<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+					</svg>
+					Analyzing…
+				{:else}
+					<svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+					</svg>
+					Find Duplicates
+				{/if}
+			</button>
 			<label for="widget-filter" class="text-sm text-gray-600">Widget</label>
 			<select
 				id="widget-filter"
@@ -1199,3 +1297,150 @@
 		</div>
 	</div>
 </div>
+
+<!-- Merge Suggestions Modal -->
+{#if showMergeSuggestions}
+	<div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+		<!-- Backdrop -->
+		<div
+			class="absolute inset-0 bg-black/40"
+			onclick={closeMergeSuggestions}
+			role="button"
+			tabindex="-1"
+			onkeydown={(e) => e.key === 'Escape' && closeMergeSuggestions()}
+		></div>
+		<!-- Modal -->
+		<div class="relative w-full max-w-3xl max-h-[85vh] rounded-xl bg-white shadow-2xl flex flex-col overflow-hidden">
+			<!-- Header -->
+			<div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+				<div>
+					<h2 class="text-lg font-semibold text-gray-900">Duplicate Contacts</h2>
+					{#if !mergeSuggestionsLoading}
+						<p class="text-sm text-gray-500 mt-0.5">
+							{mergeGroups.length === 0
+								? 'No duplicates found'
+								: `${mergeGroups.length} potential duplicate group${mergeGroups.length === 1 ? '' : 's'} found`}
+							{#if mergeSuggestionsLlmUsed}
+								<span class="ml-1 text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">AI-assisted</span>
+							{/if}
+						</p>
+					{/if}
+				</div>
+				<button
+					type="button"
+					onclick={closeMergeSuggestions}
+					class="rounded-lg p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+					aria-label="Close"
+				>
+					<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+					</svg>
+				</button>
+			</div>
+
+			<!-- Content -->
+			<div class="flex-1 overflow-y-auto p-6 space-y-4">
+				{#if mergeSuggestionsLoading}
+					<div class="flex flex-col items-center justify-center py-16 gap-4">
+						<svg class="h-8 w-8 animate-spin text-amber-600" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+							<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+							<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+						</svg>
+						<div class="text-center">
+							<p class="text-sm font-medium text-gray-700">Analyzing contacts for duplicates…</p>
+							{#if hasLlmKeys}
+								<p class="text-xs text-gray-500 mt-1">Using AI to find fuzzy matches</p>
+							{/if}
+						</div>
+					</div>
+				{:else if mergeSuggestionsError}
+					<div class="rounded-lg bg-red-50 border border-red-200 p-4">
+						<p class="text-sm text-red-700">{mergeSuggestionsError}</p>
+					</div>
+				{:else if mergeGroups.length === 0}
+					<div class="flex flex-col items-center justify-center py-16 text-gray-500">
+						<svg class="h-12 w-12 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+						</svg>
+						<p class="text-sm font-medium">No duplicates found</p>
+						<p class="text-xs mt-1">All your contacts look unique</p>
+					</div>
+				{:else}
+					{#each mergeGroups as group, i}
+						<div class="rounded-lg border border-gray-200 bg-gray-50/50 overflow-hidden">
+							<!-- Group header -->
+							<div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-white">
+								<div class="flex items-center gap-2 min-w-0">
+									<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium {group.confidence === 'high' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}">
+										{group.confidence === 'high' ? 'High confidence' : 'Medium confidence'}
+									</span>
+									<span class="text-sm text-gray-600 truncate">{group.reason}</span>
+								</div>
+								<div class="flex items-center gap-2 shrink-0 ml-2">
+									<button
+										type="button"
+										disabled={mergingGroupIndex === i}
+										onclick={() => mergeGroup(i)}
+										class="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50 disabled:pointer-events-none transition-colors"
+									>
+										{#if mergingGroupIndex === i}
+											<svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+												<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+												<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+											</svg>
+											Merging…
+										{:else}
+											Merge
+										{/if}
+									</button>
+									<button
+										type="button"
+										onclick={() => dismissGroup(i)}
+										class="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+									>
+										Skip
+									</button>
+								</div>
+							</div>
+							<!-- Contact cards -->
+							<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4">
+								{#each group.contacts as sc}
+									<div class="rounded-lg border border-gray-200 bg-white p-3">
+										<div class="flex items-start gap-3">
+											<div class="w-8 h-8 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-sm font-semibold shrink-0">
+												{(sc.name ?? sc.emails[0] ?? '?').charAt(0).toUpperCase()}
+											</div>
+											<div class="min-w-0 flex-1">
+												<p class="font-medium text-gray-800 truncate">{sc.name ?? 'No name'}</p>
+												{#if sc.emails.length > 0}
+													{#each sc.emails as email}
+														<p class="text-xs text-gray-500 truncate">{email}</p>
+													{/each}
+												{/if}
+												{#if sc.phones.length > 0}
+													{#each sc.phones as phone}
+														<p class="text-xs text-gray-500">{phone}</p>
+													{/each}
+												{/if}
+												{#if sc.widgetName}
+													<p class="text-xs text-gray-400 mt-1">{sc.widgetName}</p>
+												{/if}
+												{#if sc.tags.length > 0}
+													<div class="flex flex-wrap gap-1 mt-1">
+														{#each sc.tags as tag}
+															<span class="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{tag}</span>
+														{/each}
+													</div>
+												{/if}
+											</div>
+										</div>
+									</div>
+								{/each}
+							</div>
+						</div>
+					{/each}
+				{/if}
+			</div>
+		</div>
+	</div>
+{/if}
