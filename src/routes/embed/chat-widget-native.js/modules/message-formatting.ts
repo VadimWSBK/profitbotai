@@ -177,16 +177,24 @@ export const messageformatting = String.raw`
       cleaned = cleaned.replace(new RegExp(escapedUrl, 'gi'), '').trim();
     }
     var start = cleaned.search(/\*\*[^*]*Your [Cc]heckout [Pp]review\*\*/i);
+    if (start < 0) start = cleaned.search(/\n?\s*[\u{1F300}-\u{1F9FF}]?\s*Your\s+[Cc]heckout\s+[Pp]review/u);
+    if (start < 0) start = cleaned.search(/\n\s*Your\s+[Cc]heckout\s+[Pp]review/i);
     if (start < 0) {
       cleaned = cleaned.replace(/(https?:\/\/[^\s<>"']*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"']*)/gi, '').trim();
       return cleaned;
     }
-    var before = cleaned.slice(0, start).replace(/\n+$/, '');
+    var before = cleaned.slice(0, start).replace(/\n+$/, '').trim();
+    before = before.replace(/\n\s*Here is your (?:DIY )?checkout preview:?\s*$/i, '').trim();
     var afterStart = cleaned.slice(start);
     var linkMatch = afterStart.match(/\[GO TO CHECKOUT\]\s*\([^)]+\)/i) || afterStart.match(/\[Buy now[^\]]*\]\s*\([^)]+\)/i);
     if (linkMatch) {
       var rest = afterStart.slice(linkMatch.index + linkMatch[0].length).replace(/^\s*\n?/, '');
       rest = rest.replace(/(https?:\/\/[^\s<>"']*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"']*)/gi, '').trim();
+      return (before + (rest ? '\n\n' + rest : '')).trim();
+    }
+    var goLine = afterStart.match(/\n\s*GO TO CHECKOUT\s*\n/i);
+    if (goLine) {
+      var rest = afterStart.slice(goLine.index + goLine[0].length).replace(/^\s*\n?/, '');
       return (before + (rest ? '\n\n' + rest : '')).trim();
     }
     return before.replace(/(https?:\/\/[^\s<>"']*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"']*)/gi, '').trim() || cleaned;

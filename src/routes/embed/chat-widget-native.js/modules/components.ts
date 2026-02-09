@@ -167,10 +167,11 @@ export const components = String.raw`
 
     if (isBot) {
       var content = el('div', { className: 'pb-msg-content' });
-      if (msg.checkoutPreview) {
-        var intro = stripCheckoutBlock(msg.content, msg.checkoutPreview.checkoutUrl).trim();
+      var preview = msg.checkoutPreview || tryParseCheckoutFromText(msg.content);
+      if (preview) {
+        var intro = stripCheckoutBlock(msg.content, preview.checkoutUrl).trim();
         if (intro) content.innerHTML = '<div style="margin-bottom:0.5em">' + formatMessage(intro) + '</div>';
-        content.innerHTML += renderCheckoutPreview(msg.checkoutPreview);
+        content.innerHTML += renderCheckoutPreview(preview);
       } else {
         content.innerHTML = formatMessage(msg.content);
       }
@@ -224,6 +225,58 @@ export const components = String.raw`
     return row;
   }
 
+  /** Parse DIY checkout block from plain-text message when API did not attach checkoutPreview. */
+  function tryParseCheckoutFromText(content) {
+    if (!content || typeof content !== 'string') return null;
+    var hasBlock = /Your\s+Checkout\s+Preview/i.test(content) && (/\bItems\s+\d+/i.test(content) || /Subtotal\s+\$/i.test(content) || /TOTAL\s+\$/i.test(content));
+    if (!hasBlock) return null;
+    var lineItemsUI = [];
+    var lineItemRe = /\*\s*(\d+)\s*x\s*([^:*]+):\s*\$?\s*([\d,]+\.?\d*)\s*each\s*=\s*\$?\s*([\d,]+\.?\d*)/gi;
+    var m;
+    while ((m = lineItemRe.exec(content)) !== null) {
+      var qty = parseInt(m[1], 10);
+      var title = (m[2] || '').trim() || 'Product';
+      var unitPrice = (m[3] || '').replace(/,/g, '');
+      var lineTotal = (m[4] || '').replace(/,/g, '');
+      if (qty >= 1 && (unitPrice || lineTotal)) lineItemsUI.push({ title: title, quantity: qty, unitPrice: unitPrice, lineTotal: lineTotal, imageUrl: null });
+    }
+    var totalItems = 0;
+    var itemsMatch = content.match(/\bItems\s+(\d+)/i);
+    if (itemsMatch) totalItems = parseInt(itemsMatch[1], 10);
+    else if (lineItemsUI.length) totalItems = lineItemsUI.reduce(function(s, i) { return s + (i.quantity || 0); }, 0);
+    var subtotal = '';
+    var subMatch = content.match(/Subtotal\s+\$?\s*([\d,]+\.?\d*)/i);
+    if (subMatch) subtotal = subMatch[1].replace(/,/g, '');
+    var total = '';
+    var totalMatch = content.match(/TOTAL\s+\$?\s*([\d,]+\.?\d*)/i) || content.match(/(?:^|\s)Total\s+\$?\s*([\d,]+\.?\d*)/im);
+    if (totalMatch) total = totalMatch[1].replace(/,/g, '');
+    if (!subtotal && total) subtotal = total;
+    if (!total && subtotal) total = subtotal;
+    var discountPercent = null;
+    var discountMatch = content.match(/Discount\s+(\d+)\s*%?\s*OFF/i);
+    if (discountMatch) discountPercent = parseInt(discountMatch[1], 10);
+    var discountAmount = null;
+    var savingsMatch = content.match(/Savings\s+-\s*\$?\s*([\d,]+\.?\d*)/i);
+    if (savingsMatch) discountAmount = savingsMatch[1].replace(/,/g, '');
+    var currency = /AUD|USD|EUR/i.test(content) ? (content.match(/\b(AUD|USD|EUR)\b/i) || [])[1] || 'AUD' : 'AUD';
+    var checkoutUrl = '';
+    var linkMatch = content.match(/\[(?:GO\s+TO\s+CHECKOUT|Buy\s+now[^\]]*)\]\((https:\/\/[^)]+)\)/i);
+    if (linkMatch) checkoutUrl = linkMatch[2];
+    else {
+      var cartMatch = content.match(/(https:\/\/[^\s<>"']*(?:cart|checkout|myshopify\.com)[^\s<>"']*)/i);
+      if (cartMatch) checkoutUrl = cartMatch[1];
+    }
+    var summary = {
+      totalItems: totalItems || lineItemsUI.reduce(function(s, i) { return s + (i.quantity || 0); }, 0),
+      subtotal: subtotal || total,
+      total: total || subtotal,
+      currency: currency,
+      discountPercent: discountPercent,
+      discountAmount: discountAmount
+    };
+    return { lineItemsUI: lineItemsUI, summary: summary, checkoutUrl: checkoutUrl };
+  }
+
   function renderCheckoutPreview(preview) {
     var cur = preview.summary && preview.summary.currency ? escapeHtml(String(preview.summary.currency)) : 'AUD';
     var html = '<div class="pb-checkout-preview">';
@@ -257,6 +310,7 @@ export const components = String.raw`
     }
     html += '<div class="pb-gst-note">GST included</div>';
     if (preview.checkoutUrl) html += '<a href="' + escapeHtml(preview.checkoutUrl) + '" target="_blank" rel="noopener noreferrer" class="pb-checkout-button">GO TO CHECKOUT</a>';
+    else html += '<span class="pb-checkout-button pb-checkout-button-disabled" aria-disabled="true">GO TO CHECKOUT</span>';
     html += '</div>';
     return html;
   }

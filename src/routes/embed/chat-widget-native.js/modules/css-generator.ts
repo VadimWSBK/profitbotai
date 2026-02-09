@@ -275,6 +275,7 @@ export const cssgenerator = String.raw`
       '.pb-gst-note { font-size: 13px; color: #6b7280; margin-top: 8px; font-style: italic; }',
       '.pb-checkout-button { display: inline-block; margin-top: 14px; padding: 12px 24px; background: #ea580c; color: #fff; border-radius: 8px; font-weight: 600; text-decoration: none; text-align: center; transition: background 0.15s; border: none; cursor: pointer; }',
       '.pb-checkout-button:hover { background: #c2410c; color: #fff; }',
+      '.pb-checkout-button-disabled { cursor: default; opacity: 0.85; pointer-events: none; }',
 
       /* Backdrop for mobile */
       '.pb-backdrop { display: none; }',
