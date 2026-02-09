@@ -185,6 +185,7 @@ export const messageformatting = String.raw`
     }
     var before = cleaned.slice(0, start).replace(/\n+$/, '').trim();
     before = before.replace(/\n\s*Here is your (?:DIY )?checkout preview:?\s*$/i, '').trim();
+    before = before.replace(/\n\s*Your total (?:estimated|calculated) cost for the product would be \$[\d,]+\.?\d*\s*AUD\.?\s*$/i, '').trim();
     var afterStart = cleaned.slice(start);
     var linkMatch = afterStart.match(/\[GO TO CHECKOUT\]\s*\([^)]+\)/i) || afterStart.match(/\[Buy now[^\]]*\]\s*\([^)]+\)/i);
     if (linkMatch) {

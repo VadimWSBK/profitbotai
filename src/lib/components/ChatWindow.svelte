@@ -61,14 +61,17 @@
 			cleaned = cleaned.replace(urlPattern, '').trim();
 		}
 		
-		const start = cleaned.search(/\*\*[🧾\s]*Your [Cc]heckout [Pp]review\*\*/i);
+		let start = cleaned.search(/\*\*[^*]*Your [Cc]heckout [Pp]review\*\*/i);
+		if (start < 0) start = cleaned.search(/\n\s*Your\s+[Cc]heckout\s+[Pp]review/i);
 		if (start < 0) {
 			// Also check for raw checkout URLs (Shopify cart URLs or invoice URLs)
 			const checkoutUrlPattern = /(https?:\/\/[^\s<>"']*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"']*)/gi;
 			cleaned = cleaned.replace(checkoutUrlPattern, '').trim();
 			return cleaned;
 		}
-		const before = cleaned.slice(0, start).replace(/\n+$/, '');
+		let before = cleaned.slice(0, start).replace(/\n+$/, '').trim();
+		before = before.replace(/\n\s*Here is your (?:DIY )?checkout preview:?\s*$/i, '').trim();
+		before = before.replace(/\n\s*Your total (?:estimated|calculated) cost for the product would be \$[\d,]+\.?\d*\s*AUD\.?\s*$/i, '').trim();
 		const afterStart = cleaned.slice(start);
 		// Match markdown links like [GO TO CHECKOUT](url) or [Buy now](url)
 		const linkMatch = afterStart.match(/\[GO TO CHECKOUT\]\s*\([^)]+\)/i) ?? afterStart.match(/\[Buy now[^\]]*\]\s*\([^)]+\)/i);
@@ -82,6 +85,55 @@
 		// Remove any raw checkout URLs from the before part too
 		const checkoutUrlPattern = /(https?:\/\/[^\s<>"']*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"']*)/gi;
 		return before.replace(checkoutUrlPattern, '').trim() || cleaned;
+	}
+
+	/** Parse DIY checkout block from plain text when API did not attach checkoutPreview (embed fallback). */
+	function tryParseCheckoutFromText(content: string): CheckoutPreview | null {
+		if (!content?.trim()) return null;
+		const hasBlock = /Your\s+Checkout\s+Preview/i.test(content) && (/\bItems\s+\d+/i.test(content) || /Subtotal\s+\$/i.test(content) || /TOTAL\s+\$/i.test(content));
+		if (!hasBlock) return null;
+		const lineItemsUI: CheckoutPreview['lineItemsUI'] = [];
+		const lineItemRe = /\*\s*(\d+)\s*x\s*([^:*]+):\s*\$?\s*([\d,]+\.?\d*)\s*each\s*=\s*\$?\s*([\d,]+\.?\d*)/gi;
+		let m: RegExpExecArray | null;
+		while ((m = lineItemRe.exec(content)) !== null) {
+			const qty = parseInt(m[1], 10);
+			const title = (m[2] || '').trim() || 'Product';
+			const unitPrice = (m[3] || '').replace(/,/g, '');
+			const lineTotal = (m[4] || '').replace(/,/g, '');
+			if (qty >= 1 && (unitPrice || lineTotal)) lineItemsUI.push({ title, quantity: qty, unitPrice, lineTotal, imageUrl: null, variant: null });
+		}
+		let totalItems = 0;
+		const itemsMatch = content.match(/\bItems\s+(\d+)/i);
+		if (itemsMatch) totalItems = parseInt(itemsMatch[1], 10);
+		else if (lineItemsUI.length) totalItems = lineItemsUI.reduce((s, i) => s + (i.quantity || 0), 0);
+		let subtotal = '';
+		const subMatch = content.match(/Subtotal\s+\$?\s*([\d,]+\.?\d*)/i);
+		if (subMatch) subtotal = subMatch[1].replace(/,/g, '');
+		let total = '';
+		const totalMatch = content.match(/TOTAL\s+\$?\s*([\d,]+\.?\d*)/i) || content.match(/(?:^|\s)Total\s+\$?\s*([\d,]+\.?\d*)/im);
+		if (totalMatch) total = totalMatch[1].replace(/,/g, '');
+		if (!subtotal && total) subtotal = total;
+		if (!total && subtotal) total = subtotal;
+		let discountPercent: number | undefined;
+		const discountMatch = content.match(/Discount\s+(\d+)\s*%?\s*OFF/i);
+		if (discountMatch) discountPercent = parseInt(discountMatch[1], 10);
+		let discountAmount: string | undefined;
+		const savingsMatch = content.match(/Savings\s+-\s*\$?\s*([\d,]+\.?\d*)/i);
+		if (savingsMatch) discountAmount = savingsMatch[1].replace(/,/g, '');
+		const currencyMatch = content.match(/\b(AUD|USD|EUR)\b/i);
+		const currency = /AUD|USD|EUR/i.test(content) ? (currencyMatch ? currencyMatch[1] : 'AUD') : 'AUD';
+		let checkoutUrl = '';
+		const linkMatch = content.match(/\[(?:GO\s+TO\s+CHECKOUT|Buy\s+now[^\]]*)\]\((https:\/\/[^)]+)\)/i);
+		if (linkMatch) checkoutUrl = linkMatch[2];
+		else {
+			const cartMatch = content.match(/(https:\/\/[^\s<>"']*(?:cart|checkout|myshopify\.com)[^\s<>"']*)/i);
+			if (cartMatch) checkoutUrl = cartMatch[1];
+		}
+		return {
+			lineItemsUI,
+			summary: { totalItems: totalItems || lineItemsUI.reduce((s, i) => s + (i.quantity || 0), 0), subtotal: subtotal || total, total: total || subtotal, currency, discountPercent, discountAmount },
+			checkoutUrl
+		};
 	}
 
 	let sessionId = $state('');
@@ -721,6 +773,7 @@
 			</div>
 		{:else}
 			{#each messages as msg, i (msg._localId)}
+				{@const preview = msg.checkoutPreview ?? tryParseCheckoutFromText(msg.content)}
 				{#if msg.role === 'bot'}
 					<div class="flex gap-2 items-start" in:fly={{ x: -12, duration: dur(280), easing: cubicOut }}>
 						{#if msg.avatarUrl}
@@ -742,14 +795,14 @@
 								"
 							>
 								<div class="flex-1 min-w-0 overflow-x-auto overflow-y-visible max-w-full break-words">
-									{#if msg.checkoutPreview}
-										{#if stripCheckoutBlock(msg.content, msg.checkoutPreview.checkoutUrl).trim()}
-											<div class="chat-message-intro">{@html formatMessage(stripCheckoutBlock(msg.content, msg.checkoutPreview.checkoutUrl))}</div>
+									{#if preview}
+										{#if stripCheckoutBlock(msg.content, preview.checkoutUrl).trim()}
+											<div class="chat-message-intro">{@html formatMessage(stripCheckoutBlock(msg.content, preview.checkoutUrl))}</div>
 										{/if}
 										<div class="checkout-preview-block">
 											<div class="checkout-preview">
 												<h3 class="checkout-title">Your Checkout Preview</h3>
-												{#each msg.checkoutPreview.lineItemsUI as item}
+												{#each preview.lineItemsUI as item}
 													<div class="line-item">
 														{#if item.imageUrl}
 															<img class="product-image" src={item.imageUrl} alt={item.title} loading="lazy" />
@@ -758,25 +811,29 @@
 														{/if}
 														<div class="product-details">
 															<div class="product-title">{item.title}</div>
-															<div class="product-meta">Unit Price: $${item.unitPrice} {msg.checkoutPreview.summary.currency ?? 'AUD'}</div>
+															<div class="product-meta">Unit Price: $${item.unitPrice} {preview.summary.currency ?? 'AUD'}</div>
 														</div>
 														<div class="product-qty">Qty: {item.quantity}</div>
-														<div class="product-total">${item.lineTotal} {msg.checkoutPreview.summary.currency ?? 'AUD'}</div>
+														<div class="product-total">${item.lineTotal} {preview.summary.currency ?? 'AUD'}</div>
 													</div>
 												{/each}
 												<hr class="checkout-hr" />
-												<div class="summary-row"><span>Items</span><span>{msg.checkoutPreview.summary.totalItems}</span></div>
-												{#if msg.checkoutPreview.summary.discountPercent != null}
-													<div class="summary-row"><span>Discount</span><span>{msg.checkoutPreview.summary.discountPercent}% OFF</span></div>
+												<div class="summary-row"><span>Items</span><span>{preview.summary.totalItems}</span></div>
+												{#if preview.summary.discountPercent != null}
+													<div class="summary-row"><span>Discount</span><span>{preview.summary.discountPercent}% OFF</span></div>
 												{/if}
 												<div class="summary-row"><span>Shipping</span><span>FREE</span></div>
-												<div class="summary-row subtotal"><span>Subtotal</span><span>${msg.checkoutPreview.summary.subtotal} {msg.checkoutPreview.summary.currency}</span></div>
-												{#if msg.checkoutPreview.summary.discountAmount != null}
-													<div class="summary-row savings"><span>Savings</span><span>- ${msg.checkoutPreview.summary.discountAmount} {msg.checkoutPreview.summary.currency}</span></div>
+												<div class="summary-row subtotal"><span>Subtotal</span><span>${preview.summary.subtotal} {preview.summary.currency}</span></div>
+												{#if preview.summary.discountAmount != null}
+													<div class="summary-row savings"><span>Savings</span><span>- ${preview.summary.discountAmount} {preview.summary.currency}</span></div>
 												{/if}
-												<div class="summary-row total"><span>Total</span><span>${msg.checkoutPreview.summary.total} {msg.checkoutPreview.summary.currency}</span></div>
+												<div class="summary-row total"><span>Total</span><span>${preview.summary.total} {preview.summary.currency}</span></div>
 												<div class="gst-note">GST included</div>
-												<a href={msg.checkoutPreview.checkoutUrl} target="_blank" rel="noopener noreferrer" class="checkout-button">GO TO CHECKOUT</a>
+												{#if preview.checkoutUrl}
+													<a href={preview.checkoutUrl} target="_blank" rel="noopener noreferrer" class="checkout-button">GO TO CHECKOUT</a>
+												{:else}
+													<span class="checkout-button checkout-button-disabled" aria-disabled="true">GO TO CHECKOUT</span>
+												{/if}
 											</div>
 										</div>
 									{:else}
@@ -1339,6 +1396,11 @@
 	:global(.checkout-preview-block .checkout-button:hover) {
 		background: #c2410c;
 		color: #fff;
+	}
+	:global(.checkout-preview-block .checkout-button-disabled) {
+		cursor: default;
+		opacity: 0.85;
+		pointer-events: none;
 	}
 	:global(.chat-message-intro) {
 		margin-bottom: 0.5em;

@@ -679,7 +679,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 				lineItems: lineItems.map((li) => `${li.quantity}× ${li.title} ($${li.price} each)`),
 				lineItemsUI,
 				previewMarkdown,
-				message: `Checkout link created. You MUST include this exact preview in your reply so the customer sees their cart before clicking:\n\n${previewMarkdown}`
+				message: `Checkout link created. Include this preview in your reply so the customer sees their cart. Do NOT add a sentence like "Your total estimated cost for the product would be $X AUD" before or after the preview—the checkout block shows the total. When referring to the cost, use "calculated" not "estimated".\n\n${previewMarkdown}`
 			};
 		}
 	});
