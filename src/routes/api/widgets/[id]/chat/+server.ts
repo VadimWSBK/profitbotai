@@ -383,7 +383,7 @@ export const POST: RequestHandler = async (event) => {
 					if (shopifyConnected && roofSqm != null && roofSqm >= 1) {
 						triggerResult = {
 							...triggerResult,
-							webhookResult: `The customer wants DIY and we have their roof size (${roofSqm} m²). You MUST call the shopify_create_diy_checkout_link tool with roof_size_sqm: ${roofSqm} so the chat shows the product table and GO TO CHECKOUT button in one message. Do not only calculate in chat—calling the tool is required. Do NOT use generate_quote or create a PDF for DIY.`
+							webhookResult: `The customer wants DIY and we have their roof size (${roofSqm} m²). You MUST call the shopify_create_diy_checkout_link tool with roof_size_sqm: ${roofSqm}. After calling it, reply with ONLY a short intro (e.g. "Here is your one-click checkout for your ${roofSqm} m² roof:")—do NOT paste the preview markdown or Items/Subtotal/TOTAL block; the chat widget will automatically display the full table and GO TO CHECKOUT button from the tool result. Do NOT use generate_quote or create a PDF for DIY.`
 						};
 					} else {
 						triggerResult = {

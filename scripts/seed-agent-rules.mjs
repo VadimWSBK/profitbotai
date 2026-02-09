@@ -21,19 +21,10 @@ if (!openaiKey && !geminiKey) {
 	process.exit(1);
 }
 
-const EMBED_DIM = 1536;
+const EMBED_DIM = 3072; // Must match agent_rules.embedding vector(3072) in DB
 
 async function getEmbedding(text) {
-	if (openaiKey) {
-		const res = await fetch('https://api.openai.com/v1/embeddings', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${openaiKey}` },
-			body: JSON.stringify({ model: 'text-embedding-3-small', input: text })
-		});
-		const data = await res.json();
-		if (data.error) throw new Error(data.error.message);
-		return data.data[0].embedding;
-	}
+	// DB expects 3072 dimensions; only Gemini supports that in this script. Prefer Gemini for seeding.
 	if (geminiKey) {
 		const res = await fetch(
 			`https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=${geminiKey}`,
@@ -53,7 +44,10 @@ async function getEmbedding(text) {
 		const norm = Math.sqrt(values.reduce((s, x) => s + x * x, 0));
 		return norm > 0 ? values.map((x) => x / norm) : values;
 	}
-	throw new Error('No embedding key');
+	if (openaiKey) {
+		throw new Error('agent_rules table expects 3072-dim embeddings. Set GEMINI_API_KEY in .env to seed rules (OpenAI text-embedding-3-small is 1536).');
+	}
+	throw new Error('Missing OPENAI_API_KEY or GEMINI_API_KEY for embeddings. For agent rules use GEMINI_API_KEY (DB expects 3072 dims).');
 }
 
 const RULES = [
@@ -134,17 +128,17 @@ const RULES = [
 	},
 	{
 		content:
-			'DIY QUOTE (one step when Shopify connected): When customer asks for a DIY quote and Shopify is connected, respond in ONE message only. Call shopify_create_diy_checkout_link with roof_size_sqm or bucket counts, then reply with a short intro (e.g. "Here is your one-click checkout for your 222 m² roof:") followed by the full previewMarkdown. Do NOT post an Item/Details table first. Do NOT ask "would you like a checkout link?"—give the breakdown and checkout link together in one step. If Shopify is not connected, then calculate in chat and present roof size, litres, buckets, total, shipping in a short table or list.',
+			'DIY QUOTE (one step when Shopify connected): When customer asks for a DIY quote and Shopify is connected, call shopify_create_diy_checkout_link with roof_size_sqm or bucket counts. Reply with ONLY a short intro (e.g. "For your 222 m² roof, here is your one-click checkout:"). Do NOT paste the preview markdown or a long Items/Subtotal/TOTAL block—the chat widget will automatically show the full checkout table (product image, line items, summary, GO TO CHECKOUT button) from the tool result. Do NOT ask "would you like a checkout link?"—call the tool and give the short intro in one message. If Shopify is not connected, list the breakdown as bullet lines: * N x 15L buckets: $X each = $Y (one line per product) then a short "Your Checkout Preview" style summary so the widget can render it as a table.',
 		tags: ['quote', 'diy', 'delivery']
 	},
 	{
 		content:
-			'DIY QUOTE FORMAT: When Shopify is connected, do NOT use a separate Item/Details table—use the checkout preview from shopify_create_diy_checkout_link (it shows product, qty, total and Buy now link). When Shopify is NOT connected, present: Roof Size (m²), Total Product Required (litres), Recommended Buckets (X x 15L, Y x 10L, Z x 5L), Total Product Cost AUD, Free Australia wide shipping. Include colour recommendation: White provides best UV protection; darker colours reduce thermal performance.',
+			'DIY QUOTE FORMAT: When Shopify is connected, call shopify_create_diy_checkout_link and write only a brief intro; the widget displays the checkout table and button automatically. When Shopify is NOT connected, use this exact bullet format so the widget can show a table: one line per product like * 6 x 15L buckets: $389.99 each = $2,339.94, then "Your Checkout Preview", "Items N", "Subtotal $X AUD", "TOTAL $X AUD", "GST included", and "GO TO CHECKOUT" (or a link if you have one). Include colour recommendation: White provides best UV protection; darker colours reduce thermal performance.',
 		tags: ['quote', 'diy', 'format']
 	},
 	{
 		content:
-			'QUOTE FORMATTING RULES: When Shopify is connected and customer wants DIY, do NOT present an Item/Details table—use only the checkout preview from shopify_create_diy_checkout_link. When Shopify is not connected or for non-DIY quotes, use a markdown table or "Label: value" list. Never use ** for bolding in quote text.',
+			'QUOTE FORMATTING RULES: When Shopify is connected and customer wants DIY, call shopify_create_diy_checkout_link and reply with a short intro only—do not paste Items/Subtotal/TOTAL or preview markdown; the widget renders the checkout block from the tool. When Shopify is not connected, use bullet lines for line items (* N x size buckets: $unit each = $lineTotal) so the widget can parse and display a table. Never use ** for bolding in quote text.',
 		tags: ['quote', 'format', 'diy', 'presentation']
 	},
 	{
@@ -159,7 +153,7 @@ const RULES = [
 	},
 	{
 		content:
-			'DIY CHECKOUT LINK (one step, when Shopify connected): When customer asks for a DIY quote, in the SAME reply: (1) call shopify_create_diy_checkout_link with roof_size_sqm or bucket counts, (2) paste the full previewMarkdown so they see the checkout table and Buy now link. Never show an Item/Details breakdown first and then ask "would you like a checkout link?"—always give the breakdown and the checkout link together in one message.',
+			'DIY CHECKOUT LINK (when Shopify connected): When customer asks for a DIY quote, call shopify_create_diy_checkout_link with roof_size_sqm or bucket counts. Reply with a short intro only (e.g. "Here is your one-click checkout for your 200 m² roof:"). Do NOT paste previewMarkdown or a long checkout block—the chat widget automatically displays the full table (product, qty, unit price, total, GO TO CHECKOUT button) from the tool. Always call the tool and give the short intro in one message; never ask "would you like a checkout link?" first.',
 		tags: ['quote', 'diy', 'checkout', 'shopify']
 	},
 	{
@@ -169,7 +163,7 @@ const RULES = [
 	},
 	{
 		content:
-			'CHECKOUT PREVIEW: Always include the full previewMarkdown from shopify_create_diy_checkout_link in your reply so the customer sees the checkout table (product image + title, qty), subtotal, discount if any, total, and Buy now link. Never share only the link.',
+			'CHECKOUT PREVIEW: When you call shopify_create_diy_checkout_link, the chat widget automatically shows the full checkout table (product image, title, qty, unit price, line total, subtotal, total, GO TO CHECKOUT button). Do NOT paste the preview markdown or duplicate the Items/Subtotal/TOTAL block in your reply—write only a short intro sentence. The widget gets the structured data from the tool result.',
 		tags: ['checkout', 'preview', 'diy', 'shopify']
 	},
 	{
