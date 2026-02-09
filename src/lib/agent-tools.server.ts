@@ -679,7 +679,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 				lineItems: lineItems.map((li) => `${li.quantity}× ${li.title} ($${li.price} each)`),
 				lineItemsUI,
 				previewMarkdown,
-				message: `Checkout link created. Include this preview in your reply so the customer sees their cart. Do NOT add a sentence like "Your total estimated cost for the product would be $X AUD" before or after the preview—the checkout block shows the total. When referring to the cost, use "calculated" not "estimated".\n\n${previewMarkdown}`
+				message: `Checkout link created. In your reply, write a short intro that includes the bucket breakdown so the customer sees what they're getting, e.g. "Here is your DIY quote for [X] m²: you need [N] x 15L and [M] x 10L NetZero UltraTherm." Use the exact quantities from the lineItems above (${lineItems.map((li) => `${li.quantity}× ${li.title}`).join(', ')}). Do NOT paste the full Items/Subtotal/TOTAL block—the widget will show the table. Do NOT add "Your total estimated cost...". Use "calculated" not "estimated".\n\n${previewMarkdown}`
 			};
 		}
 	});

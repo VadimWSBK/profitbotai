@@ -112,7 +112,7 @@
 					const unit = defaultPrices[size] ?? '0';
 					const unitNum = parseFloat(unit);
 					const lineTotal = (qty * unitNum).toFixed(2);
-					lineItemsUI.push({ title: `${size}L bucket${qty !== 1 ? 's' : ''}`, quantity: qty, unitPrice: unit, lineTotal, imageUrl: null, variant: null });
+					lineItemsUI.push({ title: `${size}L NetZero UltraTherm`, quantity: qty, unitPrice: unit, lineTotal, imageUrl: null, variant: null });
 				}
 			}
 		}

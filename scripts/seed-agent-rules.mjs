@@ -128,7 +128,7 @@ const RULES = [
 	},
 	{
 		content:
-			'DIY QUOTE (one step when Shopify connected): When customer asks for a DIY quote and Shopify is connected, call shopify_create_diy_checkout_link with roof_size_sqm or bucket counts. Reply with ONLY a short intro (e.g. "For your 222 m² roof, here is your one-click checkout:"). Do NOT paste the preview markdown or a long Items/Subtotal/TOTAL block—the chat widget will automatically show the full checkout table (product image, line items, summary, GO TO CHECKOUT button) from the tool result. Do NOT ask "would you like a checkout link?"—call the tool and give the short intro in one message. If Shopify is not connected, list the breakdown as bullet lines: * N x 15L buckets: $X each = $Y (one line per product) then a short "Your Checkout Preview" style summary so the widget can render it as a table.',
+			'DIY QUOTE (one step when Shopify connected): When customer asks for a DIY quote and Shopify is connected, call shopify_create_diy_checkout_link with roof_size_sqm or bucket counts. Reply with a short intro that INCLUDES the bucket breakdown (e.g. "Here is your DIY quote for 222 m²: you need 14 x 15L and 1 x 10L NetZero UltraTherm.") so the customer sees how much of which product. Use exact quantities from the tool (X x 15L, Y x 10L, Z x 5L). Do NOT paste the full Items/Subtotal/TOTAL block—the widget will show the full table. If Shopify is not connected, list the breakdown as bullet lines: * N x 15L buckets: $X each = $Y (one line per product).',
 		tags: ['quote', 'diy', 'delivery']
 	},
 	{
@@ -153,7 +153,7 @@ const RULES = [
 	},
 	{
 		content:
-			'DIY CHECKOUT LINK (when Shopify connected): When customer asks for a DIY quote, call shopify_create_diy_checkout_link with roof_size_sqm or bucket counts. Reply with a short intro only (e.g. "Here is your one-click checkout for your 200 m² roof:"). Do NOT paste previewMarkdown or a long checkout block—the chat widget automatically displays the full table (product, qty, unit price, total, GO TO CHECKOUT button) from the tool. Always call the tool and give the short intro in one message; never ask "would you like a checkout link?" first.',
+			'DIY CHECKOUT LINK (when Shopify connected): When customer asks for a DIY quote, call shopify_create_diy_checkout_link with roof_size_sqm or bucket counts. In your reply, include the bucket breakdown so the customer sees what they need, e.g. "Here is your DIY quote for 555 m²: you need 18 x 15L and 1 x 10L NetZero UltraTherm." Use the exact quantities from the tool result (X x 15L, Y x 10L, Z x 5L). Do NOT paste the full Items/Subtotal/TOTAL block—the widget will show the table with product rows. Always call the tool and give the intro with breakdown in one message.',
 		tags: ['quote', 'diy', 'checkout', 'shopify']
 	},
 	{
@@ -163,7 +163,7 @@ const RULES = [
 	},
 	{
 		content:
-			'CHECKOUT PREVIEW: When you call shopify_create_diy_checkout_link, the chat widget automatically shows the full checkout table (product image, title, qty, unit price, line total, subtotal, total, GO TO CHECKOUT button). Do NOT paste the preview markdown or duplicate the Items/Subtotal/TOTAL block in your reply—write only a short intro sentence. The widget gets the structured data from the tool result.',
+			'CHECKOUT PREVIEW: When you call shopify_create_diy_checkout_link, include the bucket breakdown in your reply (e.g. "you need 18 x 15L and 1 x 10L NetZero UltraTherm") so the customer sees how much of which product. The widget then shows the full table (product, qty, unit price, line total, GO TO CHECKOUT). Do NOT paste the full Items/Subtotal/TOTAL block—just the intro with the breakdown.',
 		tags: ['checkout', 'preview', 'diy', 'shopify']
 	},
 	{

@@ -255,7 +255,7 @@ export const components = String.raw`
           var unit = defaultPrices[size] || '0';
           var unitNum = parseFloat(unit);
           var lineTotal = (qty * unitNum).toFixed(2);
-          lineItemsUI.push({ title: size + 'L bucket' + (qty !== 1 ? 's' : ''), quantity: qty, unitPrice: unit, lineTotal: lineTotal, imageUrl: null });
+          lineItemsUI.push({ title: size + 'L NetZero UltraTherm', quantity: qty, unitPrice: unit, lineTotal: lineTotal, imageUrl: null });
         }
       }
     }
