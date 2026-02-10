@@ -5,6 +5,11 @@
  * Fetches conversation history from Chatwoot and injects Profitbot agent rules (RAG) for context.
  *
  * Env: CHATWOOT_BOT_ACCESS_TOKEN, CHATWOOT_BASE_URL (no CHATWOOT_AGENT_ID needed).
+ * Debug: CHATWOOT_DEBUG=1 logs incoming payload and how we process it (Vercel → Runtime Logs).
+ *
+ * Payload we receive from Chatwoot (typical):
+ *   event, message_type ('incoming'|'outgoing'), content, conversation: { id }, account: { id }, sender, ...
+ * We only process message_type === 'incoming' and use content + conversation.id + account.id.
  */
 
 import { json } from '@sveltejs/kit';
@@ -108,9 +113,9 @@ export const POST: RequestHandler = async (event) => {
 		return json({ error: 'Webhook not configured' }, { status: 500 });
 	}
 
-	let body: ChatwootPayload;
+	let body: ChatwootPayload & Record<string, unknown>;
 	try {
-		body = await event.request.json();
+		body = (await event.request.json()) as ChatwootPayload & Record<string, unknown>;
 	} catch {
 		return json({ error: 'Invalid JSON' }, { status: 400 });
 	}
@@ -119,6 +124,18 @@ export const POST: RequestHandler = async (event) => {
 	const content = typeof body?.content === 'string' ? body.content.trim() : '';
 	const conversationId = body?.conversation?.id ?? (body?.conversation as { id?: number } | undefined)?.id;
 	const accountId = body?.account?.id ?? (body?.account as { id?: number } | undefined)?.id;
+
+	// Optional: log raw payload and how we process it (set CHATWOOT_DEBUG=1 in env)
+	if (env.CHATWOOT_DEBUG === '1' || env.CHATWOOT_DEBUG === 'true') {
+		console.debug('[webhooks/chatwoot] payload:', JSON.stringify({
+			event: body?.event,
+			message_type: messageType,
+			content: content?.slice(0, 200),
+			conversation_id: conversationId,
+			account_id: accountId,
+			agentId
+		}));
+	}
 
 	if (messageType !== 'incoming') return json({ received: true });
 	if (!content) return json({ received: true });
@@ -200,6 +217,16 @@ export const POST: RequestHandler = async (event) => {
 		...history.map((t) => ({ role: t.role, content: t.content }))
 	];
 
+	if (env.CHATWOOT_DEBUG === '1' || env.CHATWOOT_DEBUG === 'true') {
+		const lastUser = [...history].reverse().find((t) => t.role === 'user');
+		console.debug('[webhooks/chatwoot] processed:', JSON.stringify({
+			historyTurns: history.length,
+			systemPromptChars: systemPrompt.length,
+			lastUserMessage: lastUser?.content?.slice(0, 150) ?? null,
+			replyPreview: null
+		}));
+	}
+
 	let reply: string;
 	try {
 		reply = await chatWithLlm(llmProvider, llmModel, apiKey, messages);
@@ -223,6 +250,10 @@ export const POST: RequestHandler = async (event) => {
 		const errText = await postRes.text();
 		console.error('[webhooks/chatwoot] Chatwoot API error:', postRes.status, errText);
 		return json({ error: 'Failed to send reply to Chatwoot' }, { status: 502 });
+	}
+
+	if (env.CHATWOOT_DEBUG === '1' || env.CHATWOOT_DEBUG === 'true') {
+		console.debug('[webhooks/chatwoot] reply sent:', reply?.slice(0, 150) ?? '');
 	}
 
 	return json({ received: true });
