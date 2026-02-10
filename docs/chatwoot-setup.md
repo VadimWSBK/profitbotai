@@ -43,7 +43,7 @@ After this, when a user sends a message in that inbox, Chatwoot will POST to you
 
 ## 5. Context and knowledge (no training in Chatwoot)
 
-- **Conversation context:** Profitbot fetches recent messages from the Chatwoot conversation via the Chatwoot API and sends them to the LLM so the bot has dialogue history.
+- **Conversation context:** Profitbot stores each incoming Chatwoot message and each bot reply in its own database (`chatwoot_conversation_messages`). When a new message arrives, the bot loads the last few messages from this table so the LLM has dialogue history without calling Chatwoot's API—faster and more efficient.
 - **Knowledge from Profitbot:** The bot uses your agent’s **Train Bot** rules (and, where supported, documents) from Profitbot. Configure those in **Agents → [your agent] → Train Bot**. You do **not** need to train or add knowledge inside Chatwoot—the bot uses data and tools from Profitbot only.
 
 ## 6. Contact updates (CRM sync)

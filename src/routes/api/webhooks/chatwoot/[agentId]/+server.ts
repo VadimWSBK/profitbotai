@@ -3,13 +3,19 @@
  * Per-agent Chatwoot webhook. Use this URL in Chatwoot's Add Bot → Webhook URL
  * so that agent's role, tone, instructions, Train Bot rules, and LLM power the bot.
  * Uses the same tooled flow as the widget: generateText + createAgentTools so DIY checkout
- * and other tools work. Fetches conversation history from Chatwoot and injects rules + product pricing.
+ * and other tools work.
+ *
+ * CONTEXT: Chatwoot sends only the ONE new message in the payload. We store every incoming
+ * message and our reply in public.chatwoot_conversation_messages (by account_id + conversation_id).
+ * For each request we load the last 5 messages (up to ~6k chars) from our DB so the LLM has
+ * context without calling Chatwoot's API. Flow: store incoming → load history from DB →
+ * run LLM → post reply to Chatwoot → store our reply in DB.
  *
  * Env: CHATWOOT_BOT_ACCESS_TOKEN, CHATWOOT_BASE_URL (no CHATWOOT_AGENT_ID needed).
  * Debug: CHATWOOT_DEBUG=1 logs incoming payload and how we process it (Vercel → Runtime Logs).
  *
  * Payload we receive from Chatwoot (typical):
- *   event, message_type ('incoming'|'outgoing'), content, conversation: { id }, account: { id }, sender, ...
+ *   event, message_type ('incoming'|'outgoing'), content, conversation: { id }, account: { id }, sender, contact, ...
  * We only process message_type === 'incoming' and use content + conversation.id + account.id.
  */
 
@@ -39,70 +45,28 @@ type ChatwootPayload = {
 	contact?: { id: number; name?: string; email?: string; phone_number?: string };
 };
 
-type ChatwootMessage = {
-	id?: number;
-	content?: string | null;
-	message_type?: string;
-	created_at?: string;
-};
+type SupabaseClient = import('@supabase/supabase-js').SupabaseClient;
 
-function byCreatedAt(a: ChatwootMessage, b: ChatwootMessage): number {
-	const t1 = a.created_at ? new Date(a.created_at).getTime() : 0;
-	const t2 = b.created_at ? new Date(b.created_at).getTime() : 0;
-	return t1 - t2;
-}
-
-/** Fetch conversation messages from Chatwoot API and return as LLM turns (user/assistant). */
-async function getChatwootConversationHistory(
-	baseUrl: string,
-	botToken: string,
+/** Load conversation history from our DB (chatwoot_conversation_messages). Same truncation as before: last N messages, char budget. */
+async function getChatwootHistoryFromDb(
+	admin: SupabaseClient,
 	accountId: number,
-	conversationId: number,
-	currentUserMessage: string
+	conversationId: number
 ): Promise<{ role: 'user' | 'assistant'; content: string }[]> {
-	const url = `${baseUrl}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`;
-	const res = await fetch(url, {
-		headers: { Accept: 'application/json', api_access_token: botToken }
-	});
-	if (!res.ok) return [];
-
-	let list: ChatwootMessage[];
-	try {
-		const json = (await res.json()) as ChatwootMessage[] | { data?: ChatwootMessage[]; payload?: ChatwootMessage[] };
-		list = Array.isArray(json) ? json : (json?.data ?? json?.payload ?? []) as ChatwootMessage[];
-	} catch {
-		list = [];
-	}
-	if (!Array.isArray(list) || list.length === 0) {
-		// Return at least the current message so caller never gets empty history for a valid webhook
-		return currentUserMessage ? [{ role: 'user' as const, content: currentUserMessage }] : [];
-	}
-
-	// Ensure chronological order (API may not guarantee it)
-	const sorted = [...list].sort(byCreatedAt);
-
-	const turns: { role: 'user' | 'assistant'; content: string }[] = [];
-	for (const m of sorted) {
-		const type = (m.message_type ?? '').toLowerCase();
-		const text = typeof m.content === 'string' ? m.content.trim() : '';
-		if (!text) continue;
-		if (type === 'incoming') turns.push({ role: 'user', content: text });
-		else if (type === 'outgoing') turns.push({ role: 'assistant', content: text });
-	}
-
-	// Include the current message in history if not already last (Chatwoot may include it in the list)
-	const lastIncoming = turns.findLast((t) => t.role === 'user');
-	if (lastIncoming?.content !== currentUserMessage) {
-		turns.push({ role: 'user', content: currentUserMessage });
-	}
-
-	// Keep last N messages and optionally trim by char budget (oldest first)
+	const { data: rows, error } = await admin
+		.from('chatwoot_conversation_messages')
+		.select('role, content')
+		.eq('account_id', accountId)
+		.eq('conversation_id', conversationId)
+		.order('created_at', { ascending: true });
+	if (error) return [];
+	const turns = (rows ?? []) as { role: string; content: string }[];
 	let out = turns.slice(-MAX_HISTORY_MESSAGES);
 	if (MAX_HISTORY_CHARS > 0) {
 		let total = 0;
 		let start = out.length;
 		for (let i = out.length - 1; i >= 0; i--) {
-			total += out[i].content.length;
+			total += (out[i]?.content ?? '').length;
 			if (total > MAX_HISTORY_CHARS) {
 				start = i + 1;
 				break;
@@ -111,7 +75,7 @@ async function getChatwootConversationHistory(
 		}
 		out = out.slice(start);
 	}
-	return out;
+	return out.map((r) => ({ role: r.role as 'user' | 'assistant', content: r.content ?? '' }));
 }
 
 /** Extract name, email, phone, address from a message (e.g. "Vadim, weisbekvadim@gmail.com" or "address is 123 Main St"). */
@@ -298,14 +262,15 @@ export const POST: RequestHandler = async (event) => {
 		return json({ error: 'No LLM key configured' }, { status: 400 });
 	}
 
-	// Fetch conversation history first (needed for roof size extraction and for messages)
-	const history = await getChatwootConversationHistory(
-		baseUrl,
-		botToken,
-		accountId,
-		conversationId,
+	// Store incoming message in our DB, then load conversation history from our DB (no Chatwoot API call)
+	await admin.from('chatwoot_conversation_messages').insert({
+		account_id: accountId,
+		conversation_id: conversationId,
+		agent_id: agentId,
+		role: 'user',
 		content
-	);
+	});
+	const history = await getChatwootHistoryFromDb(admin, accountId, conversationId);
 	const extractedRoofSize = roofSizeFromHistory(history);
 	const contentLower = content.toLowerCase();
 	const wantsDiyOrQuote =
@@ -436,6 +401,15 @@ export const POST: RequestHandler = async (event) => {
 		console.error('[webhooks/chatwoot] Chatwoot API error:', postRes.status, errText);
 		return json({ error: 'Failed to send reply to Chatwoot' }, { status: 502 });
 	}
+
+	// Store our reply in our DB so next message has context from here
+	await admin.from('chatwoot_conversation_messages').insert({
+		account_id: accountId,
+		conversation_id: conversationId,
+		agent_id: agentId,
+		role: 'assistant',
+		content: reply
+	});
 
 	// Update Chatwoot contact when user provides name/email/phone (so CRM stays in sync)
 	const contactId = await getChatwootContactId(baseUrl, botToken, accountId, conversationId, body.contact);
