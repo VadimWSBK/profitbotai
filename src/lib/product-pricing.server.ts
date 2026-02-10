@@ -66,15 +66,21 @@ const DEFAULT_PRODUCT: Omit<ProductPricing, 'id'> = {
 
 function parseVariants(json: unknown): ProductVariant[] {
 	if (!Array.isArray(json)) return [];
-	return json.map((v) => ({
-		shopifyVariantId: v?.shopifyVariantId == null ? null : Number(v.shopifyVariantId),
-		sizeLitres: Number(v?.sizeLitres) || 0,
-		color: typeof v?.color === 'string' ? v.color : null,
-		price: Number(v?.price) || 0,
-		currency: typeof v?.currency === 'string' ? v.currency : 'AUD',
-		coverageSqm: Number(v?.coverageSqm) || 0,
-		imageUrl: typeof v?.imageUrl === 'string' ? v.imageUrl : null
-	}));
+	return json.map((v) => {
+		const raw = v as Record<string, unknown>;
+		const imageUrl =
+			(typeof raw?.imageUrl === 'string' ? raw.imageUrl : null) ??
+			(typeof raw?.image_url === 'string' ? raw.image_url : null);
+		return {
+			shopifyVariantId: raw?.shopifyVariantId == null ? null : Number(raw.shopifyVariantId),
+			sizeLitres: Number(raw?.sizeLitres) || 0,
+			color: typeof raw?.color === 'string' ? raw.color : null,
+			price: Number(raw?.price) || 0,
+			currency: typeof raw?.currency === 'string' ? raw.currency : 'AUD',
+			coverageSqm: Number(raw?.coverageSqm) || 0,
+			imageUrl: imageUrl && imageUrl.trim() ? imageUrl.trim() : null
+		};
+	});
 }
 
 function mapRow(r: Record<string, unknown>): ProductPricing {
@@ -143,6 +149,23 @@ export async function getProductPricingForOwner(ownerId: string): Promise<Produc
 	}
 
 	return rows.map((r) => mapRow(r));
+}
+
+/**
+ * Get image URLs by size (15, 10, 5) from product_pricing for an owner.
+ * One Supabase query, no external API. Use for Messages/widget enrichment when line items lack imageUrl.
+ */
+export async function getProductImageUrlsBySize(ownerId: string): Promise<Record<number, string>> {
+	const products = await getProductPricingForOwner(ownerId);
+	const result: Record<number, string> = {};
+	const sizes = [15, 10, 5];
+	for (const p of products) {
+		for (const v of p.variants) {
+			const size = v.sizeLitres;
+			if (sizes.includes(size) && v.imageUrl?.trim() && !result[size]) result[size] = v.imageUrl.trim();
+		}
+	}
+	return result;
 }
 
 /** Flatten products to one row per variant (for checkout/roof-kit that resolve by size). */

@@ -81,13 +81,29 @@ function calculateBucketsFromRoofSize(
 
 const normHandle = (h: string | null | undefined) => h?.trim().toLowerCase() ?? '';
 
+/** Map (product_handle, role) -> display_name from kit product_entries. */
+function displayNameMap(
+	productEntries: Array<{ product_handle?: string; role?: string; display_name?: string | null }>
+): Map<string, string> {
+	const m = new Map<string, string>();
+	for (const e of productEntries) {
+		const h = e.product_handle?.trim();
+		const r = e.role?.trim();
+		const d = e.display_name?.trim();
+		if (h && r && d) m.set(normHandle(h) + '|' + r, d);
+	}
+	return m;
+}
+
 /** Resolve roof-kit breakdown to checkout line items (match by role → handles from config, then size). */
 function resolveRoofKitToLineItems(
 	kitItems: RoofKitLineItem[],
 	products: ProductPricing[],
 	roleHandles: RoofKitRoleHandles,
-	imageBySize: Record<number, string>
+	imageBySize: Record<number, string>,
+	productEntries?: Array<{ product_handle?: string; role?: string; display_name?: string | null }>
 ): Array<{ title: string; quantity: number; price: string; imageUrl?: string; variantId?: number }> {
+	const displayByHandleRole = productEntries?.length ? displayNameMap(productEntries) : new Map<string, string>();
 	const out: Array<{ title: string; quantity: number; price: string; imageUrl?: string; variantId?: number }> = [];
 	for (const item of kitItems) {
 		const handlesForRole = roleHandles[item.role];
@@ -107,7 +123,13 @@ function resolveRoofKitToLineItems(
 		if (!product) continue;
 		const variant = product.variants.find((v) => v.sizeLitres === item.sizeLitres) ?? product.variants[0];
 		if (!variant) continue;
-		const title = product.name + (variant.sizeLitres > 0 ? ` ${variant.sizeLitres}L` : '');
+		const key = normHandle(product.productHandle ?? '') + '|' + item.role;
+		let customName = displayByHandleRole.get(key)?.trim();
+		// Strip trailing variant (e.g. " 15L") so we always append the correct size once: "{chosen name} {variant size}"
+		if (customName) customName = customName.replace(/\s*\d+\s*L\s*$/i, '').trim() || customName;
+		const baseName = customName || product.name;
+		const sizeSuffix = variant.sizeLitres > 0 ? ` ${variant.sizeLitres}L` : '';
+		const title = baseName + sizeSuffix;
 		out.push({
 			title,
 			quantity: item.quantity,
@@ -159,6 +181,15 @@ export async function createDiyCheckoutForOwner(
 	let notePrefix = 'DIY quote';
 
 	const flat = flattenProductVariants(products);
+	// Optional display names from kit config (first entry per handle wins)
+	const displayNameByHandle = new Map<string, string>();
+	if (kitConfig?.product_entries?.length) {
+		for (const e of kitConfig.product_entries) {
+			const h = e.product_handle?.trim();
+			const d = e.display_name?.trim();
+			if (h && d && !displayNameByHandle.has(normHandle(h))) displayNameByHandle.set(normHandle(h), d);
+		}
+	}
 	// Unique (productHandle, sizeLitres) with first variant's price for roof-kit
 	const roofKitOptions = products.flatMap((p) => {
 		const seen = new Set<number>();
@@ -195,7 +226,7 @@ export async function createDiyCheckoutForOwner(
 			);
 			litres = breakdown.sealantLitres;
 			notePrefix = `${kitConfig?.name ?? 'DIY'} ${roof_size_sqm}m²`;
-			lineItems = resolveRoofKitToLineItems(breakdown.lineItems, products, roleHandles, imageBySize);
+			lineItems = resolveRoofKitToLineItems(breakdown.lineItems, products, roleHandles, imageBySize, kitConfig.product_entries);
 		}
 
 		// Fallback: no calculator config or roof-kit yielded no items → simple coating-only (litres = roof/2, any bucket product).
@@ -217,8 +248,12 @@ export async function createDiyCheckoutForOwner(
 				for (const row of firstPerSize) {
 					const qty = countsBySize[row.sizeLitres] ?? 0;
 					if (qty > 0) {
+						let customName = row.productHandle ? displayNameByHandle.get(normHandle(row.productHandle)) : undefined;
+						if (customName) customName = customName.replace(/\s*\d+\s*L\s*$/i, '').trim() || customName;
+						const sizeSuffix = row.sizeLitres > 0 ? ` ${row.sizeLitres}L` : '';
+						const title = customName ? customName + sizeSuffix : row.name;
 						lineItems.push({
-							title: row.name,
+							title,
 							quantity: qty,
 							price: row.price.toFixed(2),
 							imageUrl: row.imageUrl ?? imageBySize[row.sizeLitres],
@@ -245,8 +280,12 @@ export async function createDiyCheckoutForOwner(
 			const qty = countsBySize[row.sizeLitres] ?? 0;
 			if (qty > 0 && !seenSize.has(row.sizeLitres)) {
 				seenSize.add(row.sizeLitres);
+				let customName = row.productHandle ? displayNameByHandle.get(normHandle(row.productHandle)) : undefined;
+				if (customName) customName = customName.replace(/\s*\d+\s*L\s*$/i, '').trim() || customName;
+				const sizeSuffix = row.sizeLitres > 0 ? ` ${row.sizeLitres}L` : '';
+				const title = customName ? customName + sizeSuffix : row.name;
 				lineItems.push({
-					title: row.name,
+					title,
 					quantity: qty,
 					price: row.price.toFixed(2),
 					imageUrl: row.imageUrl ?? imageBySize[row.sizeLitres],

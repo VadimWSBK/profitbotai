@@ -3,7 +3,7 @@
 	import { page } from '$app/stores';
 
 	type ProductOption = { name: string; productHandle: string };
-	type ProductEntry = { product_handle: string; role: string; coverage_per_sqm?: number | null };
+	type ProductEntry = { product_handle: string; role: string; coverage_per_sqm?: number | null; display_name?: string | null };
 
 	const DEFAULT_CHECKOUT_BUTTON_COLOR = '#C8892D';
 	const DEFAULT_QTY_BADGE_BG_COLOR = '#195A2A';
@@ -65,7 +65,14 @@
 		};
 		calculatorKey = kb.calculator_key ?? '';
 		name = kb.name ?? '';
-		productEntries = Array.isArray(kb.product_entries) ? [...kb.product_entries] : [];
+		productEntries = Array.isArray(kb.product_entries)
+			? kb.product_entries.map((e) => ({
+					product_handle: e.product_handle ?? '',
+					role: e.role ?? 'sealant',
+					coverage_per_sqm: e.coverage_per_sqm ?? null,
+					display_name: (e.display_name != null && typeof e.display_name === 'string' ? e.display_name.trim() : null) || null
+				}))
+			: [];
 		checkoutButtonColor = (kb.checkout_button_color?.trim() || DEFAULT_CHECKOUT_BUTTON_COLOR);
 		qtyBadgeBackgroundColor = (kb.qty_badge_background_color?.trim() || DEFAULT_QTY_BADGE_BG_COLOR);
 		loaded = true;
@@ -77,7 +84,7 @@
 	}
 
 	function addEntry() {
-		productEntries = [...productEntries, { product_handle: products[0]?.productHandle ?? '', role: 'sealant', coverage_per_sqm: null }];
+		productEntries = [...productEntries, { product_handle: products[0]?.productHandle ?? '', role: 'sealant', coverage_per_sqm: null, display_name: null }];
 	}
 
 	function removeEntry(i: number) {
@@ -108,7 +115,12 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					name: name.trim() || slug,
-					product_entries: productEntries.filter((e) => e.product_handle && e.role),
+					product_entries: productEntries.filter((e) => e.product_handle && e.role).map((e) => ({
+						product_handle: e.product_handle,
+						role: e.role,
+						coverage_per_sqm: e.coverage_per_sqm ?? null,
+						display_name: (e.display_name?.trim() || null) ?? null
+					})),
 					checkout_button_color: checkoutButtonColor?.trim() || null,
 					qty_badge_background_color: qtyBadgeBackgroundColor?.trim() || null
 				})
@@ -204,6 +216,7 @@
 							<tr>
 								<th class="text-left py-2 px-3 font-medium text-gray-700">Product</th>
 								<th class="text-left py-2 px-3 font-medium text-gray-700">Role</th>
+								<th class="text-left py-2 px-3 font-medium text-gray-700">Name in checkout</th>
 								<th class="text-left py-2 px-3 font-medium text-gray-700">Coverage (optional)</th>
 								<th class="w-10"></th>
 							</tr>
@@ -233,6 +246,16 @@
 												<option value={opt.value}>{opt.label}</option>
 											{/each}
 										</select>
+									</td>
+									<td class="py-2 px-3">
+										<input
+											type="text"
+											placeholder="e.g. NetZero UltraTherm"
+											value={entry.display_name ?? ''}
+											oninput={(e) => updateEntry(i, 'display_name', (e.currentTarget as HTMLInputElement).value || null)}
+											class="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+											title="Shown in checkout as name + variant (e.g. NetZero UltraTherm 15L). Leave empty to use product name."
+										/>
 									</td>
 									<td class="py-2 px-3">
 										<input

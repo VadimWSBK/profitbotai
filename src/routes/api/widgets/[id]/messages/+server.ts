@@ -1,6 +1,8 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { env } from '$env/dynamic/private';
 import { getSupabase, getSupabaseAdmin } from '$lib/supabase.server';
+import { getProductImageUrlsBySize } from '$lib/product-pricing.server';
 import { getShopifyConfigForUser, getDiyProductImages } from '$lib/shopify.server';
 
 function sizeFromTitle(title: string): number | null {
@@ -51,7 +53,7 @@ export const GET: RequestHandler = async (event) => {
 				style_overrides?: unknown;
 			};
 			const rawRows = (rows ?? []) as Row[];
-			// Resolve product images for line items that have none (embed widget)
+			// Resolve product images from product_pricing first (one Supabase query), then Shopify/env
 			let imageBySize: Record<number, string> = {};
 			const rowsWithPreview = rawRows.filter(
 				(r) => r.line_items_ui != null && r.checkout_url && Array.isArray(r.line_items_ui)
@@ -66,29 +68,47 @@ export const GET: RequestHandler = async (event) => {
 						.single();
 					const ownerId = (widgetRow as { created_by?: string } | null)?.created_by ?? null;
 					if (ownerId) {
-						const config = await getShopifyConfigForUser(admin, ownerId);
-						if (config) {
-							const sizeRe = /\b(15|10|5)\s*L\b/i;
-							const bucketConfig: Array<{ size: number; price: string; title: string }> = [];
-							for (const r of rowsWithPreview) {
-								const raw = Array.isArray(r.line_items_ui) ? r.line_items_ui : [];
-								for (const it of raw) {
-									const item = it != null && typeof it === 'object' ? (it as Record<string, unknown>) : {};
-									const hasImage =
-										(item?.imageUrl ?? item?.image_url) &&
-										String(item?.imageUrl ?? item?.image_url).trim();
-									if (hasImage) continue;
-									const title = (item?.title ?? '') as string;
-									const m = title.match(sizeRe);
-									if (m) {
-										const size = Number.parseInt(m[1], 10);
-										const price = (item?.unitPrice ?? item?.unit_price ?? '0') as string;
-										if (!bucketConfig.some((b) => b.size === size && b.price === price))
-											bucketConfig.push({ size, price, title });
+						imageBySize = await getProductImageUrlsBySize(ownerId);
+						const missing = [15, 10, 5].filter((s) => !imageBySize[s]);
+						if (missing.length > 0) {
+							const config = await getShopifyConfigForUser(admin, ownerId);
+							if (config) {
+								const sizeRe = /\b(15|10|5)\s*L\b/i;
+								const bucketConfig: Array<{ size: number; price: string; title: string }> = [];
+								for (const r of rowsWithPreview) {
+									const raw = Array.isArray(r.line_items_ui) ? r.line_items_ui : [];
+									for (const it of raw) {
+										const item = it != null && typeof it === 'object' ? (it as Record<string, unknown>) : {};
+										const hasImage =
+											(item?.imageUrl ?? item?.image_url) &&
+											String(item?.imageUrl ?? item?.image_url).trim();
+										if (hasImage) continue;
+										const title = (item?.title ?? '') as string;
+										const m = title.match(sizeRe);
+										if (m) {
+											const size = Number.parseInt(m[1], 10);
+											const price = (item?.unitPrice ?? item?.unit_price ?? '0') as string;
+											if (!bucketConfig.some((b) => b.size === size && b.price === price))
+												bucketConfig.push({ size, price, title });
+										}
+									}
+								}
+								if (bucketConfig.length > 0) {
+									const fromShopify = await getDiyProductImages(config, bucketConfig);
+									for (const s of [15, 10, 5] as const) {
+										if (!imageBySize[s] && fromShopify[s]) imageBySize = { ...imageBySize, [s]: fromShopify[s] };
 									}
 								}
 							}
-							if (bucketConfig.length > 0) imageBySize = await getDiyProductImages(config, bucketConfig);
+							const envImageBySize: Record<15 | 10 | 5, string | undefined> = {
+								15: env.DIY_PRODUCT_IMAGE_15L,
+								10: env.DIY_PRODUCT_IMAGE_10L,
+								5: env.DIY_PRODUCT_IMAGE_5L
+							};
+							for (const s of [15, 10, 5] as const) {
+								const envUrl = envImageBySize[s]?.trim();
+								if (!imageBySize[s] && envUrl) imageBySize = { ...imageBySize, [s]: envUrl };
+							}
 						}
 					}
 				} catch {

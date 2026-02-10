@@ -17,6 +17,8 @@ export type DiyKitBuilderProductEntry = {
 	role: RoofKitRole;
 	/** Optional L/m² (or m/m² for geo). Overrides default for this role. */
 	coverage_per_sqm?: number | null;
+	/** Optional name to show in checkout/breakdown list. If set, used instead of product name (size e.g. 15L still appended). */
+	display_name?: string | null;
 };
 
 export type DiyKitBuilderConfig = {

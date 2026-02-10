@@ -39,12 +39,19 @@ export const PUT: RequestHandler = async (event) => {
 		return json({ error: 'Invalid JSON' }, { status: 400 });
 	}
 	const product_entries = Array.isArray(body?.product_entries)
-		? body.product_entries.filter((e): e is DiyKitBuilderProductEntry => {
-				if (!e || typeof e !== 'object') return false;
-				const h = (e as DiyKitBuilderProductEntry).product_handle;
-				const r = (e as DiyKitBuilderProductEntry).role;
-				return typeof h === 'string' && typeof r === 'string' && ROOF_KIT_ROLES.includes(r as (typeof ROOF_KIT_ROLES)[number]);
-			})
+		? body.product_entries
+				.filter((e): e is DiyKitBuilderProductEntry => {
+					if (!e || typeof e !== 'object') return false;
+					const h = (e as DiyKitBuilderProductEntry).product_handle;
+					const r = (e as DiyKitBuilderProductEntry).role;
+					return typeof h === 'string' && typeof r === 'string' && ROOF_KIT_ROLES.includes(r as (typeof ROOF_KIT_ROLES)[number]);
+				})
+				.map((e) => ({
+					product_handle: e.product_handle,
+					role: e.role,
+					coverage_per_sqm: e.coverage_per_sqm ?? null,
+					display_name: typeof (e as DiyKitBuilderProductEntry).display_name === 'string' ? (e as DiyKitBuilderProductEntry).display_name.trim() || null : null
+				}))
 		: [];
 	const admin = getSupabaseAdmin();
 	const { error } = await saveDiyKitBuilderConfig(admin, event.locals.user.id, key, {

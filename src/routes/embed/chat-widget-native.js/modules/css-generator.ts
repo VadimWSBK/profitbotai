@@ -171,7 +171,7 @@ export const cssgenerator = String.raw`
       '.pb-msg { padding: 12px 16px; border-radius: ' + msgRadius + 'px; max-width: 100%; word-wrap: break-word; overflow-wrap: break-word; position: relative; }',
       '.pb-msg-bot { background-color: ' + botBg + '; color: ' + botText + '; align-self: flex-start; }',
       '.pb-msg-user { background-color: ' + bubbleBg + '; color: ' + (b.colorOfInternalIcons || '#ffffff') + '; align-self: flex-end; }',
-      '.pb-msg-content { min-width: 0; overflow-x: auto; overflow-y: visible; max-width: 100%; }',
+      '.pb-msg-content { min-width: 0; overflow-x: auto; overflow-y: visible; max-width: 100%; pointer-events: auto; }',
 
       /* Avatar */
       '.pb-avatar { width: ' + avatarSize + 'px; height: ' + avatarSize + 'px; border-radius: ' + avatarRadius + 'px; object-fit: contain; flex-shrink: 0; }',
@@ -282,7 +282,7 @@ export const cssgenerator = String.raw`
       '.pb-checkout-summary-table .pb-savings { color: #059669; }',
       '.pb-checkout-summary-table .pb-total td { font-weight: 700; font-size: 1.05em; padding-top: 8px; border-top: 1px solid rgba(0,0,0,0.1); }',
       '.pb-gst-note { font-size: 13px; color: #6b7280; margin-top: 8px; font-style: italic; }',
-      '.pb-checkout-button { display: inline-block; margin-top: 14px; padding: 12px 24px; background: #C8892D; color: #fff; border-radius: 8px; font-weight: 600; text-decoration: none; text-align: center; transition: background 0.15s ease, transform 0.15s ease; border: none; cursor: pointer; }',
+      '.pb-checkout-button { display: inline-block; margin-top: 14px; padding: 12px 24px; background: #C8892D; color: #fff; border-radius: 8px; font-weight: 600; text-decoration: none; text-align: center; transition: background 0.15s ease, transform 0.15s ease; border: none; cursor: pointer; pointer-events: auto; position: relative; z-index: 2; }',
       '.pb-checkout-button:hover { background: color-mix(in srgb, var(--pb-checkout-btn, #C8892D) 85%, black); color: #fff; transform: scale(1.03); }',
       '.pb-checkout-button:active { transform: scale(0.98); }',
       '.pb-checkout-button-disabled { cursor: default; opacity: 0.85; pointer-events: none; }',

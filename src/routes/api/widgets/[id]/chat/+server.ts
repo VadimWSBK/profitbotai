@@ -10,7 +10,8 @@ import { extractContactFromMessage } from '$lib/extract-contact.server';
 import { generateQuoteForConversation } from '$lib/quote-pdf.server';
 import { getQuoteWorkflowForWidget, runQuoteWorkflow } from '$lib/run-workflow.server';
 import { getRelevantRulesForAgent } from '$lib/agent-rules.server';
-import { getProductPricingForOwner, formatProductPricingForAgent } from '$lib/product-pricing.server';
+import { getProductPricingForOwner, formatProductPricingForAgent, getProductImageUrlsBySize } from '$lib/product-pricing.server';
+import { env } from '$env/dynamic/private';
 import { getShopifyConfigForUser, getDiyProductImages } from '$lib/shopify.server';
 import type { WebhookTrigger } from '$lib/widget-config';
 import { getPrimaryEmail } from '$lib/contact-email-jsonb';
@@ -886,45 +887,61 @@ export const POST: RequestHandler = async (event) => {
 					styleOverrides: lastDiyToolResult.styleOverrides
 				};
 			}
-			// Enrich missing product images from Shopify so widget shows images on first response
+			// Enrich missing product images from product_pricing first (one Supabase query), then Shopify/env
 			if (checkoutPreview && ownerId && checkoutPreview.lineItemsUI?.length) {
 				try {
-					const config = await getShopifyConfigForUser(adminSupabaseForTyping, ownerId);
-					if (config) {
-						const sizeRe = /\b(15|10|5)\s*L\b/i;
-						const bucketConfig: Array<{ size: number; price: string; title: string }> = [];
-						for (const it of checkoutPreview.lineItemsUI) {
-							const item = (it != null && typeof it === 'object' && it !== null) ? it as Record<string, unknown> : {};
-							const hasImage = (item?.imageUrl ?? item?.image_url) && String(item?.imageUrl ?? item?.image_url).trim();
-							if (hasImage) continue;
-							const title = (item?.title ?? '') as string;
-							const m = title.match(sizeRe);
-							if (m) {
-								const size = Number.parseInt(m[1], 10);
-								const price = (item?.unitPrice ?? item?.unit_price ?? '0') as string;
-								if (!bucketConfig.some((b) => b.size === size && b.price === price)) bucketConfig.push({ size, price, title });
+					let imageBySize = await getProductImageUrlsBySize(ownerId);
+					const missing = [15, 10, 5].filter((s) => !imageBySize[s]);
+					if (missing.length > 0) {
+						const config = await getShopifyConfigForUser(adminSupabaseForTyping, ownerId);
+						if (config) {
+							const sizeRe = /\b(15|10|5)\s*L\b/i;
+							const bucketConfig: Array<{ size: number; price: string; title: string }> = [];
+							for (const it of checkoutPreview.lineItemsUI) {
+								const item = (it != null && typeof it === 'object' && it !== null) ? it as Record<string, unknown> : {};
+								const hasImage = (item?.imageUrl ?? item?.image_url) && String(item?.imageUrl ?? item?.image_url).trim();
+								if (hasImage) continue;
+								const title = (item?.title ?? '') as string;
+								const m = title.match(sizeRe);
+								if (m) {
+									const size = Number.parseInt(m[1], 10);
+									const price = (item?.unitPrice ?? item?.unit_price ?? '0') as string;
+									if (!bucketConfig.some((b) => b.size === size && b.price === price)) bucketConfig.push({ size, price, title });
+								}
+							}
+							if (bucketConfig.length > 0) {
+								const fromShopify = await getDiyProductImages(config, bucketConfig);
+								for (const s of [15, 10, 5] as const) {
+									if (!imageBySize[s] && fromShopify[s]) imageBySize = { ...imageBySize, [s]: fromShopify[s] };
+								}
 							}
 						}
-						if (bucketConfig.length > 0) {
-							const imageBySize = await getDiyProductImages(config, bucketConfig);
-							const sizeFromTitle = (t: string) => {
-								const m = (typeof t === 'string' ? t : '').match(/\b(15|10|5)\s*L\b/i);
-								return m ? Number.parseInt(m[1], 10) : null;
-							};
-							checkoutPreview = {
-								...checkoutPreview,
-								lineItemsUI: checkoutPreview.lineItemsUI.map((it: unknown) => {
-									const item = (it != null && typeof it === 'object' && it !== null) ? it as Record<string, unknown> : {};
-									let imageUrl = (item?.imageUrl ?? item?.image_url ?? null) as string | null;
-									if (!imageUrl || !String(imageUrl).trim()) {
-										const size = sizeFromTitle((item?.title ?? '') as string);
-										if (size != null && imageBySize[size]) imageUrl = imageBySize[size];
-									}
-									return { ...item, imageUrl: imageUrl ?? null };
-								})
-							};
+						const envImageBySize: Record<15 | 10 | 5, string | undefined> = {
+							15: env.DIY_PRODUCT_IMAGE_15L,
+							10: env.DIY_PRODUCT_IMAGE_10L,
+							5: env.DIY_PRODUCT_IMAGE_5L
+						};
+						for (const s of [15, 10, 5] as const) {
+							const envUrl = envImageBySize[s]?.trim();
+							if (!imageBySize[s] && envUrl) imageBySize = { ...imageBySize, [s]: envUrl };
 						}
 					}
+					const sizeFromTitle = (t: string) => {
+						const m = (typeof t === 'string' ? t : '').match(/\b(15|10|5)\s*L\b/i);
+						return m ? Number.parseInt(m[1], 10) : null;
+					};
+					checkoutPreview = {
+						...checkoutPreview,
+						lineItemsUI: checkoutPreview.lineItemsUI.map((it: unknown) => {
+							const item = (it != null && typeof it === 'object' && it !== null) ? it as Record<string, unknown> : {};
+							let imageUrl = (item?.imageUrl ?? item?.image_url ?? null) as string | null;
+							if (!imageUrl || !String(imageUrl).trim()) {
+								const size = sizeFromTitle((item?.title ?? '') as string);
+								if (size != null && imageBySize[size]) imageUrl = imageBySize[size];
+							}
+							return { ...item, imageUrl: imageUrl ?? null };
+						})
+					};
 				} catch {
 					// ignore
 				}
