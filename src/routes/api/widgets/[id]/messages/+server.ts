@@ -130,6 +130,11 @@ export const GET: RequestHandler = async (event) => {
 					so.checkout_button_color || so.qty_badge_background_color
 						? { checkoutButtonColor: so.checkout_button_color as string, qtyBadgeBackgroundColor: so.qty_badge_background_color as string }
 						: undefined;
+				// Use redirect URL so we can record checkout link clicks (checkout_clicked_at)
+				const redirectCheckoutUrl =
+					r.line_items_ui != null && r.checkout_url
+						? `${event.url.origin}/api/checkout/redirect?message_id=${encodeURIComponent(r.id)}`
+						: null;
 				return {
 					id: r.id,
 					role: (r.role === 'human_agent' || r.role === 'assistant') ? 'bot' : 'user',
@@ -141,7 +146,7 @@ export const GET: RequestHandler = async (event) => {
 							? {
 									lineItemsUI,
 									summary: r.summary != null && typeof r.summary === 'object' ? r.summary : {},
-									checkoutUrl: r.checkout_url,
+									checkoutUrl: redirectCheckoutUrl ?? r.checkout_url,
 									...(styleOverrides && { styleOverrides })
 								}
 							: undefined

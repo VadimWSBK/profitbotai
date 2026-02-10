@@ -820,6 +820,7 @@ export const POST: RequestHandler = async (event) => {
 			const { text, lastDiyToolResult } = await runGenerate(llmProvider, llmModel, apiKey);
 			await clearAiTyping();
 			let checkoutPreview: CheckoutPreview | null = null;
+			let insertedMessageId: string | null = null;
 			// Persist assistant message
 			if (text) {
 				const { data: inserted, error: insertErr } = await supabase
@@ -828,6 +829,7 @@ export const POST: RequestHandler = async (event) => {
 					.select('id')
 					.single();
 				if (insertErr) console.error('Failed to persist assistant message:', insertErr);
+				if (inserted?.id) insertedMessageId = inserted.id;
 				// Link latest checkout preview to this message and return it so embed shows product breakdown immediately
 				if (inserted?.id) {
 					const { data: previewRow } = await adminSupabaseForTyping
@@ -940,14 +942,30 @@ export const POST: RequestHandler = async (event) => {
 							return { ...item, imageUrl: imageUrl ?? null };
 						})
 					};
+					// Persist enriched line_items_ui (with imageUrl) so after refresh the embed loads images from DB
+					if (insertedMessageId && checkoutPreview.lineItemsUI?.length) {
+						const { error: updateErr } = await adminSupabaseForTyping
+							.from('widget_checkout_previews')
+							.update({ line_items_ui: checkoutPreview.lineItemsUI })
+							.eq('message_id', insertedMessageId);
+						if (updateErr) console.error('Failed to persist checkout preview images:', updateErr);
+					}
 				} catch {
 					// ignore
 				}
 			}
+			// Use redirect URL for checkout link so we can record clicks (checkout_clicked_at)
+			const checkoutPayload =
+				checkoutPreview && insertedMessageId
+					? {
+							...checkoutPreview,
+							checkoutUrl: `${event.url.origin}/api/checkout/redirect?message_id=${encodeURIComponent(insertedMessageId)}`
+						}
+					: checkoutPreview;
 			return json({
 				message: text,
 				output: text,
-				...(checkoutPreview && { checkoutPreview })
+				...(checkoutPayload && { checkoutPreview: checkoutPayload })
 			});
 		} catch (error_) {
 			if (llmFallbackProvider && llmFallbackModel) {
