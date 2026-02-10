@@ -14,8 +14,9 @@ import { chatWithLlm } from '$lib/chat-llm.server';
 import { getRelevantRulesForAgent } from '$lib/agent-rules.server';
 import { env } from '$env/dynamic/private';
 
-const MAX_HISTORY_MESSAGES = 24;
-const MAX_HISTORY_CHARS = 18_000;
+/** Use the last 5 messages (turns) for context so the bot stays focused on the recent exchange. */
+const MAX_HISTORY_MESSAGES = 5;
+const MAX_HISTORY_CHARS = 6_000;
 
 type ChatwootPayload = {
 	event?: string;
@@ -32,6 +33,12 @@ type ChatwootMessage = {
 	message_type?: string;
 	created_at?: string;
 };
+
+function byCreatedAt(a: ChatwootMessage, b: ChatwootMessage): number {
+	const t1 = a.created_at ? new Date(a.created_at).getTime() : 0;
+	const t2 = b.created_at ? new Date(b.created_at).getTime() : 0;
+	return t1 - t2;
+}
 
 /** Fetch conversation messages from Chatwoot API and return as LLM turns (user/assistant). */
 async function getChatwootConversationHistory(
@@ -55,8 +62,11 @@ async function getChatwootConversationHistory(
 	}
 	if (!Array.isArray(list)) return [];
 
+	// Ensure chronological order (API may not guarantee it)
+	const sorted = [...list].sort(byCreatedAt);
+
 	const turns: { role: 'user' | 'assistant'; content: string }[] = [];
-	for (const m of list) {
+	for (const m of sorted) {
 		const type = (m.message_type ?? '').toLowerCase();
 		const text = typeof m.content === 'string' ? m.content.trim() : '';
 		if (!text) continue;
@@ -170,6 +180,10 @@ export const POST: RequestHandler = async (event) => {
 	} catch (e) {
 		console.error('[webhooks/chatwoot] getRelevantRulesForAgent:', e);
 	}
+	// So the bot acts on what the user just said instead of repeating an intro
+	parts.push(
+		"Respond directly to the user's latest message. If they have already stated what they want (e.g. a DIY quote, a done-for-you quote, or specific info), proceed with that—do not reintroduce yourself or re-ask the same options."
+	);
 	const systemPrompt = parts.length > 0 ? parts.join('\n\n') : 'You are a helpful assistant.';
 
 	// Conversation history from Chatwoot so the bot has context
