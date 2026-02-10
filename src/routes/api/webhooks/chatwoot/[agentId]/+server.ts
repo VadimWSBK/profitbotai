@@ -28,6 +28,7 @@ import { createAgentTools } from '$lib/agent-tools.server';
 import { getRelevantRulesForAgent } from '$lib/agent-rules.server';
 import { getProductPricingForOwner, formatProductPricingForAgent } from '$lib/product-pricing.server';
 import { getShopifyConfigForUser } from '$lib/shopify.server';
+import { getDiyKitBuilderConfig } from '$lib/diy-kit-builder.server';
 import { env } from '$env/dynamic/private';
 import { emailsToJsonb, mergeEmailIntoList, getPrimaryEmail } from '$lib/contact-email-jsonb';
 import { phonesToJsonb, mergePhoneIntoList, getPrimaryPhone } from '$lib/contact-phone-jsonb';
@@ -411,16 +412,37 @@ export const POST: RequestHandler = async (event) => {
 		console.error('[webhooks/chatwoot] getProductPricingForOwner:', e);
 	}
 
-	// DIY checkout: when user asks for DIY quote and we have roof size, tell the model to call the tool
-	if (wantsDiyOrQuote && extractedRoofSize != null && extractedRoofSize >= 1) {
-		const roofSqm = Math.round(extractedRoofSize * 10) / 10;
-		parts.push(
-			`The customer is asking for a DIY quote and we have their roof size (${roofSqm} m²). You MUST call the shopify_create_diy_checkout_link tool with roof_size_sqm: ${roofSqm}. After calling it, reply with a short intro that INCLUDES the bucket breakdown (e.g. "Here is your DIY quote for ${roofSqm} m²: you need X x 15L and Y x 10L NetZero UltraTherm."). Use the exact quantities from the tool result. Do NOT paste the full Items/Subtotal/TOTAL block—summarise the product breakdown only. Do NOT use generate_quote or create a PDF for DIY.`
-		);
-	} else if (wantsDiyOrQuote) {
-		parts.push(
-			'When the customer asks for a DIY quote or to buy product themselves: if they provide a roof size (e.g. "400 sqm"), call shopify_create_diy_checkout_link with that roof_size_sqm. If they have not given roof size yet, ask for it once, then call the tool with the value they provide. Reply with a short intro that includes the bucket breakdown from the tool result. Do NOT use generate_quote for DIY requests.'
-		);
+	// DIY checkout: when user asks for DIY quote, tell the model to call the tool and to describe only what's in the kit
+	const DIY_ROLE_LABELS: Record<string, string> = {
+		sealant: 'Sealant',
+		thermal: 'Thermal coating',
+		sealer: 'Sealer',
+		geo: 'Geo-textile',
+		rapidCure: 'Rapid-cure',
+		brushRoller: 'Brush / Roller kit'
+	};
+	if (wantsDiyOrQuote) {
+		let kitProductsLine = '';
+		try {
+			const roofKit = await getDiyKitBuilderConfig(admin, ownerId, 'roof-kit');
+			if (roofKit?.product_entries?.length) {
+				// Use "Name in checkout" (display_name) when set, so the bot uses the same names as checkout/breakdown
+				const names = [...new Set(roofKit.product_entries.map((e) => (e.display_name?.trim() || DIY_ROLE_LABELS[e.role] ?? e.role)).filter(Boolean))];
+				kitProductsLine = ` This account's DIY kit contains only: ${names.join(', ')}. When describing what the quote includes, use these product names and ONLY the products in the tool result line items—do not add sealant, sealer, bonus kit, or other components unless they are in the breakdown.`;
+			}
+		} catch (e) {
+			console.error('[webhooks/chatwoot] getDiyKitBuilderConfig:', e);
+		}
+		if (extractedRoofSize != null && extractedRoofSize >= 1) {
+			const roofSqm = Math.round(extractedRoofSize * 10) / 10;
+			parts.push(
+				`The customer is asking for a DIY quote and we have their roof size (${roofSqm} m²). You MUST call the shopify_create_diy_checkout_link tool with roof_size_sqm: ${roofSqm}. After calling it, reply with a short intro that INCLUDES the bucket breakdown (e.g. "Here is your DIY quote for ${roofSqm} m²: you need X x 15L and Y x 10L NetZero UltraTherm."). Use the exact quantities from the tool result. Do NOT paste the full Items/Subtotal/TOTAL block—summarise the product breakdown only. Do NOT use generate_quote or create a PDF for DIY.${kitProductsLine || ' When describing what the quote includes, mention ONLY the products that appear in the tool result line items—do not add sealant, sealer, bonus kit, or other components unless they are in the breakdown.'}`
+			);
+		} else {
+			parts.push(
+				`When the customer asks for a DIY quote or to buy product themselves: if they provide a roof size (e.g. "400 sqm"), call shopify_create_diy_checkout_link with that roof_size_sqm. If they have not given roof size yet, ask for it once, then call the tool with the value they provide. Reply with a short intro that includes the bucket breakdown from the tool result. Do NOT use generate_quote for DIY requests.${kitProductsLine || ' When describing the quote, mention ONLY the products in the tool result—do not add sealant, sealer, bonus kit, or other components unless they appear in the breakdown.'}`
+			);
+		}
 	}
 
 	parts.push(
@@ -469,7 +491,10 @@ export const POST: RequestHandler = async (event) => {
 		widgetId: '',
 		contact: internalContact ?? null,
 		extractedRoofSize: extractedRoofSize ?? undefined,
-		origin
+		origin,
+		chatwootAccountId: accountId,
+		chatwootConversationId: conversationId,
+		agentId
 	};
 
 	if (env.CHATWOOT_DEBUG === '1' || env.CHATWOOT_DEBUG === 'true') {
@@ -556,11 +581,9 @@ export const POST: RequestHandler = async (event) => {
 		return json({ error: 'Failed to send reply to Chatwoot' }, { status: 502 });
 	}
 
-	// 2) If we have a DIY quote, send a structured article message (breakdown + checkout link) so it looks nice
+	// 2) If we have a DIY quote, send a structured article message (checkout link only; items already in the text reply above)
 	if (diyCheckoutUrl) {
-		const articleDescription =
-			(diyLineItemsSummary ? `Items: ${diyLineItemsSummary}\n\n` : '') +
-			'Click the link below to proceed to checkout.';
+		const articleDescription = 'Click the link below to proceed to checkout.';
 		const articleRes = await fetch(postUrl, {
 			method: 'POST',
 			headers: postHeaders,

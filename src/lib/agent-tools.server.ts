@@ -36,6 +36,10 @@ export type AgentToolContext = {
 export type AgentToolContextMinimal = Pick<AgentToolContext, 'ownerId' | 'contact' | 'extractedRoofSize' | 'origin'> & {
 	conversationId?: string;
 	widgetId?: string;
+	/** Chatwoot-only: used for generate_quote storage path and to allow the tool in this channel. */
+	chatwootAccountId?: number;
+	chatwootConversationId?: number;
+	agentId?: string;
 };
 
 function getContext(ctx: unknown): AgentToolContext | AgentToolContextMinimal | null {
@@ -227,7 +231,14 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 		) => {
 			const c = getContext(experimental_context);
 			if (!c) return { error: 'Missing context' };
-			if (!hasWidgetConversation(c)) return { error: 'This action is not available in this channel.' };
+			const minimal = c as AgentToolContextMinimal;
+			const isChatwoot =
+				!hasWidgetConversation(c) &&
+				minimal.chatwootAccountId != null &&
+				minimal.chatwootConversationId != null;
+			if (!hasWidgetConversation(c) && !isChatwoot) {
+				return { error: 'This action is not available in this channel.' };
+			}
 			const contact = c.contact;
 			if (!contact?.name?.trim()) return { error: 'Contact name is required for a quote. Ask the user for their name.' };
 			if (!getPrimaryEmail(contact?.email)?.trim()) return { error: 'Contact email is required for a quote. Ask the user for their email.' };
@@ -235,22 +246,30 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 			if (roofSize == null || Number(roofSize) < 0) {
 				return { error: 'Roof size (square metres) is required. Ask the user for their roof size or area.' };
 			}
+			const conversationId = hasWidgetConversation(c)
+				? c.conversationId
+				: `chatwoot-${minimal.chatwootAccountId}-${minimal.chatwootConversationId}`;
+			const widgetId = hasWidgetConversation(c)
+				? c.widgetId
+				: `chatwoot-${minimal.agentId ?? 'agent'}`;
 			const result: GenerateQuoteForConversationResult = await generateQuoteForConversation(
 				admin,
-				c.conversationId,
-				c.widgetId,
+				conversationId,
+				widgetId,
 				contact,
 				{ roofSize: Number(roofSize) },
 				c.ownerId
 			);
 			if (result.error) return { error: result.error };
 			if (result.storagePath) {
-				await admin.rpc('append_pdf_quote_to_contact', {
-					p_conversation_id: c.conversationId,
-					p_widget_id: c.widgetId,
-					p_pdf_url: result.storagePath ?? '',
-					p_total: result.total ?? null,
-				});
+				if (hasWidgetConversation(c)) {
+					await admin.rpc('append_pdf_quote_to_contact', {
+						p_conversation_id: c.conversationId,
+						p_widget_id: c.widgetId,
+						p_pdf_url: result.storagePath ?? '',
+						p_total: result.total ?? null,
+					});
+				}
 				// Use short link so clicks get a fresh signed URL (raw signed URLs can fail with InvalidJWT)
 				const downloadUrl = c.origin
 					? `${c.origin}/api/quote/download?path=${encodeURIComponent(result.storagePath)}`
@@ -501,13 +520,13 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 
 	tools.shopify_create_diy_checkout_link = tool({
 		description:
-			'Use this when the customer wants a DIY quote or to buy product themselves (supply-only). Creates a one-click checkout (cart link, same as LRDIY calculator). The system uses the roof-kit calculator: from roof size in m² it computes sealant, thermal coating, sealer, geo-textile, rapid-cure, and bonus kit (brush/roller). Call with roof_size_sqm when you have their roof size. If the customer asks for a discount, pass discount_percent 10, 15, or 20 (NZ10, NZ15, NZ20).',
+			'Use this when the customer wants a DIY quote or to buy product themselves (supply-only). Creates a one-click checkout (cart link). Kit contents come from the account\'s DIY Kit Builder settings (roof-kit); only the products configured there are included. When describing the quote to the customer, mention ONLY the products that appear in the tool result (the line items breakdown)—do not assume or add sealant, sealer, bonus kit, or other components unless they are in that list. Call with roof_size_sqm when you have their roof size. If the customer asks for a discount, pass discount_percent 10, 15, or 20 (NZ10, NZ15, NZ20).',
 		inputSchema: z.object({
 			roof_size_sqm: z
 				.number()
 				.min(1)
 				.optional()
-				.describe('Roof size in square metres. Drives the roof-kit calculator (sealant, thermal, sealer, geo, rapid-cure, bonus kit).'),
+				.describe('Roof size in square metres. Drives the kit calculator; products depend on DIY Kit Builder config.'),
 			count_15l: z.number().int().min(0).optional().describe('Number of 15L buckets (if not using roof_size_sqm).'),
 			count_10l: z.number().int().min(0).optional().describe('Number of 10L buckets (if not using roof_size_sqm).'),
 			count_5l: z.number().int().min(0).optional().describe('Number of 5L buckets (if not using roof_size_sqm).'),
