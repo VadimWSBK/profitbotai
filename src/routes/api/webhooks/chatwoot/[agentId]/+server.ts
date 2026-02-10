@@ -29,6 +29,8 @@ import { getRelevantRulesForAgent } from '$lib/agent-rules.server';
 import { getProductPricingForOwner, formatProductPricingForAgent } from '$lib/product-pricing.server';
 import { getShopifyConfigForUser } from '$lib/shopify.server';
 import { env } from '$env/dynamic/private';
+import { emailsToJsonb, mergeEmailIntoList, getPrimaryEmail } from '$lib/contact-email-jsonb';
+import { phonesToJsonb, mergePhoneIntoList, getPrimaryPhone } from '$lib/contact-phone-jsonb';
 
 /** Use the last 5 messages (turns) for context so the bot stays focused on the recent exchange. */
 const MAX_HISTORY_MESSAGES = 5;
@@ -38,6 +40,8 @@ type ChatwootPayload = {
 	event?: string;
 	message_type?: string;
 	content?: string;
+	/** Chatwoot message id – we use this for idempotency (skip if we already processed this message) */
+	id?: number;
 	conversation?: { id: number };
 	account?: { id: number };
 	sender?: { id: string | number };
@@ -185,6 +189,70 @@ async function updateChatwootContact(
 	return res.ok;
 }
 
+/** Upsert our internal contact for this Chatwoot conversation so the LLM can see what we already have. Returns contact for context. */
+async function upsertChatwootInternalContact(
+	admin: SupabaseClient,
+	accountId: number,
+	conversationId: number,
+	agentId: string,
+	allUserText: string,
+	roofSizeSqm: number | null,
+	existingChatwootContact?: { name?: string; email?: string; phone_number?: string }
+): Promise<{ name?: string | null; email?: string | null; phone?: string | null; address?: string | null; roof_size_sqm?: number | null } | null> {
+	const extracted = extractContactFromText(allUserText);
+	const { data: existing } = await admin
+		.from('contacts')
+		.select('id, name, email, phone, address, roof_size_sqm')
+		.eq('chatwoot_account_id', accountId)
+		.eq('chatwoot_conversation_id', conversationId)
+		.maybeSingle();
+
+	const updates: Record<string, unknown> = {
+		chatwoot_account_id: accountId,
+		chatwoot_conversation_id: conversationId,
+		agent_id: agentId,
+		conversation_id: null,
+		widget_id: null
+	};
+	const name = extracted.name?.trim() ?? existingChatwootContact?.name?.trim() ?? (existing as { name?: string } | null)?.name?.trim();
+	if (name) updates.name = name;
+	const emailMerged = existing
+		? mergeEmailIntoList((existing as { email?: unknown }).email, extracted.email ?? existingChatwootContact?.email)
+		: emailsToJsonb(extracted.email ?? existingChatwootContact?.email);
+	if (emailMerged.length > 0) updates.email = emailMerged;
+	const phoneMerged = existing
+		? mergePhoneIntoList((existing as { phone?: unknown }).phone, extracted.phone_number ?? existingChatwootContact?.phone_number)
+		: phonesToJsonb(extracted.phone_number ?? existingChatwootContact?.phone_number);
+	if (phoneMerged.length > 0) updates.phone = phoneMerged;
+	const address = extracted.address?.trim() ?? (existing as { address?: string } | null)?.address?.trim();
+	if (address) updates.address = address;
+	const roof = roofSizeSqm != null && roofSizeSqm >= 0 ? roofSizeSqm : (existing as { roof_size_sqm?: number } | null)?.roof_size_sqm;
+	if (roof != null) updates.roof_size_sqm = roof;
+
+	const { error: upsertErr } = await admin.from('contacts').upsert(
+		updates as Record<string, string | number | null>,
+		{ onConflict: 'chatwoot_account_id,chatwoot_conversation_id', ignoreDuplicates: false }
+	);
+	if (upsertErr) {
+		console.error('[webhooks/chatwoot] Failed to upsert internal contact:', upsertErr);
+		return existing ? { name: (existing as { name?: string }).name, email: getPrimaryEmail((existing as { email?: unknown }).email), phone: getPrimaryPhone((existing as { phone?: unknown }).phone), address: (existing as { address?: string }).address, roof_size_sqm: (existing as { roof_size_sqm?: number }).roof_size_sqm } : null;
+	}
+	const { data: row } = await admin
+		.from('contacts')
+		.select('name, email, phone, address, roof_size_sqm')
+		.eq('chatwoot_account_id', accountId)
+		.eq('chatwoot_conversation_id', conversationId)
+		.single();
+	if (!row) return null;
+	return {
+		name: (row as { name?: string | null }).name ?? null,
+		email: getPrimaryEmail((row as { email?: unknown }).email) ?? null,
+		phone: getPrimaryPhone((row as { phone?: unknown }).phone) ?? null,
+		address: (row as { address?: string | null }).address ?? null,
+		roof_size_sqm: (row as { roof_size_sqm?: number | null }).roof_size_sqm ?? null
+	};
+}
+
 export const POST: RequestHandler = async (event) => {
 	const agentId = event.params.agentId?.trim() ?? '';
 	const botToken = (env.CHATWOOT_BOT_ACCESS_TOKEN ?? '').trim();
@@ -197,14 +265,21 @@ export const POST: RequestHandler = async (event) => {
 
 	let body: ChatwootPayload & Record<string, unknown>;
 	try {
-		body = (await event.request.json()) as ChatwootPayload & Record<string, unknown>;
+		const raw = (await event.request.json()) as Record<string, unknown>;
+		// Some Chatwoot configs send { payload: { ... } }; use inner object so rest of code works
+		body = (raw?.payload != null && typeof raw.payload === 'object' ? raw.payload : raw) as ChatwootPayload & Record<string, unknown>;
 	} catch {
 		return json({ error: 'Invalid JSON' }, { status: 400 });
 	}
 
-	const messageType = body?.message_type ?? (body as Record<string, unknown>).message_type;
-	const content = typeof body?.content === 'string' ? body.content.trim() : '';
-	const conversationId = body?.conversation?.id ?? (body?.conversation as { id?: number } | undefined)?.id;
+	// Support flat (content, message_type at top), nested (message.content), and message id in body.id or message.id
+	const messageObj = body?.message as Record<string, unknown> | undefined;
+	const messageType =
+		body?.message_type ?? (body as Record<string, unknown>).message_type
+		?? messageObj?.message_type;
+	const contentRaw = body?.content ?? messageObj?.content;
+	const content = typeof contentRaw === 'string' ? contentRaw.trim() : '';
+	const conversationId = body?.conversation?.id ?? (body?.conversation as { id?: number } | undefined)?.id ?? (messageObj?.conversation as { id?: number } | undefined)?.id;
 	const accountId = body?.account?.id ?? (body?.account as { id?: number } | undefined)?.id;
 
 	// Optional: log raw payload and how we process it (set CHATWOOT_DEBUG=1 in env)
@@ -227,6 +302,18 @@ export const POST: RequestHandler = async (event) => {
 	}
 
 	const admin = getSupabaseAdmin();
+	// Idempotency: Chatwoot sometimes sends the same webhook twice; skip if we already processed this message id
+	const rawMessageId = body?.id ?? messageObj?.id;
+	const messageId = rawMessageId != null ? Number(rawMessageId) : null;
+	if (messageId != null) {
+		const { data: existing } = await admin
+			.from('chatwoot_conversation_messages')
+			.select('id')
+			.eq('chatwoot_message_id', messageId)
+			.limit(1)
+			.maybeSingle();
+		if (existing) return json({ received: true });
+	}
 	const { data: agentRow, error: agentErr } = await admin
 		.from('agents')
 		.select('chat_backend, llm_provider, llm_model, bot_role, bot_tone, bot_instructions, allowed_tools, created_by')
@@ -263,21 +350,40 @@ export const POST: RequestHandler = async (event) => {
 	}
 
 	// Store incoming message in our DB, then load conversation history from our DB (no Chatwoot API call)
-	await admin.from('chatwoot_conversation_messages').insert({
-		account_id: accountId,
-		conversation_id: conversationId,
-		agent_id: agentId,
-		role: 'user',
-		content
-	});
+	try {
+		const { error: insertErr } = await admin.from('chatwoot_conversation_messages').insert({
+			account_id: accountId,
+			conversation_id: conversationId,
+			agent_id: agentId,
+			role: 'user',
+			content,
+			...(messageId != null && { chatwoot_message_id: messageId })
+		});
+		if (insertErr) throw insertErr;
+	} catch (e) {
+		console.error('[webhooks/chatwoot] Failed to store user message:', e);
+		// Continue so we still reply and store our reply; next turn may have gaps in history
+	}
 	const history = await getChatwootHistoryFromDb(admin, accountId, conversationId);
 	const extractedRoofSize = roofSizeFromHistory(history);
+	const allUserText = [content, ...history.filter((t) => t.role === 'user').map((t) => t.content)].join(' ');
+	const chatwootContactFromPayload = body?.contact as { name?: string; email?: string; phone_number?: string } | undefined;
+	const internalContact = await upsertChatwootInternalContact(
+		admin,
+		accountId,
+		conversationId,
+		agentId,
+		allUserText,
+		extractedRoofSize,
+		chatwootContactFromPayload
+	);
+
 	const contentLower = content.toLowerCase();
 	const wantsDiyOrQuote =
 		/\b(diy|do it myself|supply only|product only|quote|cost|price|how much|coat my roof)\b/i.test(contentLower) ||
 		/\d+\s*(sqm|m2|m²)/i.test(content);
 
-	// System prompt: role, tone, instructions (same as widget), RAG rules, product pricing, DIY instruction
+	// System prompt: role, tone, instructions (same as widget), RAG rules, product pricing, DIY instruction, current contact
 	const role = (agentRow.bot_role as string) ?? '';
 	const tone = (agentRow.bot_tone as string) ?? '';
 	const instructions = (agentRow.bot_instructions as string) ?? '';
@@ -324,6 +430,16 @@ export const POST: RequestHandler = async (event) => {
 	parts.push(
 		'In this channel, contact details the user provides (name, email, phone, address) are saved automatically to their Chatwoot profile. Confirm you have received their details and proceed—do not say you are unable to update contact details.'
 	);
+	// So the LLM knows what we already have and can respond accordingly (e.g. skip asking for name/email if we have them)
+	if (internalContact && (internalContact.name ?? internalContact.email ?? internalContact.phone ?? internalContact.address ?? internalContact.roof_size_sqm != null)) {
+		const lines: string[] = ['Current contact info we have:'];
+		if (internalContact.name) lines.push(`Name: ${internalContact.name}`);
+		if (internalContact.email) lines.push(`Email: ${internalContact.email}`);
+		if (internalContact.phone) lines.push(`Phone: ${internalContact.phone}`);
+		if (internalContact.address) lines.push(`Address: ${internalContact.address}`);
+		if (internalContact.roof_size_sqm != null) lines.push(`Roof size: ${internalContact.roof_size_sqm} m²`);
+		parts.push(lines.join(' '));
+	}
 	const systemPrompt = parts.length > 0 ? parts.join('\n\n') : 'You are a helpful assistant.';
 
 	// Tools: use agent's allowed_tools and ensure DIY is available when Shopify is connected
@@ -351,7 +467,7 @@ export const POST: RequestHandler = async (event) => {
 		ownerId,
 		conversationId: '',
 		widgetId: '',
-		contact: null as { name?: string | null; email?: string | null; phone?: string | null; address?: string | null; roof_size_sqm?: number | null } | null,
+		contact: internalContact ?? null,
 		extractedRoofSize: extractedRoofSize ?? undefined,
 		origin
 	};
@@ -367,6 +483,8 @@ export const POST: RequestHandler = async (event) => {
 	}
 
 	let reply: string;
+	let diyCheckoutUrl: string | null = null;
+	let diyLineItemsSummary: string | null = null;
 	try {
 		const model = getAISdkModel(llmProvider, llmModel, apiKey);
 		const tools = createAgentTools(admin, agentAllowedTools ?? undefined);
@@ -380,36 +498,108 @@ export const POST: RequestHandler = async (event) => {
 			experimental_context: agentContext
 		});
 		reply = result.text ?? '';
+		// If DIY tool was used, get checkout URL and line items so we append them to the reply (Chatwoot has no widget UI)
+		const pickDiy = (tr: Array<{ toolName?: string; output?: unknown; result?: unknown }> | undefined) => {
+			if (!Array.isArray(tr)) return;
+			const diy = tr.find((r) => r.toolName === 'shopify_create_diy_checkout_link');
+			if (!diy || typeof diy !== 'object') return;
+			const out = (diy as { output?: unknown }).output ?? (diy as { result?: unknown }).result;
+			if (!out || typeof out !== 'object') return;
+			const r = out as { lineItemsUI?: { quantity?: number; title?: string }[]; checkoutUrl?: string };
+			if (typeof r.checkoutUrl === 'string' && r.checkoutUrl.trim()) {
+				const parts: string[] = [];
+				if (Array.isArray(r.lineItemsUI) && r.lineItemsUI.length > 0) {
+					parts.push(r.lineItemsUI.map((li) => `${li.quantity ?? 0} x ${li.title ?? ''}`).filter(Boolean).join(', '));
+				}
+				return { checkoutUrl: r.checkoutUrl.trim(), lineSummary: parts.length > 0 ? parts.join(' ') : null };
+			}
+		};
+		const raw = result as {
+			steps?: Array<{ toolResults?: Array<{ toolName?: string; output?: unknown; result?: unknown }> }>;
+			toolResults?: Array<{ toolName?: string; output?: unknown; result?: unknown }>;
+		};
+		let diyResult = pickDiy(raw.toolResults);
+		if (!diyResult && Array.isArray(raw.steps)) {
+			for (let i = raw.steps.length - 1; i >= 0; i--) {
+				diyResult = pickDiy(raw.steps[i].toolResults);
+				if (diyResult) break;
+			}
+		}
+		if (diyResult) {
+			diyCheckoutUrl = diyResult.checkoutUrl;
+			diyLineItemsSummary = diyResult.lineSummary;
+		}
 	} catch (e) {
 		console.error('[webhooks/chatwoot] LLM error:', e);
 		reply = 'Sorry, I had trouble answering. Please try again.';
 	}
 
+	// Build what we'll store in our DB (full context including quote for next turn)
+	let storedReply = reply;
+
 	const postUrl = `${baseUrl}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`;
+	const postHeaders = {
+		'Content-Type': 'application/json',
+		Accept: 'application/json',
+		api_access_token: botToken
+	};
+
+	// 1) Send the conversational reply (text)
 	const postRes = await fetch(postUrl, {
 		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			Accept: 'application/json',
-			api_access_token: botToken
-		},
-		body: JSON.stringify({ content: reply })
+		headers: postHeaders,
+		body: JSON.stringify({ content: reply, message_type: 'outgoing' })
 	});
-
 	if (!postRes.ok) {
 		const errText = await postRes.text();
 		console.error('[webhooks/chatwoot] Chatwoot API error:', postRes.status, errText);
 		return json({ error: 'Failed to send reply to Chatwoot' }, { status: 502 });
 	}
 
+	// 2) If we have a DIY quote, send a structured article message (breakdown + checkout link) so it looks nice
+	if (diyCheckoutUrl) {
+		const articleDescription =
+			(diyLineItemsSummary ? `Items: ${diyLineItemsSummary}\n\n` : '') +
+			'Click the link below to proceed to checkout.';
+		const articleRes = await fetch(postUrl, {
+			method: 'POST',
+			headers: postHeaders,
+			body: JSON.stringify({
+				content: 'Your DIY quote',
+				message_type: 'outgoing',
+				content_type: 'article',
+				content_attributes: {
+					items: [
+						{
+							title: 'Proceed to checkout',
+							description: articleDescription,
+							link: diyCheckoutUrl
+						}
+					]
+				}
+			})
+		});
+		if (!articleRes.ok) {
+			const errText = await articleRes.text();
+			console.error('[webhooks/chatwoot] Chatwoot article message error:', articleRes.status, errText);
+		}
+		// Keep stored context so next turn knows we sent the quote and link
+		storedReply = reply.trimEnd() + (diyLineItemsSummary ? '\n\n**Items:** ' + diyLineItemsSummary : '') + '\n\n**Proceed to checkout:** ' + diyCheckoutUrl;
+	}
+
 	// Store our reply in our DB so next message has context from here
-	await admin.from('chatwoot_conversation_messages').insert({
-		account_id: accountId,
-		conversation_id: conversationId,
-		agent_id: agentId,
-		role: 'assistant',
-		content: reply
-	});
+	try {
+		const { error: assistantErr } = await admin.from('chatwoot_conversation_messages').insert({
+			account_id: accountId,
+			conversation_id: conversationId,
+			agent_id: agentId,
+			role: 'assistant',
+			content: storedReply
+		});
+		if (assistantErr) throw assistantErr;
+	} catch (e) {
+		console.error('[webhooks/chatwoot] Failed to store assistant message:', e);
+	}
 
 	// Update Chatwoot contact when user provides name/email/phone (so CRM stays in sync)
 	const contactId = await getChatwootContactId(baseUrl, botToken, accountId, conversationId, body.contact);

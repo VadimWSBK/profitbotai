@@ -44,6 +44,7 @@ After this, when a user sends a message in that inbox, Chatwoot will POST to you
 ## 5. Context and knowledge (no training in Chatwoot)
 
 - **Conversation context:** Profitbot stores each incoming Chatwoot message and each bot reply in its own database (`chatwoot_conversation_messages`). When a new message arrives, the bot loads the last few messages from this table so the LLM has dialogue history without calling Chatwoot's API—faster and more efficient.
+- **Webhook must fire for every message:** For the full thread to appear in the database, Chatwoot must send your webhook on **every** new incoming message. In Chatwoot **Settings → Integrations → Webhooks**, ensure the webhook is subscribed to **message_created** (or the event that fires for each new message in the conversation). If some user or bot messages are missing in the table, check that the webhook is triggered for that inbox and that the subscription includes message events.
 - **Knowledge from Profitbot:** The bot uses your agent’s **Train Bot** rules (and, where supported, documents) from Profitbot. Configure those in **Agents → [your agent] → Train Bot**. You do **not** need to train or add knowledge inside Chatwoot—the bot uses data and tools from Profitbot only.
 
 ## 6. Contact updates (CRM sync)
