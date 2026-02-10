@@ -28,6 +28,8 @@ export type AgentToolContext = {
 	ownerId: string;
 	contact: { name?: string | null; email?: string | null; phone?: string | null; address?: string | null; roof_size_sqm?: number | null } | null;
 	extractedRoofSize?: number;
+	/** App origin for building short quote download URLs (avoids InvalidJWT on raw signed URLs). */
+	origin?: string;
 };
 
 function getContext(ctx: unknown): AgentToolContext | null {
@@ -223,14 +225,22 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 				c.ownerId
 			);
 			if (result.error) return { error: result.error };
-			if (result.signedUrl) {
+			if (result.storagePath) {
 				await admin.rpc('append_pdf_quote_to_contact', {
 					p_conversation_id: c.conversationId,
 					p_widget_id: c.widgetId,
 					p_pdf_url: result.storagePath ?? '',
 					p_total: result.total ?? null,
 				});
-				return { success: true, downloadUrl: result.signedUrl, message: 'Quote generated. Share the download link with the customer.' };
+				// Use short link so clicks get a fresh signed URL (raw signed URLs can fail with InvalidJWT)
+				const downloadUrl = c.origin
+					? `${c.origin}/api/quote/download?path=${encodeURIComponent(result.storagePath)}`
+					: result.signedUrl;
+				return {
+					success: true,
+					downloadUrl,
+					message: 'Quote generated. Share the download link as [Download PDF Quote](downloadUrl) in your reply.',
+				};
 			}
 			return { error: 'Quote generation did not return a URL.' };
 		},

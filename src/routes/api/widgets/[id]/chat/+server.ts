@@ -651,19 +651,17 @@ export const POST: RequestHandler = async (event) => {
 			if (currentContact.roof_size_sqm != null) contactLines.push(`- Roof size: ${currentContact.roof_size_sqm} m²`);
 			if (currentContact.address) contactLines.push(`- Address: ${currentContact.address}`);
 			if (Array.isArray(currentContact.pdf_quotes) && currentContact.pdf_quotes.length > 0) {
-				const adminSupabase = getSupabaseAdmin();
-				const signedUrls: string[] = [];
+				const baseUrl = `${event.url.origin}/api/quote/download`;
+				const shortLinks: string[] = [];
 				for (const q of currentContact.pdf_quotes) {
 					const stored = typeof q === 'object' && q !== null && 'url' in q ? (q as { url: string }).url : String(q);
 					const pathMatch = /roof_quotes\/(.+)$/.exec(stored);
-					const filePath = pathMatch?.[1] ?? stored.trim();
-					if (!filePath) continue;
-					const { data } = await adminSupabase.storage.from('roof_quotes').createSignedUrl(filePath, 31536000 /* 1 year */);
-					if (data?.signedUrl) signedUrls.push(data.signedUrl);
+					const filePath = pathMatch?.[1] ?? stored.replace(/^roof_quotes\//, '').trim();
+					if (!filePath || !/^[a-f0-9-]+\/quote_[^/]+\.pdf$/i.test(filePath)) continue;
+					shortLinks.push(`[Download PDF Quote](${baseUrl}?path=${encodeURIComponent(filePath)})`);
 				}
-				if (signedUrls.length > 0) {
-					const pdfQuoteLinks = signedUrls.map((u) => `[Download Quote](${u})`).join(', ');
-					contactLines.push(`- PDF quotes: ${pdfQuoteLinks}`);
+				if (shortLinks.length > 0) {
+					contactLines.push(`- PDF quotes: ${shortLinks.join(', ')}`);
 				}
 			}
 		}
@@ -688,18 +686,17 @@ export const POST: RequestHandler = async (event) => {
 					if (found.phone) contactLines.push(`- Phone: ${found.phone}`);
 					if (found.address) contactLines.push(`- Address: ${found.address}`);
 					if (Array.isArray(found.pdf_quotes) && found.pdf_quotes.length > 0) {
-						const adminSupabase = getSupabaseAdmin();
-						const signedUrls: string[] = [];
+						const baseUrl = `${event.url.origin}/api/quote/download`;
+						const shortLinks: string[] = [];
 						for (const q of found.pdf_quotes) {
 							const stored = typeof q === 'object' && q !== null && 'url' in q ? (q as { url: string }).url : String(q);
 							const pathMatch = /roof_quotes\/(.+)$/.exec(stored);
-							const filePath = pathMatch?.[1] ?? stored.trim();
-							if (!filePath) continue;
-							const { data } = await adminSupabase.storage.from('roof_quotes').createSignedUrl(filePath, 31536000 /* 1 year */);
-							if (data?.signedUrl) signedUrls.push(data.signedUrl);
+							const filePath = pathMatch?.[1] ?? stored.replace(/^roof_quotes\//, '').trim();
+							if (!filePath || !/^[a-f0-9-]+\/quote_[^/]+\.pdf$/i.test(filePath)) continue;
+							shortLinks.push(`[Download PDF Quote](${baseUrl}?path=${encodeURIComponent(filePath)})`);
 						}
-						if (signedUrls.length > 0)
-							contactLines.push(`- PDF quotes: ${signedUrls.join(', ')}`);
+						if (shortLinks.length > 0)
+							contactLines.push(`- PDF quotes: ${shortLinks.join(', ')}`);
 					}
 				}
 			}
@@ -740,7 +737,8 @@ export const POST: RequestHandler = async (event) => {
 					widgetId,
 					ownerId: ownerId ?? '',
 					contact: contactForPrompt ?? null,
-					extractedRoofSize: effectiveRoofSize ?? undefined
+					extractedRoofSize: effectiveRoofSize ?? undefined,
+					origin: event.url.origin
 				}
 			: null;
 

@@ -221,7 +221,7 @@ export function formatMessageWithLinks(text: string): string {
 			);
 		} else {
 		const displayText = match.type === 'markdown' ? match.text : url;
-		const isCtaButton = /buy\s*now|complete\s*your\s*purchase|go\s*to\s*checkout/i.test(displayText);
+		const isCtaButton = /buy\s*now|complete\s*your\s*purchase|go\s*to\s*checkout|download\s*(pdf\s*)?quote/i.test(displayText);
 			const linkClass = isCtaButton ? 'chat-message-link chat-cta-button' : 'chat-message-link underline';
 			parts.push(
 				`<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="${linkClass}">${escapeHtml(displayText)}</a>`

@@ -151,7 +151,7 @@ export const messageformatting = String.raw`
         parts.push('<img src="' + escapeHtml(url) + '" alt="' + escapeHtml(match.alt) + '" class="pb-msg-image" loading="lazy" />');
       } else {
         var displayText = match.type === 'markdown' ? match.text : url;
-        var isCta = /buy\s*now|complete\s*your\s*purchase|go\s*to\s*checkout/i.test(displayText);
+        var isCta = /buy\s*now|complete\s*your\s*purchase|go\s*to\s*checkout|download\s*(pdf\s*)?quote/i.test(displayText);
         var linkClass = isCta ? 'pb-msg-link pb-cta-button' : 'pb-msg-link pb-underline';
         parts.push('<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" class="' + linkClass + '">' + escapeHtml(displayText) + '</a>');
       }
