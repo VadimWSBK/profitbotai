@@ -66,11 +66,15 @@ async function getChatwootConversationHistory(
 
 	let list: ChatwootMessage[];
 	try {
-		list = (await res.json()) as ChatwootMessage[];
+		const json = (await res.json()) as ChatwootMessage[] | { data?: ChatwootMessage[]; payload?: ChatwootMessage[] };
+		list = Array.isArray(json) ? json : (json?.data ?? json?.payload ?? []) as ChatwootMessage[];
 	} catch {
-		return [];
+		list = [];
 	}
-	if (!Array.isArray(list)) return [];
+	if (!Array.isArray(list) || list.length === 0) {
+		// Return at least the current message so caller never gets empty history for a valid webhook
+		return currentUserMessage ? [{ role: 'user' as const, content: currentUserMessage }] : [];
+	}
 
 	// Ensure chronological order (API may not guarantee it)
 	const sorted = [...list].sort(byCreatedAt);
@@ -277,7 +281,12 @@ export const POST: RequestHandler = async (event) => {
 		// ignore
 	}
 
-	const modelMessages = history.map((t) => ({ role: t.role as 'user' | 'assistant', content: t.content }));
+	let modelMessages = history.map((t) => ({ role: t.role as 'user' | 'assistant', content: t.content }));
+	// generateText requires at least one message (AI SDK InvalidPromptError). If Chatwoot API returned
+	// empty/unexpected format or the current message wasn't included, ensure we send the incoming message.
+	if (modelMessages.length === 0) {
+		modelMessages = [{ role: 'user' as const, content }];
+	}
 	const origin = event.url.origin;
 	const agentContext = {
 		ownerId,
