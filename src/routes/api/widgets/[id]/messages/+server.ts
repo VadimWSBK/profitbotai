@@ -4,6 +4,7 @@ import { env } from '$env/dynamic/private';
 import { getSupabase, getSupabaseAdmin } from '$lib/supabase.server';
 import { getProductImageUrlsBySize } from '$lib/product-pricing.server';
 import { getShopifyConfigForUser, getDiyProductImages } from '$lib/shopify.server';
+import { getDefaultKitBuilderConfig } from '$lib/diy-kit-builder.server';
 
 function sizeFromTitle(title: string): number | null {
 	const m = (typeof title === 'string' ? title : '').match(/\b(15|10|5)\s*L\b/i);
@@ -51,90 +52,160 @@ export const GET: RequestHandler = async (event) => {
 				summary: unknown;
 				checkout_url: string | null;
 				style_overrides?: unknown;
+				checkout_preview?: unknown;
 			};
 			const rawRows = (rows ?? []) as Row[];
+			// Widget owner for image resolution and kit builder display names
+			const admin = getSupabaseAdmin();
+			const { data: widgetRow } = await admin
+				.from('widgets')
+				.select('created_by')
+				.eq('id', widgetId)
+				.single();
+			const ownerId = (widgetRow as { created_by?: string } | null)?.created_by ?? null;
 			// Resolve product images from product_pricing first (one Supabase query), then Shopify/env
 			let imageBySize: Record<number, string> = {};
-			const rowsWithPreview = rawRows.filter(
-				(r) => r.line_items_ui != null && r.checkout_url && Array.isArray(r.line_items_ui)
-			);
-			if (rowsWithPreview.length > 0) {
+			// Rows that have preview from join OR from message.checkout_preview (so we fill images for both)
+			const rowsWithPreview = rawRows.filter((r) => {
+				if (r.checkout_preview != null && typeof r.checkout_preview === 'object') {
+					const cp = r.checkout_preview as { lineItemsUI?: unknown };
+					if (Array.isArray(cp.lineItemsUI) && cp.lineItemsUI.length > 0) return true;
+				}
+				return r.line_items_ui != null && r.checkout_url && Array.isArray(r.line_items_ui);
+			});
+			if (rowsWithPreview.length > 0 && ownerId) {
 				try {
-					const admin = getSupabaseAdmin();
-					const { data: widgetRow } = await admin
-						.from('widgets')
-						.select('created_by')
-						.eq('id', widgetId)
-						.single();
-					const ownerId = (widgetRow as { created_by?: string } | null)?.created_by ?? null;
-					if (ownerId) {
-						imageBySize = await getProductImageUrlsBySize(ownerId);
-						const missing = [15, 10, 5].filter((s) => !imageBySize[s]);
-						if (missing.length > 0) {
-							const config = await getShopifyConfigForUser(admin, ownerId);
-							if (config) {
-								const sizeRe = /\b(15|10|5)\s*L\b/i;
-								const bucketConfig: Array<{ size: number; price: string; title: string }> = [];
-								for (const r of rowsWithPreview) {
-									const raw = Array.isArray(r.line_items_ui) ? r.line_items_ui : [];
-									for (const it of raw) {
-										const item = it != null && typeof it === 'object' ? (it as Record<string, unknown>) : {};
-										const hasImage =
-											(item?.imageUrl ?? item?.image_url) &&
-											String(item?.imageUrl ?? item?.image_url).trim();
-										if (hasImage) continue;
-										const title = (item?.title ?? '') as string;
-										const m = title.match(sizeRe);
-										if (m) {
-											const size = Number.parseInt(m[1], 10);
-											const price = (item?.unitPrice ?? item?.unit_price ?? '0') as string;
-											if (!bucketConfig.some((b) => b.size === size && b.price === price))
-												bucketConfig.push({ size, price, title });
-										}
-									}
-								}
-								if (bucketConfig.length > 0) {
-									const fromShopify = await getDiyProductImages(config, bucketConfig);
-									for (const s of [15, 10, 5] as const) {
-										if (!imageBySize[s] && fromShopify[s]) imageBySize = { ...imageBySize, [s]: fromShopify[s] };
+					imageBySize = await getProductImageUrlsBySize(ownerId);
+					const missing = [15, 10, 5].filter((s) => !imageBySize[s]);
+					if (missing.length > 0) {
+						const config = await getShopifyConfigForUser(admin, ownerId);
+						if (config) {
+							const sizeRe = /\b(15|10|5)\s*L\b/i;
+							const bucketConfig: Array<{ size: number; price: string; title: string; product_handle?: string | null }> = [];
+							for (const r of rowsWithPreview) {
+								const fromMsg =
+									r.checkout_preview != null && typeof r.checkout_preview === 'object'
+										? (r.checkout_preview as { lineItemsUI?: unknown[] }).lineItemsUI
+										: null;
+								const raw = Array.isArray(fromMsg) ? fromMsg : Array.isArray(r.line_items_ui) ? r.line_items_ui : [];
+								for (const it of raw) {
+									const item = it != null && typeof it === 'object' ? (it as Record<string, unknown>) : {};
+									const hasImage =
+										(item?.imageUrl ?? item?.image_url) &&
+										String(item?.imageUrl ?? item?.image_url).trim();
+									if (hasImage) continue;
+									const title = (item?.title ?? '') as string;
+									const m = title.match(sizeRe);
+									if (m) {
+										const size = Number.parseInt(m[1], 10);
+										const price = (item?.unitPrice ?? item?.unit_price ?? '0') as string;
+										const product_handle = (item?.product_handle ?? item?.productHandle) as string | null | undefined;
+										if (!bucketConfig.some((b) => b.size === size && b.price === price && (b.product_handle ?? '') === (product_handle ?? '')))
+											bucketConfig.push({ size, price, title, product_handle });
 									}
 								}
 							}
-							const envImageBySize: Record<15 | 10 | 5, string | undefined> = {
-								15: env.DIY_PRODUCT_IMAGE_15L,
-								10: env.DIY_PRODUCT_IMAGE_10L,
-								5: env.DIY_PRODUCT_IMAGE_5L
-							};
-							for (const s of [15, 10, 5] as const) {
-								const envUrl = envImageBySize[s]?.trim();
-								if (!imageBySize[s] && envUrl) imageBySize = { ...imageBySize, [s]: envUrl };
+							if (bucketConfig.length > 0) {
+								const fromShopify = await getDiyProductImages(config, bucketConfig);
+								for (const s of [15, 10, 5] as const) {
+									if (!imageBySize[s] && fromShopify[s]) imageBySize = { ...imageBySize, [s]: fromShopify[s] };
+								}
 							}
+						}
+						const envImageBySize: Record<15 | 10 | 5, string | undefined> = {
+							15: env.DIY_PRODUCT_IMAGE_15L,
+							10: env.DIY_PRODUCT_IMAGE_10L,
+							5: env.DIY_PRODUCT_IMAGE_5L
+						};
+						for (const s of [15, 10, 5] as const) {
+							const envUrl = envImageBySize[s]?.trim();
+							if (!imageBySize[s] && envUrl) imageBySize = { ...imageBySize, [s]: envUrl };
 						}
 					}
 				} catch {
 					// ignore
 				}
 			}
+			// Kit builder display names: so reload shows "Name in checkout" instead of product name
+			let displayNameByHandle = new Map<string, string>();
+			try {
+				const kitConfig = ownerId ? await getDefaultKitBuilderConfig(admin, ownerId) : null;
+				if (kitConfig?.product_entries?.length) {
+					const norm = (h: string) => h?.trim().toLowerCase() ?? '';
+					for (const e of kitConfig.product_entries) {
+						const h = e.product_handle?.trim();
+						const d = e.display_name?.trim();
+						if (h && d && !displayNameByHandle.has(norm(h))) displayNameByHandle.set(norm(h), d);
+					}
+				}
+			} catch {
+				// ignore
+			}
 			const messages = rawRows.map((r) => {
-				const rawLineItems = Array.isArray(r.line_items_ui) ? r.line_items_ui : [];
+				// Prefer checkout_preview from message row (survives refresh); else use joined columns
+				const fromMsg =
+					r.checkout_preview != null && typeof r.checkout_preview === 'object'
+						? (r.checkout_preview as { lineItemsUI?: unknown[]; summary?: unknown; checkoutUrl?: string; styleOverrides?: unknown })
+						: null;
+				const rawLineItems = Array.isArray(fromMsg?.lineItemsUI)
+					? fromMsg!.lineItemsUI
+					: Array.isArray(r.line_items_ui)
+						? r.line_items_ui
+						: [];
+				const hasPreview =
+					(fromMsg?.checkoutUrl && rawLineItems.length > 0) ||
+					(r.line_items_ui != null && r.checkout_url && rawLineItems.length > 0);
 				const lineItemsUI = rawLineItems.map((it: Record<string, unknown>) => {
 					let imageUrl = (it?.imageUrl ?? it?.image_url ?? null) as string | null;
 					if (!imageUrl || !String(imageUrl).trim()) {
 						const size = sizeFromTitle((it?.title ?? '') as string);
 						if (size != null && imageBySize[size]) imageUrl = imageBySize[size];
 					}
-					return { ...it, imageUrl: imageUrl ?? null };
+					const url = imageUrl?.trim() || null;
+					let title = (it?.title ?? '') as string;
+					const productHandle = (it?.product_handle ?? it?.productHandle) as string | null | undefined;
+					if (productHandle && displayNameByHandle.size > 0) {
+						const norm = (h: string) => h?.trim().toLowerCase() ?? '';
+						const customName = displayNameByHandle.get(norm(productHandle))?.replace(/\s*\d+\s*L\s*$/i, '').trim();
+						if (customName) {
+							const sizeSuffix = (title.match(/\s*\d+\s*L\s*$/i) ?? [])[0] ?? '';
+							title = customName + (sizeSuffix || '');
+						}
+					}
+					return { ...it, title, imageUrl: url, image_url: url };
 				});
-				const so = r.style_overrides && typeof r.style_overrides === 'object' ? (r.style_overrides as Record<string, unknown>) : {};
+				const soRaw =
+					fromMsg?.styleOverrides != null && typeof fromMsg.styleOverrides === 'object'
+						? (fromMsg.styleOverrides as Record<string, unknown>)
+						: r.style_overrides != null && typeof r.style_overrides === 'object'
+							? (r.style_overrides as Record<string, unknown>)
+							: {};
 				const styleOverrides =
-					so.checkout_button_color || so.qty_badge_background_color
-						? { checkoutButtonColor: so.checkout_button_color as string, qtyBadgeBackgroundColor: so.qty_badge_background_color as string }
+					soRaw.checkout_button_color ||
+					soRaw.checkoutButtonColor ||
+					soRaw.qty_badge_background_color ||
+					soRaw.qtyBadgeBackgroundColor
+						? {
+								checkoutButtonColor: (soRaw.checkoutButtonColor ?? soRaw.checkout_button_color) as string,
+								qtyBadgeBackgroundColor: (soRaw.qtyBadgeBackgroundColor ?? soRaw.qty_badge_background_color) as string
+							}
 						: undefined;
-				// Use redirect URL so we can record checkout link clicks (checkout_clicked_at)
+				const baseCheckoutUrl =
+					typeof fromMsg?.checkoutUrl === 'string' && fromMsg.checkoutUrl.trim()
+						? fromMsg.checkoutUrl.trim()
+						: r.checkout_url ?? '';
 				const redirectCheckoutUrl =
-					r.line_items_ui != null && r.checkout_url
-						? `${event.url.origin}/api/checkout/redirect?message_id=${encodeURIComponent(r.id)}`
+					hasPreview && baseCheckoutUrl
+						? baseCheckoutUrl.includes('/api/checkout/redirect')
+							? baseCheckoutUrl
+							: `${event.url.origin}/api/checkout/redirect?message_id=${encodeURIComponent(r.id)}`
 						: null;
+				const summary =
+					fromMsg?.summary != null && typeof fromMsg.summary === 'object'
+						? fromMsg.summary
+						: r.summary != null && typeof r.summary === 'object'
+							? r.summary
+							: {};
 				return {
 					id: r.id,
 					role: (r.role === 'human_agent' || r.role === 'assistant') ? 'bot' : 'user',
@@ -142,11 +213,11 @@ export const GET: RequestHandler = async (event) => {
 					createdAt: r.created_at,
 					avatarUrl: r.role === 'human_agent' ? r.avatar_url : undefined,
 					checkoutPreview:
-						r.line_items_ui != null && r.checkout_url
+						hasPreview && (redirectCheckoutUrl || baseCheckoutUrl)
 							? {
 									lineItemsUI,
-									summary: r.summary != null && typeof r.summary === 'object' ? r.summary : {},
-									checkoutUrl: redirectCheckoutUrl ?? r.checkout_url,
+									summary,
+									checkoutUrl: redirectCheckoutUrl ?? baseCheckoutUrl,
 									...(styleOverrides && { styleOverrides })
 								}
 							: undefined

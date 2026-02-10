@@ -314,13 +314,15 @@ export async function listProductsWithImages(
 	return { products: allProducts };
 }
 
+const normHandle = (h: string | null | undefined) => h?.trim().toLowerCase() ?? '';
+
 /**
  * Resolve image URLs for DIY buckets (15L, 10L, 5L) by matching Shopify products.
- * Matches by title containing the size (e.g. "15L", "10L", "5L") and optionally by variant price.
+ * Prefers match by product_handle (stable); falls back to title/variant size + price.
  */
 export async function getDiyProductImages(
 	config: ShopifyConfig,
-	bucketConfig: Array<{ size: number; price: string; title: string }>
+	bucketConfig: Array<{ size: number; price: string; title: string; product_handle?: string | null }>
 ): Promise<Record<number, string>> {
 	const { products, error } = await listProductsWithImages(config, 100);
 	const result: Record<number, string> = {};
@@ -332,17 +334,33 @@ export async function getDiyProductImages(
 		5: /\b5\s*L\b|5L/i
 	};
 
+	function productMatchesSize(p: { title: string; variants: Array<{ price: string; option1?: string | null; option2?: string | null; option3?: string | null }> }, size: number): boolean {
+		const pattern = sizePatterns[size];
+		if (!pattern) return false;
+		if (pattern.test(p.title)) return true;
+		return p.variants.some((v) =>
+			pattern.test(String(v.option1 ?? '')) || pattern.test(String(v.option2 ?? '')) || pattern.test(String(v.option3 ?? ''))
+		);
+	}
+
 	for (const bucket of bucketConfig) {
 		const pattern = sizePatterns[bucket.size];
 		if (!pattern) continue;
-		const priceNum = Number.parseFloat(bucket.price);
-		const match = products.find((p) => {
-			if (!pattern.test(p.title)) return false;
-			const variantPrice = p.variants[0]?.price;
-			if (!variantPrice) return true;
-			const vp = Number.parseFloat(variantPrice);
-			return Number.isFinite(vp) && Math.abs(vp - priceNum) < 1;
-		}) ?? products.find((p) => pattern.test(p.title));
+		const wantHandle = bucket.product_handle?.trim() ? normHandle(bucket.product_handle) : '';
+		// Prefer match by handle (stable; name in checkout can change)
+		let match = wantHandle
+			? products.find((p) => p.handle && normHandle(p.handle) === wantHandle)
+			: null;
+		if (!match) {
+			const priceNum = Number.parseFloat(bucket.price);
+			match = products.find((p) => {
+				if (!productMatchesSize(p, bucket.size)) return false;
+				const variantPrice = p.variants[0]?.price;
+				if (!variantPrice) return true;
+				const vp = Number.parseFloat(variantPrice);
+				return Number.isFinite(vp) && Math.abs(vp - priceNum) < 1;
+			}) ?? products.find((p) => productMatchesSize(p, bucket.size));
+		}
 		if (match?.imageSrc) result[bucket.size] = match.imageSrc;
 	}
 	return result;

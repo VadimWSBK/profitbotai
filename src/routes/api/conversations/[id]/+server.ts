@@ -6,6 +6,7 @@ import { syncReceivedEmailsForUser } from '$lib/sync-received-emails.server';
 import { getPrimaryEmail } from '$lib/contact-email-jsonb';
 import { getProductImageUrlsBySize } from '$lib/product-pricing.server';
 import { getShopifyConfigForUser, getDiyProductImages } from '$lib/shopify.server';
+import { getDefaultKitBuilderConfig } from '$lib/diy-kit-builder.server';
 
 const MESSAGES_PAGE_SIZE = 20;
 
@@ -63,30 +64,38 @@ export const GET: RequestHandler = async (event) => {
 		.eq('role', 'user')
 		.is('read_at', null);
 
-	// Always load from widget_conversation_messages (preferred over n8n_chat_histories)
-	let chatMessages: { id: string; role: string; content: string; read_at: string | null; created_at: string }[] = [];
+	// Always load from widget_conversation_messages (preferred over n8n_chat_histories). Include checkout_preview so Messages menu shows same data as embed.
+	type ChatMessageRow = {
+		id: string;
+		role: string;
+		content: string;
+		read_at: string | null;
+		created_at: string;
+		checkout_preview?: unknown;
+	};
+	let chatMessages: ChatMessageRow[] = [];
 	let hasMore = false;
 
 	if (since) {
 		const { data: rows, error: msgError } = await supabase
 			.from('widget_conversation_messages')
-			.select('id, role, content, read_at, created_at')
+			.select('id, role, content, read_at, created_at, checkout_preview')
 			.eq('conversation_id', id)
 			.gt('created_at', since)
 			.order('created_at', { ascending: true });
 		if (msgError) return json({ error: msgError.message }, { status: 500 });
-		chatMessages = (rows ?? []) as typeof chatMessages;
+		chatMessages = (rows ?? []) as ChatMessageRow[];
 	} else {
 		let query = supabase
 			.from('widget_conversation_messages')
-			.select('id, role, content, read_at, created_at')
+			.select('id, role, content, read_at, created_at, checkout_preview')
 			.eq('conversation_id', id)
 			.order('created_at', { ascending: false })
 			.limit(limit + 1);
 		if (before) query = query.lt('created_at', before);
 		const { data: rows, error: msgError } = await query;
 		if (msgError) return json({ error: msgError.message }, { status: 500 });
-		const raw = (rows ?? []) as typeof chatMessages;
+		const raw = (rows ?? []) as ChatMessageRow[];
 		hasMore = raw.length > limit;
 		chatMessages = raw.slice(0, limit).reverse();
 	}
@@ -106,7 +115,6 @@ export const GET: RequestHandler = async (event) => {
 
 	const assistantMessageIds = chatMessages.filter((m) => m.role === 'assistant').map((m) => m.id);
 	let previewByMessageId: Record<string, { line_items_ui: unknown; summary: unknown; checkout_url: string; style_overrides?: unknown }> = {};
-	let imageBySize: Record<number, string> = {};
 	if (assistantMessageIds.length > 0) {
 		const admin = getSupabaseAdmin();
 		const { data: previewRows } = await admin
@@ -152,53 +160,116 @@ export const GET: RequestHandler = async (event) => {
 				};
 			}
 		}
-		// Resolve product images from product_pricing (one Supabase query), then Shopify/env fallbacks
-		const ownerId = (widgetObj as { created_by?: string } | null)?.created_by ?? null;
-		if (ownerId && Object.keys(previewByMessageId).length > 0) {
-			try {
-				imageBySize = await getProductImageUrlsBySize(ownerId);
-				// Fallback: Shopify + env for any size still missing
-				const missing = [15, 10, 5].filter((s) => !imageBySize[s]);
-				if (missing.length > 0) {
-					const config = await getShopifyConfigForUser(admin, ownerId);
-					if (config) {
-						const bucketConfig: Array<{ size: number; price: string; title: string }> = [];
-						const sizeRe = /\b(15|10|5)\s*L\b/i;
-						for (const row of Object.values(previewByMessageId)) {
-							const raw = Array.isArray(row.line_items_ui) ? row.line_items_ui : [];
-							for (const it of raw) {
-								const item = it != null && typeof it === 'object' ? (it as Record<string, unknown>) : {};
-								const hasImage = (item?.imageUrl ?? item?.image_url) && String(item?.imageUrl ?? item?.image_url).trim();
-								if (hasImage) continue;
-								const title = (item?.title ?? '') as string;
-								const m = title.match(sizeRe);
-								if (m) {
-									const size = Number.parseInt(m[1], 10);
-									const price = (item?.unitPrice ?? item?.unit_price ?? '0') as string;
-									if (!bucketConfig.some((b) => b.size === size && b.price === price)) bucketConfig.push({ size, price, title });
-								}
-							}
+	}
+
+	// Effective preview per message: prefer message.checkout_preview (survives refresh), else joined widget_checkout_previews
+	type EffectivePreview = {
+		lineItemsUI: unknown[];
+		summary: Record<string, unknown>;
+		checkoutUrl: string;
+		styleOverrides?: { checkoutButtonColor?: string; qtyBadgeBackgroundColor?: string };
+	};
+	const effectivePreviewByMessageId: Record<string, EffectivePreview> = {};
+	const allLineItemsForImages: Array<Record<string, unknown>> = [];
+	for (const m of chatMessages) {
+		if (m.role !== 'assistant') continue;
+		const fromMsg =
+			m.checkout_preview != null && typeof m.checkout_preview === 'object'
+				? (m.checkout_preview as { lineItemsUI?: unknown[]; summary?: unknown; checkoutUrl?: string; styleOverrides?: unknown })
+				: null;
+		const fromTable = previewByMessageId[m.id];
+		const rawLineItems = Array.isArray(fromMsg?.lineItemsUI)
+			? fromMsg!.lineItemsUI
+			: Array.isArray(fromTable?.line_items_ui)
+				? fromTable!.line_items_ui
+				: [];
+		const checkoutUrl =
+			(typeof fromMsg?.checkoutUrl === 'string' && fromMsg.checkoutUrl.trim()) || (typeof fromTable?.checkout_url === 'string' && fromTable?.checkout_url.trim()) || '';
+		if (rawLineItems.length > 0 && checkoutUrl) {
+			const soRaw =
+				fromMsg?.styleOverrides != null && typeof fromMsg.styleOverrides === 'object'
+					? (fromMsg.styleOverrides as Record<string, unknown>)
+					: fromTable?.style_overrides != null && typeof fromTable.style_overrides === 'object'
+						? (fromTable.style_overrides as Record<string, unknown>)
+						: {};
+			const styleOverrides =
+				soRaw.checkout_button_color || soRaw.checkoutButtonColor || soRaw.qty_badge_background_color || soRaw.qtyBadgeBackgroundColor
+					? {
+							checkoutButtonColor: (soRaw.checkoutButtonColor ?? soRaw.checkout_button_color) as string,
+							qtyBadgeBackgroundColor: (soRaw.qtyBadgeBackgroundColor ?? soRaw.qty_badge_background_color) as string
 						}
-						if (bucketConfig.length > 0) {
-							const fromShopify = await getDiyProductImages(config, bucketConfig);
-							for (const s of [15, 10, 5] as const) {
-								if (!imageBySize[s] && fromShopify[s]) imageBySize = { ...imageBySize, [s]: fromShopify[s] };
-							}
+					: undefined;
+			const summary =
+				(fromMsg?.summary != null && typeof fromMsg.summary === 'object' ? fromMsg.summary : fromTable?.summary) != null &&
+				typeof (fromMsg?.summary ?? fromTable?.summary) === 'object'
+					? (fromMsg?.summary ?? fromTable?.summary) as Record<string, unknown>
+					: {};
+			effectivePreviewByMessageId[m.id] = {
+				lineItemsUI: rawLineItems,
+				summary,
+				checkoutUrl: checkoutUrl.trim(),
+				...(styleOverrides && { styleOverrides })
+			};
+			for (const it of rawLineItems) {
+				if (it != null && typeof it === 'object') allLineItemsForImages.push(it as Record<string, unknown>);
+			}
+		}
+	}
+
+	let imageBySize: Record<number, string> = {};
+	let displayNameByHandle = new Map<string, string>();
+	const ownerId = (widgetObj as { created_by?: string } | null)?.created_by ?? null;
+	if (ownerId && (Object.keys(effectivePreviewByMessageId).length > 0 || allLineItemsForImages.length > 0)) {
+		try {
+			imageBySize = await getProductImageUrlsBySize(ownerId);
+			const admin = getSupabaseAdmin();
+			const missing = [15, 10, 5].filter((s) => !imageBySize[s]);
+			if (missing.length > 0 && allLineItemsForImages.length > 0) {
+				const config = await getShopifyConfigForUser(admin, ownerId);
+				if (config) {
+					const sizeRe = /\b(15|10|5)\s*L\b/i;
+					const bucketConfig: Array<{ size: number; price: string; title: string; product_handle?: string | null }> = [];
+					for (const item of allLineItemsForImages) {
+						const hasImage = (item?.imageUrl ?? item?.image_url) && String(item?.imageUrl ?? item?.image_url).trim();
+						if (hasImage) continue;
+						const title = (item?.title ?? '') as string;
+						const match = title.match(sizeRe);
+						if (match) {
+							const size = Number.parseInt(match[1], 10);
+							const price = (item?.unitPrice ?? item?.unit_price ?? '0') as string;
+							const product_handle = (item?.product_handle ?? item?.productHandle) as string | null | undefined;
+							if (!bucketConfig.some((b) => b.size === size && b.price === price && (b.product_handle ?? '') === (product_handle ?? '')))
+								bucketConfig.push({ size, price, title, product_handle });
 						}
 					}
-					const envImageBySize: Record<15 | 10 | 5, string | undefined> = {
-						15: env.DIY_PRODUCT_IMAGE_15L,
-						10: env.DIY_PRODUCT_IMAGE_10L,
-						5: env.DIY_PRODUCT_IMAGE_5L
-					};
-					for (const s of [15, 10, 5] as const) {
-						const envUrl = envImageBySize[s]?.trim();
-						if (!imageBySize[s] && envUrl) imageBySize = { ...imageBySize, [s]: envUrl };
+					if (bucketConfig.length > 0) {
+						const fromShopify = await getDiyProductImages(config, bucketConfig);
+						for (const s of [15, 10, 5] as const) {
+							if (!imageBySize[s] && fromShopify[s]) imageBySize = { ...imageBySize, [s]: fromShopify[s] };
+						}
 					}
 				}
-			} catch {
-				// ignore – images stay as placeholders
+				const envImageBySize: Record<15 | 10 | 5, string | undefined> = {
+					15: env.DIY_PRODUCT_IMAGE_15L,
+					10: env.DIY_PRODUCT_IMAGE_10L,
+					5: env.DIY_PRODUCT_IMAGE_5L
+				};
+				for (const s of [15, 10, 5] as const) {
+					const envUrl = envImageBySize[s]?.trim();
+					if (!imageBySize[s] && envUrl) imageBySize = { ...imageBySize, [s]: envUrl };
+				}
 			}
+			const kitConfig = await getDefaultKitBuilderConfig(admin, ownerId);
+			if (kitConfig?.product_entries?.length) {
+				const norm = (h: string) => h?.trim().toLowerCase() ?? '';
+				for (const e of kitConfig.product_entries) {
+					const h = e.product_handle?.trim();
+					const d = e.display_name?.trim();
+					if (h && d && !displayNameByHandle.has(norm(h))) displayNameByHandle.set(norm(h), d);
+				}
+			}
+		} catch {
+			// ignore
 		}
 	}
 
@@ -219,8 +290,18 @@ export const GET: RequestHandler = async (event) => {
 		};
 	};
 	const chatUnified: UnifiedMessage[] = chatMessages.map((m) => {
-		const preview = previewByMessageId[m.id];
-		const rawLineItems = Array.isArray(preview?.line_items_ui) ? preview.line_items_ui : [];
+		const preview = effectivePreviewByMessageId[m.id];
+		if (!preview) {
+			return {
+				id: m.id,
+				role: m.role,
+				content: typeof m.content === 'string' ? m.content : String(m.content ?? ''),
+				readAt: m.read_at,
+				createdAt: m.created_at,
+				channel: 'chat' as const
+			};
+		}
+		const rawLineItems = Array.isArray(preview.lineItemsUI) ? preview.lineItemsUI : [];
 		const lineItemsUI = rawLineItems.map((it: unknown) => {
 			const item = it != null && typeof it === 'object' ? (it as Record<string, unknown>) : {};
 			let imageUrl = (item?.imageUrl ?? item?.image_url ?? null) as string | null;
@@ -228,8 +309,23 @@ export const GET: RequestHandler = async (event) => {
 				const size = sizeFromTitle((item?.title ?? '') as string);
 				if (size != null && imageBySize[size]) imageUrl = imageBySize[size];
 			}
-			return { ...item, imageUrl: imageUrl ?? null };
+			const url = imageUrl?.trim() || null;
+			let title = (item?.title ?? '') as string;
+			const productHandle = (item?.product_handle ?? item?.productHandle) as string | null | undefined;
+			if (productHandle && displayNameByHandle.size > 0) {
+				const norm = (h: string) => h?.trim().toLowerCase() ?? '';
+				const customName = displayNameByHandle.get(norm(productHandle))?.replace(/\s*\d+\s*L\s*$/i, '').trim();
+				if (customName) {
+					const sizeSuffix = (title.match(/\s*\d+\s*L\s*$/i) ?? [])[0] ?? '';
+					title = customName + (sizeSuffix || '');
+				}
+			}
+			return { ...item, title, imageUrl: url, image_url: url };
 		});
+		const redirectUrl =
+			preview.checkoutUrl.includes('/api/checkout/redirect')
+				? preview.checkoutUrl
+				: `${event.url.origin}/api/checkout/redirect?message_id=${encodeURIComponent(m.id)}`;
 		return {
 			id: m.id,
 			role: m.role,
@@ -237,21 +333,12 @@ export const GET: RequestHandler = async (event) => {
 			readAt: m.read_at,
 			createdAt: m.created_at,
 			channel: 'chat' as const,
-			...(preview && {
-				checkoutPreview: (() => {
-					const so = preview.style_overrides && typeof preview.style_overrides === 'object' ? (preview.style_overrides as Record<string, unknown>) : {};
-					const styleOverrides =
-						so.checkout_button_color || so.qty_badge_background_color
-							? { checkoutButtonColor: so.checkout_button_color as string, qtyBadgeBackgroundColor: so.qty_badge_background_color as string }
-							: undefined;
-					return {
-						lineItemsUI,
-						summary: (preview.summary != null && typeof preview.summary === 'object' ? preview.summary : {}) as Record<string, unknown>,
-						checkoutUrl: preview.checkout_url,
-						...(styleOverrides && { styleOverrides })
-					};
-				})()
-			})
+			checkoutPreview: {
+				lineItemsUI,
+				summary: preview.summary,
+				checkoutUrl: redirectUrl,
+				...(preview.styleOverrides && { styleOverrides: preview.styleOverrides })
+			}
 		};
 	});
 	const emailUnified: UnifiedMessage[] = emailRows.map((e) => {

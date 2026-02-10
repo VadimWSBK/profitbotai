@@ -183,6 +183,16 @@
 		});
 	}
 
+	/** Parse "Additional address: ..." lines from merged contact note for display. */
+	function additionalAddressesFromNote(note: string | null | undefined): string[] {
+		if (!note?.trim()) return [];
+		return note
+			.split(/\n/)
+			.filter((line) => line.startsWith('Additional address: '))
+			.map((line) => line.replace(/^Additional address: /, '').trim())
+			.filter(Boolean);
+	}
+
 	function backToList() {
 		selectedContact = null;
 		contactDetail = null;
@@ -965,6 +975,16 @@
 										<div class="sm:col-span-2">
 											<dt class="text-xs font-medium text-gray-500 uppercase">Address (legacy)</dt>
 											<dd class="mt-0.5 text-gray-900">{contactDetail.address}</dd>
+										</div>
+									{/if}
+									{#if additionalAddressesFromNote(contactDetail.note).length > 0}
+										<div class="sm:col-span-2">
+											<dt class="text-xs font-medium text-gray-500 uppercase">Additional addresses</dt>
+											<dd class="mt-0.5 space-y-1">
+												{#each additionalAddressesFromNote(contactDetail.note) as addr}
+													<div class="text-gray-900">{addr}</div>
+												{/each}
+											</dd>
 										</div>
 									{/if}
 								</dl>

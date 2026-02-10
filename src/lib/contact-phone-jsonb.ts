@@ -1,6 +1,6 @@
 /**
  * Helpers for contact.phone stored as JSONB array of strings ["+1234567890", "+0987654321"].
- * First element = primary phone for backward compatibility.
+ * First element = primary phone (used for communication: SMS, etc.).
  */
 
 export function parsePhonesFromDb(value: unknown): string[] {
@@ -17,7 +17,7 @@ export function parsePhonesFromDb(value: unknown): string[] {
 	return [];
 }
 
-/** Primary phone = first in array, or null if empty. */
+/** Primary phone = first in array (used for outbound communication), or null if empty. */
 export function getPrimaryPhone(value: unknown): string | null {
 	const arr = parsePhonesFromDb(value);
 	return arr.length > 0 ? arr[0] : null;

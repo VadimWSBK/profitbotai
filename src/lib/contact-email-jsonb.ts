@@ -1,6 +1,6 @@
 /**
  * Helpers for contact.email stored as JSONB array of strings ["a@x.com", "b@y.com"].
- * First element = primary email for backward compatibility.
+ * First element = primary email (used for communication: sending emails, quotes, etc.).
  */
 
 export function parseEmailsFromDb(value: unknown): string[] {
@@ -17,7 +17,7 @@ export function parseEmailsFromDb(value: unknown): string[] {
 	return [];
 }
 
-/** Primary email = first in array, or null if empty. */
+/** Primary email = first in array (used for outbound communication), or null if empty. */
 export function getPrimaryEmail(value: unknown): string | null {
 	const arr = parseEmailsFromDb(value);
 	return arr.length > 0 ? arr[0] : null;

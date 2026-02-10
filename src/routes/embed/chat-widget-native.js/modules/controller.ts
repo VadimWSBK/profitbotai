@@ -574,7 +574,13 @@ export const controller = String.raw`
             state.showStarterPrompts = false;
           }
 
-          state.agentTyping = !!data.agentTyping;
+          // Don't show typing when we already have the full response (same message count, last is bot)
+          var lastFromServer = list.length > 0 ? list[list.length - 1] : null;
+          var serverSaysTyping = !!data.agentTyping;
+          if (serverSaysTyping && list.length === state.messages.length && lastFromServer && (lastFromServer.role === 'bot' || lastFromServer.role === 'assistant')) {
+            serverSaysTyping = false;
+          }
+          state.agentTyping = serverSaysTyping;
           state.agentAvatarUrl = data.agentAvatarUrl || null;
           
           // If we received new messages, reset polling attempts (keep polling)
@@ -1034,7 +1040,12 @@ export const controller = String.raw`
             state.renderedIds = {};
             renderMessages(true);
           }
-          state.agentTyping = !!data.agentTyping;
+          var lastFromServer = list.length > 0 ? list[list.length - 1] : null;
+          var serverSaysTyping = !!data.agentTyping;
+          if (serverSaysTyping && list.length === state.messages.length && lastFromServer && (lastFromServer.role === 'bot' || lastFromServer.role === 'assistant')) {
+            serverSaysTyping = false;
+          }
+          state.agentTyping = serverSaysTyping;
           state.agentAvatarUrl = data.agentAvatarUrl || null;
         })
         .catch(function() {});

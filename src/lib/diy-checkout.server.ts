@@ -95,6 +95,19 @@ function displayNameMap(
 	return m;
 }
 
+/** Map product_handle -> display_name (first entry per handle). Used when handle|role lookup misses. */
+function displayNameByHandleOnly(
+	productEntries: Array<{ product_handle?: string; role?: string; display_name?: string | null }>
+): Map<string, string> {
+	const m = new Map<string, string>();
+	for (const e of productEntries) {
+		const h = e.product_handle?.trim();
+		const d = e.display_name?.trim();
+		if (h && d && !m.has(normHandle(h))) m.set(normHandle(h), d);
+	}
+	return m;
+}
+
 /** Resolve roof-kit breakdown to checkout line items (match by role → handles from config, then size). */
 function resolveRoofKitToLineItems(
 	kitItems: RoofKitLineItem[],
@@ -102,9 +115,10 @@ function resolveRoofKitToLineItems(
 	roleHandles: RoofKitRoleHandles,
 	imageBySize: Record<number, string>,
 	productEntries?: Array<{ product_handle?: string; role?: string; display_name?: string | null }>
-): Array<{ title: string; quantity: number; price: string; imageUrl?: string; variantId?: number }> {
+): Array<{ title: string; quantity: number; price: string; imageUrl?: string; variantId?: number; productHandle?: string | null }> {
 	const displayByHandleRole = productEntries?.length ? displayNameMap(productEntries) : new Map<string, string>();
-	const out: Array<{ title: string; quantity: number; price: string; imageUrl?: string; variantId?: number }> = [];
+	const displayByHandle = productEntries?.length ? displayNameByHandleOnly(productEntries) : new Map<string, string>();
+	const out: Array<{ title: string; quantity: number; price: string; imageUrl?: string; variantId?: number; productHandle?: string | null }> = [];
 	for (const item of kitItems) {
 		const handlesForRole = roleHandles[item.role];
 		const handleSet = new Set(
@@ -124,7 +138,8 @@ function resolveRoofKitToLineItems(
 		const variant = product.variants.find((v) => v.sizeLitres === item.sizeLitres) ?? product.variants[0];
 		if (!variant) continue;
 		const key = normHandle(product.productHandle ?? '') + '|' + item.role;
-		let customName = displayByHandleRole.get(key)?.trim();
+		// Prefer "Name in checkout" from kit builder: handle|role first, then handle-only fallback
+		let customName = displayByHandleRole.get(key)?.trim() || displayByHandle.get(normHandle(product.productHandle ?? ''))?.trim();
 		// Strip trailing variant (e.g. " 15L") so we always append the correct size once: "{chosen name} {variant size}"
 		if (customName) customName = customName.replace(/\s*\d+\s*L\s*$/i, '').trim() || customName;
 		const baseName = customName || product.name;
@@ -135,7 +150,8 @@ function resolveRoofKitToLineItems(
 			quantity: item.quantity,
 			price: variant.price.toFixed(2),
 			imageUrl: variant.imageUrl ?? imageBySize[variant.sizeLitres],
-			variantId: variant.shopifyVariantId ?? undefined
+			variantId: variant.shopifyVariantId ?? undefined,
+			productHandle: product.productHandle ?? undefined
 		});
 	}
 	return out;
@@ -176,6 +192,7 @@ export async function createDiyCheckoutForOwner(
 		price: string;
 		imageUrl?: string;
 		variantId?: number;
+		productHandle?: string | null;
 	}> = [];
 	let litres = 0;
 	let notePrefix = 'DIY quote';
@@ -202,7 +219,12 @@ export async function createDiyCheckoutForOwner(
 	try {
 		imageBySize = await getDiyProductImages(
 			config,
-			flat.map((row) => ({ size: row.sizeLitres, price: String(row.price), title: row.name }))
+			flat.map((row) => ({
+				size: row.sizeLitres,
+				price: String(row.price),
+				title: row.name,
+				product_handle: row.productHandle ?? undefined
+			}))
 		);
 	} catch {
 		// ignore
@@ -257,7 +279,8 @@ export async function createDiyCheckoutForOwner(
 							quantity: qty,
 							price: row.price.toFixed(2),
 							imageUrl: row.imageUrl ?? imageBySize[row.sizeLitres],
-							variantId: row.shopifyVariantId ?? undefined
+							variantId: row.shopifyVariantId ?? undefined,
+							productHandle: row.productHandle ?? undefined
 						});
 					}
 				}
@@ -289,7 +312,8 @@ export async function createDiyCheckoutForOwner(
 					quantity: qty,
 					price: row.price.toFixed(2),
 					imageUrl: row.imageUrl ?? imageBySize[row.sizeLitres],
-					variantId: row.shopifyVariantId ?? undefined
+					variantId: row.shopifyVariantId ?? undefined,
+					productHandle: row.productHandle ?? undefined
 				});
 			}
 		}
@@ -350,7 +374,8 @@ export async function createDiyCheckoutForOwner(
 				variant,
 				quantity: li.quantity,
 				unitPrice: fmt(unitPrice),
-				lineTotal: fmt(lineTotal)
+				lineTotal: fmt(lineTotal),
+				...(li.productHandle != null && li.productHandle !== '' && { product_handle: li.productHandle })
 			};
 		});
 		const summary = {
@@ -452,7 +477,8 @@ export async function createDiyCheckoutForOwner(
 				variant,
 				quantity,
 				unitPrice: fmt(unitPrice),
-				lineTotal: fmt(lineTotal)
+				lineTotal: fmt(lineTotal),
+				...(li.productHandle != null && li.productHandle !== '' && { product_handle: li.productHandle })
 			};
 		});
 
@@ -499,7 +525,8 @@ export async function createDiyCheckoutForOwner(
 			variant,
 			quantity,
 			unitPrice: fmt(unitPrice),
-			lineTotal: fmt(lineTotal)
+			lineTotal: fmt(lineTotal),
+			...(li.productHandle != null && li.productHandle !== '' && { product_handle: li.productHandle })
 		};
 	});
 

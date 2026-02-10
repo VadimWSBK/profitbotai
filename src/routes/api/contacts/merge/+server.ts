@@ -244,62 +244,52 @@ export const POST: RequestHandler = async (event) => {
 		return json({ error: updateError.message }, { status: 500 });
 	}
 
-	// Update conversation_id references: point all other contacts' conversations to base contact
-	// (if they have conversations)
-	const otherConversationIds = otherContacts
+	// All conversation IDs from merged contacts (so we can point them to base contact)
+	const allConversationIds = contacts
 		.map((c) => c.conversation_id)
 		.filter(Boolean) as string[];
 
-	if (otherConversationIds.length > 0) {
-		// If base contact doesn't have a conversation, use the first other contact's conversation
-		if (!baseContact.conversation_id && otherConversationIds.length > 0) {
-			await supabase
-				.from('contacts')
-				.update({ conversation_id: otherConversationIds[0] })
-				.eq('id', baseContact.id);
-		}
-
-		// Update widget_conversations to point to base contact's conversation_id
-		// (This is a bit complex - we'll handle it by updating contacts that reference these conversations)
-		// Actually, we should update the conversations table to point to the base contact
-		// But for now, let's just update the contact_emails table if needed
-	}
-
-	// Handle other contacts: keep those with conversations (update identity to match base),
-	// delete those without conversations
-	const othersWithConversation = otherContacts.filter((c) => c.conversation_id);
-	const othersWithoutConversation = otherContacts.filter((c) => !c.conversation_id);
-
-	// Update contacts that have conversations: mirror base contact's identity so they
-	// group together in the Messages sidebar
-	if (othersWithConversation.length > 0) {
-		const { error: aliasError } = await supabase
-			.from('contacts')
-			.update({
-				name: mergedName,
-				email: mergedEmails.length > 0 ? mergedEmails : [],
-				phone: mergedPhones.length > 0 ? mergedPhones : [],
-				tags: mergedTags.length > 0 ? mergedTags : [],
-				updated_at: new Date().toISOString()
-			})
-			.in('id', othersWithConversation.map((c) => c.id));
-
-		if (aliasError) {
-			console.error('POST /api/contacts/merge alias update:', aliasError);
+	// 1) Point all those conversations to the base contact (widget_conversations.contact_id)
+	if (allConversationIds.length > 0) {
+		const { error: convUpdateError } = await supabase
+			.from('widget_conversations')
+			.update({ contact_id: baseContact.id })
+			.in('id', allConversationIds);
+		if (convUpdateError) {
+			console.error('POST /api/contacts/merge widget_conversations update:', convUpdateError);
 		}
 	}
 
-	// Delete contacts that have no conversation (no session to preserve)
-	if (othersWithoutConversation.length > 0) {
-		const { error: deleteError } = await supabase
+	// 2) If base contact has no conversation_id, set it to one of the merged conversations (primary)
+	if (!baseContact.conversation_id && allConversationIds.length > 0) {
+		await supabase
 			.from('contacts')
-			.delete()
-			.in('id', othersWithoutConversation.map((c) => c.id));
+			.update({ conversation_id: allConversationIds[0] })
+			.eq('id', baseContact.id);
+	}
 
-		if (deleteError) {
-			console.error('POST /api/contacts/merge delete:', deleteError);
-			console.warn('Failed to delete merged contacts, but merge completed');
+	const otherContactIds = otherContacts.map((c) => c.id);
+
+	// 3) Reassign contact_emails from other contacts to base contact (so we don't lose email history)
+	if (otherContactIds.length > 0) {
+		const { error: emailReassignError } = await supabase
+			.from('contact_emails')
+			.update({ contact_id: baseContact.id })
+			.in('contact_id', otherContactIds);
+		if (emailReassignError) {
+			console.error('POST /api/contacts/merge contact_emails reassign:', emailReassignError);
 		}
+	}
+
+	// 4) Delete all other contact rows (leads for those contacts are cascade-deleted; one contact can only have one lead) so we truly have one merged contact
+	const { error: deleteError } = await supabase
+		.from('contacts')
+		.delete()
+		.in('id', otherContactIds);
+
+	if (deleteError) {
+		console.error('POST /api/contacts/merge delete:', deleteError);
+		return json({ error: deleteError.message }, { status: 500 });
 	}
 
 	return json({

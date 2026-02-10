@@ -896,7 +896,7 @@ export const POST: RequestHandler = async (event) => {
 						const config = await getShopifyConfigForUser(adminSupabaseForTyping, ownerId);
 						if (config) {
 							const sizeRe = /\b(15|10|5)\s*L\b/i;
-							const bucketConfig: Array<{ size: number; price: string; title: string }> = [];
+							const bucketConfig: Array<{ size: number; price: string; title: string; product_handle?: string | null }> = [];
 							for (const it of checkoutPreview.lineItemsUI) {
 								const item = (it != null && typeof it === 'object' && it !== null) ? it as Record<string, unknown> : {};
 								const hasImage = (item?.imageUrl ?? item?.image_url) && String(item?.imageUrl ?? item?.image_url).trim();
@@ -906,7 +906,8 @@ export const POST: RequestHandler = async (event) => {
 								if (m) {
 									const size = Number.parseInt(m[1], 10);
 									const price = (item?.unitPrice ?? item?.unit_price ?? '0') as string;
-									if (!bucketConfig.some((b) => b.size === size && b.price === price)) bucketConfig.push({ size, price, title });
+									const product_handle = (item?.product_handle ?? item?.productHandle) as string | null | undefined;
+									if (!bucketConfig.some((b) => b.size === size && b.price === price && (b.product_handle ?? '') === (product_handle ?? ''))) bucketConfig.push({ size, price, title, product_handle });
 								}
 							}
 							if (bucketConfig.length > 0) {
@@ -939,14 +940,22 @@ export const POST: RequestHandler = async (event) => {
 								const size = sizeFromTitle((item?.title ?? '') as string);
 								if (size != null && imageBySize[size]) imageUrl = imageBySize[size];
 							}
-							return { ...item, imageUrl: imageUrl ?? null };
+							const url = imageUrl?.trim() || null;
+							// Persist both keys so reload and any consumer get the image
+							return { ...item, imageUrl: url, image_url: url };
 						})
 					};
-					// Persist enriched line_items_ui (with imageUrl) so after refresh the embed loads images from DB
+					// Persist enriched line_items_ui (with imageUrl + image_url) so after refresh the embed loads images from DB
 					if (insertedMessageId && checkoutPreview.lineItemsUI?.length) {
+						const toPersist = checkoutPreview.lineItemsUI.map((it: unknown) => {
+							const item = (it != null && typeof it === 'object' ? it : {}) as Record<string, unknown>;
+							const url = (item?.imageUrl ?? item?.image_url ?? null) as string | null;
+							const u = url?.trim() || null;
+							return { ...item, imageUrl: u, image_url: u };
+						});
 						const { error: updateErr } = await adminSupabaseForTyping
 							.from('widget_checkout_previews')
-							.update({ line_items_ui: checkoutPreview.lineItemsUI })
+							.update({ line_items_ui: toPersist })
 							.eq('message_id', insertedMessageId);
 						if (updateErr) console.error('Failed to persist checkout preview images:', updateErr);
 					}
@@ -955,13 +964,31 @@ export const POST: RequestHandler = async (event) => {
 				}
 			}
 			// Use redirect URL for checkout link so we can record clicks (checkout_clicked_at)
+			const redirectUrl =
+				insertedMessageId && event?.url?.origin
+					? `${event.url.origin}/api/checkout/redirect?message_id=${encodeURIComponent(insertedMessageId)}`
+					: checkoutPreview?.checkoutUrl ?? '';
 			const checkoutPayload =
 				checkoutPreview && insertedMessageId
-					? {
-							...checkoutPreview,
-							checkoutUrl: `${event.url.origin}/api/checkout/redirect?message_id=${encodeURIComponent(insertedMessageId)}`
-						}
+					? { ...checkoutPreview, checkoutUrl: redirectUrl || checkoutPreview.checkoutUrl }
 					: checkoutPreview;
+			// Persist full checkout result on the message row so it survives refresh (no join needed)
+			if (insertedMessageId && checkoutPayload && checkoutPayload.lineItemsUI?.length) {
+				const { error: msgUpdateErr } = await adminSupabaseForTyping
+					.from('widget_conversation_messages')
+					.update({
+						checkout_preview: {
+							checkoutUrl: checkoutPayload.checkoutUrl,
+							lineItemsUI: checkoutPayload.lineItemsUI,
+							summary: checkoutPayload.summary ?? {},
+							...(checkoutPayload.styleOverrides && { styleOverrides: checkoutPayload.styleOverrides })
+						}
+					})
+					.eq('id', insertedMessageId);
+				if (msgUpdateErr) console.error('Failed to persist message checkout_preview:', msgUpdateErr);
+			}
+			// Clear typing again right before response so any poll (e.g. silentSync) sees agent done
+			await clearAiTyping();
 			return json({
 				message: text,
 				output: text,
