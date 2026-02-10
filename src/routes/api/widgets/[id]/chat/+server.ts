@@ -734,12 +734,28 @@ export const POST: RequestHandler = async (event) => {
 			parts.push(`${instruction}\n\n${triggerResult.webhookResult}`);
 		}
 
+		// Instruct the model to act on the user's last message instead of re-asking or repeating options
+		parts.push(
+			"Respond directly to the user's latest message. If they have already stated what they want (e.g. a DIY quote, a done-for-you quote, or specific info), proceed with that—do not reintroduce yourself or re-ask the same options."
+		);
+
 		const systemPrompt = parts.length > 0 ? parts.join('\n\n') : 'You are a helpful assistant.';
 
 		const modelMessages = llmHistory.map((m) => ({
 			role: m.role as 'user' | 'assistant' | 'system',
 			content: m.content
 		}));
+
+		// Optional: log what we send to the LLM (set CHAT_DEBUG=1 in env to verify role, tone, history)
+		if (env.CHAT_DEBUG === '1' || env.CHAT_DEBUG === 'true') {
+			const lastUser = [...modelMessages].reverse().find((m) => m.role === 'user');
+			console.debug('[chat] LLM input:', {
+				systemPromptChars: systemPrompt.length,
+				systemPromptPreview: systemPrompt.slice(0, 300) + (systemPrompt.length > 300 ? '...' : ''),
+				messageCount: modelMessages.length,
+				lastUserMessage: lastUser?.content?.slice(0, 200) ?? null
+			});
+		}
 
 		const agentContext = agentAutonomy
 			? {
