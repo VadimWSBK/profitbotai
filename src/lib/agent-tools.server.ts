@@ -32,11 +32,25 @@ export type AgentToolContext = {
 	origin?: string;
 };
 
-function getContext(ctx: unknown): AgentToolContext | null {
-	if (ctx && typeof ctx === 'object' && 'conversationId' in ctx && 'widgetId' in ctx && 'ownerId' in ctx) {
-		return ctx as AgentToolContext;
+/** Minimal context for tools that only need ownerId (e.g. Chatwoot webhook). conversationId/widgetId may be empty. */
+export type AgentToolContextMinimal = Pick<AgentToolContext, 'ownerId' | 'contact' | 'extractedRoofSize' | 'origin'> & {
+	conversationId?: string;
+	widgetId?: string;
+};
+
+function getContext(ctx: unknown): AgentToolContext | AgentToolContextMinimal | null {
+	if (ctx && typeof ctx === 'object' && 'ownerId' in ctx) {
+		return ctx as AgentToolContext | AgentToolContextMinimal;
 	}
 	return null;
+}
+
+/** True when context has widget + conversation (e.g. in-app widget). False for Chatwoot/owner-only context. */
+function hasWidgetConversation(c: AgentToolContext | AgentToolContextMinimal | null): c is AgentToolContext {
+	if (!c || !('conversationId' in c) || !('widgetId' in c)) return false;
+	const conv = (c as AgentToolContext).conversationId;
+	const wid = (c as AgentToolContext).widgetId;
+	return typeof conv === 'string' && conv.length > 0 && typeof wid === 'string' && wid.length > 0;
 }
 
 function buildTools(admin: SupabaseClient): Record<string, Tool> {
@@ -54,6 +68,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 		) => {
 			const c = getContext(experimental_context);
 			if (!c) return { error: 'Missing context', contacts: [] };
+			if (!hasWidgetConversation(c)) return { contacts: [], message: 'Contact search is not available in this channel.' };
 			const q = query.trim().toLowerCase();
 			if (!q) return { contacts: [], message: 'Provide a search term (name or email).' };
 			// Search by name only (email is jsonb array; partial match would need RPC)
@@ -116,6 +131,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 		) => {
 			const c = getContext(experimental_context);
 			if (!c) return { error: 'Missing context' };
+			if (!hasWidgetConversation(c)) return { error: 'This action is not available in this channel.' };
 			const updates: Record<string, string | number | string[]> = {};
 			if (name?.trim()) updates.name = name.trim();
 			if (email?.trim()) updates.email = emailsToJsonb(email);
@@ -152,6 +168,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 		) => {
 			const c = getContext(experimental_context);
 			if (!c) return { error: 'Missing context' };
+			if (!hasWidgetConversation(c)) return { error: 'This action is not available in this channel.' };
 			const updates: Record<string, string | number | string[]> = {};
 			if (name?.trim()) updates.name = name.trim();
 			if (phone?.trim()) updates.phone = phone.trim();
@@ -184,6 +201,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 		execute: async (_, { experimental_context }: { experimental_context?: unknown }) => {
 			const c = getContext(experimental_context);
 			if (!c) return { error: 'Missing context' };
+			if (!hasWidgetConversation(c)) return { error: 'This action is not available in this channel.' };
 			const { error } = await admin
 				.from('contacts')
 				.delete()
@@ -209,6 +227,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 		) => {
 			const c = getContext(experimental_context);
 			if (!c) return { error: 'Missing context' };
+			if (!hasWidgetConversation(c)) return { error: 'This action is not available in this channel.' };
 			const contact = c.contact;
 			if (!contact?.name?.trim()) return { error: 'Contact name is required for a quote. Ask the user for their name.' };
 			if (!getPrimaryEmail(contact?.email)?.trim()) return { error: 'Contact email is required for a quote. Ask the user for their email.' };
@@ -314,6 +333,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 		) => {
 			const c = getContext(experimental_context);
 			if (!c) return { error: 'Missing context' };
+			if (!hasWidgetConversation(c)) return { error: 'This action is not available in this channel.' };
 			const text = content?.trim();
 			if (!text) return { error: 'Message content is required.' };
 			const { error } = await admin.from('widget_conversation_messages').insert({
@@ -350,6 +370,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 		execute: async (_, { experimental_context }: { experimental_context?: unknown }) => {
 			const c = getContext(experimental_context);
 			if (!c) return { error: 'Missing context' };
+			if (!hasWidgetConversation(c)) return { stage: null, message: 'This action is not available in this channel.' };
 			const { data: contactRow } = await admin
 				.from('contacts')
 				.select('id')
@@ -385,6 +406,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 		) => {
 			const c = getContext(experimental_context);
 			if (!c) return { error: 'Missing context' };
+			if (!hasWidgetConversation(c)) return { error: 'This action is not available in this channel.' };
 			let targetStageId: string | null = null;
 			if (stage_id?.trim()) {
 				const { data: stageRow } = await admin
@@ -544,17 +566,20 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 							qty_badge_background_color: styleOverrides.qtyBadgeBackgroundColor ?? null
 						}
 					: {};
-			const { error: previewErr } = await admin
-				.from('widget_checkout_previews')
-				.insert({
-					conversation_id: c.conversationId,
-					widget_id: c.widgetId,
-					line_items_ui: lineItemsUI,
-					summary,
-					checkout_url: checkoutUrl,
-					...(Object.keys(styleOverridesDb).length > 0 && { style_overrides: styleOverridesDb })
-				});
-			if (previewErr) console.error('Failed to save checkout preview:', previewErr);
+			// Only persist preview when we have a widget conversation (skip for Chatwoot / owner-only context)
+			if (c.conversationId && c.widgetId) {
+				const { error: previewErr } = await admin
+					.from('widget_checkout_previews')
+					.insert({
+						conversation_id: c.conversationId,
+						widget_id: c.widgetId,
+						line_items_ui: lineItemsUI,
+						summary,
+						checkout_url: checkoutUrl,
+						...(Object.keys(styleOverridesDb).length > 0 && { style_overrides: styleOverridesDb })
+					});
+				if (previewErr) console.error('Failed to save checkout preview:', previewErr);
+			}
 
 			return {
 				success: true,

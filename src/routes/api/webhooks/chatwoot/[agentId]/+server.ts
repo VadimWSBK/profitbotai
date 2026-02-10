@@ -2,7 +2,8 @@
  * POST /api/webhooks/chatwoot/[agentId]
  * Per-agent Chatwoot webhook. Use this URL in Chatwoot's Add Bot → Webhook URL
  * so that agent's role, tone, instructions, Train Bot rules, and LLM power the bot.
- * Fetches conversation history from Chatwoot and injects Profitbot agent rules (RAG) for context.
+ * Uses the same tooled flow as the widget: generateText + createAgentTools so DIY checkout
+ * and other tools work. Fetches conversation history from Chatwoot and injects rules + product pricing.
  *
  * Env: CHATWOOT_BOT_ACCESS_TOKEN, CHATWOOT_BASE_URL (no CHATWOOT_AGENT_ID needed).
  * Debug: CHATWOOT_DEBUG=1 logs incoming payload and how we process it (Vercel → Runtime Logs).
@@ -14,9 +15,13 @@
 
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { generateText, stepCountIs } from 'ai';
 import { getSupabaseAdmin } from '$lib/supabase.server';
-import { chatWithLlm } from '$lib/chat-llm.server';
+import { getAISdkModel } from '$lib/ai-sdk-model.server';
+import { createAgentTools } from '$lib/agent-tools.server';
 import { getRelevantRulesForAgent } from '$lib/agent-rules.server';
+import { getProductPricingForOwner, formatProductPricingForAgent } from '$lib/product-pricing.server';
+import { getShopifyConfigForUser } from '$lib/shopify.server';
 import { env } from '$env/dynamic/private';
 
 /** Use the last 5 messages (turns) for context so the bot stays focused on the recent exchange. */
@@ -103,6 +108,25 @@ async function getChatwootConversationHistory(
 	return out;
 }
 
+/** Extract roof size (sqm) from conversation history so DIY tool can be called with the right value. */
+function roofSizeFromHistory(turns: { role: string; content: string }[]): number | null {
+	const roofRe =
+		/(?:about|approximately|approx\.?)\s*(\d+(?:\.\d+)?)\s*(?:sqm|m2|m²|sq\s*m|square\s*metre[s]?|sq\.?\s*metre[s]?|sq\.?\s*m\.?)/i;
+	const roofRe2 = /(\d+(?:\.\d+)?)\s*(?:sqm|m2|m²|sq\s*m|square\s*metre[s]?|sq\.?\s*metre[s]?|sq\.?\s*m\.?)/i;
+	const roofRe3 = /roof\s*(?:is|size)?\s*:?\s*(?:about|approximately|approx\.?)?\s*(\d+(?:\.\d+)?)/i;
+	const roofRe4 = /(?:size|area)\s*(?:is|of)?\s*(?:about|approximately|approx\.?)?\s*(\d+(?:\.\d+)?)/i;
+	for (let i = turns.length - 1; i >= 0; i--) {
+		const text = turns[i]?.content ?? '';
+		const m =
+			roofRe.exec(text) ?? roofRe2.exec(text) ?? roofRe3.exec(text) ?? roofRe4.exec(text);
+		if (m?.[1]) {
+			const n = Number.parseFloat(m[1]);
+			if (n >= 1) return n;
+		}
+	}
+	return null;
+}
+
 export const POST: RequestHandler = async (event) => {
 	const agentId = event.params.agentId?.trim() ?? '';
 	const botToken = (env.CHATWOOT_BOT_ACCESS_TOKEN ?? '').trim();
@@ -147,7 +171,7 @@ export const POST: RequestHandler = async (event) => {
 	const admin = getSupabaseAdmin();
 	const { data: agentRow, error: agentErr } = await admin
 		.from('agents')
-		.select('chat_backend, llm_provider, llm_model, bot_role, bot_tone, bot_instructions, created_by')
+		.select('chat_backend, llm_provider, llm_model, bot_role, bot_tone, bot_instructions, allowed_tools, created_by')
 		.eq('id', agentId)
 		.single();
 
@@ -180,14 +204,28 @@ export const POST: RequestHandler = async (event) => {
 		return json({ error: 'No LLM key configured' }, { status: 400 });
 	}
 
-	// System prompt: role, tone, instructions + Profitbot Train Bot rules (RAG)
+	// Fetch conversation history first (needed for roof size extraction and for messages)
+	const history = await getChatwootConversationHistory(
+		baseUrl,
+		botToken,
+		accountId,
+		conversationId,
+		content
+	);
+	const extractedRoofSize = roofSizeFromHistory(history);
+	const contentLower = content.toLowerCase();
+	const wantsDiyOrQuote =
+		/\b(diy|do it myself|supply only|product only|quote|cost|price|how much|coat my roof)\b/i.test(contentLower) ||
+		/\d+\s*(sqm|m2|m²)/i.test(content);
+
+	// System prompt: role, tone, instructions (same as widget), RAG rules, product pricing, DIY instruction
 	const role = (agentRow.bot_role as string) ?? '';
 	const tone = (agentRow.bot_tone as string) ?? '';
 	const instructions = (agentRow.bot_instructions as string) ?? '';
 	const parts: string[] = [];
-	if (role) parts.push(`Role: ${role}`);
-	if (tone) parts.push(`Tone: ${tone}`);
-	if (instructions) parts.push(instructions);
+	if (role.trim()) parts.push(role.trim());
+	if (tone.trim()) parts.push(`Tone: ${tone.trim()}`);
+	if (instructions.trim()) parts.push(instructions.trim());
 
 	try {
 		const relevantRules = await getRelevantRulesForAgent(agentId, content, 5);
@@ -197,38 +235,83 @@ export const POST: RequestHandler = async (event) => {
 	} catch (e) {
 		console.error('[webhooks/chatwoot] getRelevantRulesForAgent:', e);
 	}
-	// So the bot acts on what the user just said instead of repeating an intro
+
+	// Product pricing (same as widget) so the bot can answer product/price questions
+	try {
+		const products = await getProductPricingForOwner(ownerId);
+		if (products.length > 0) {
+			parts.push(`Current product pricing: ${formatProductPricingForAgent(products)}`);
+		}
+	} catch (e) {
+		console.error('[webhooks/chatwoot] getProductPricingForOwner:', e);
+	}
+
+	// DIY checkout: when user asks for DIY quote and we have roof size, tell the model to call the tool
+	if (wantsDiyOrQuote && extractedRoofSize != null && extractedRoofSize >= 1) {
+		const roofSqm = Math.round(extractedRoofSize * 10) / 10;
+		parts.push(
+			`The customer is asking for a DIY quote and we have their roof size (${roofSqm} m²). You MUST call the shopify_create_diy_checkout_link tool with roof_size_sqm: ${roofSqm}. After calling it, reply with a short intro that INCLUDES the bucket breakdown (e.g. "Here is your DIY quote for ${roofSqm} m²: you need X x 15L and Y x 10L NetZero UltraTherm."). Use the exact quantities from the tool result. Do NOT paste the full Items/Subtotal/TOTAL block—summarise the product breakdown only. Do NOT use generate_quote or create a PDF for DIY.`
+		);
+	} else if (wantsDiyOrQuote) {
+		parts.push(
+			'When the customer asks for a DIY quote or to buy product themselves: if they provide a roof size (e.g. "400 sqm"), call shopify_create_diy_checkout_link with that roof_size_sqm. If they have not given roof size yet, ask for it once, then call the tool with the value they provide. Reply with a short intro that includes the bucket breakdown from the tool result. Do NOT use generate_quote for DIY requests.'
+		);
+	}
+
 	parts.push(
 		"Respond directly to the user's latest message. If they have already stated what they want (e.g. a DIY quote, a done-for-you quote, or specific info), proceed with that—do not reintroduce yourself or re-ask the same options."
 	);
 	const systemPrompt = parts.length > 0 ? parts.join('\n\n') : 'You are a helpful assistant.';
 
-	// Conversation history from Chatwoot so the bot has context
-	const history = await getChatwootConversationHistory(
-		baseUrl,
-		botToken,
-		accountId,
-		conversationId,
-		content
-	);
+	// Tools: use agent's allowed_tools and ensure DIY is available when Shopify is connected
+	let agentAllowedTools: string[] | null = Array.isArray(agentRow.allowed_tools) ? (agentRow.allowed_tools as string[]) : null;
+	try {
+		const shopifyConnected = Boolean(await getShopifyConfigForUser(admin, ownerId));
+		if (shopifyConnected) {
+			const base = agentAllowedTools ?? [];
+			if (!base.includes('shopify_create_diy_checkout_link')) {
+				agentAllowedTools = [...base, 'shopify_create_diy_checkout_link'];
+			}
+		}
+	} catch {
+		// ignore
+	}
 
-	const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
-		{ role: 'system', content: systemPrompt },
-		...history.map((t) => ({ role: t.role, content: t.content }))
-	];
+	const modelMessages = history.map((t) => ({ role: t.role as 'user' | 'assistant', content: t.content }));
+	const origin = event.url.origin;
+	const agentContext = {
+		ownerId,
+		conversationId: '',
+		widgetId: '',
+		contact: null as { name?: string | null; email?: string | null; phone?: string | null; address?: string | null; roof_size_sqm?: number | null } | null,
+		extractedRoofSize: extractedRoofSize ?? undefined,
+		origin
+	};
 
 	if (env.CHATWOOT_DEBUG === '1' || env.CHATWOOT_DEBUG === 'true') {
 		const lastUser = [...history].reverse().find((t) => t.role === 'user');
 		console.log('[webhooks/chatwoot] processed', JSON.stringify({
 			historyTurns: history.length,
 			systemPromptChars: systemPrompt.length,
+			extractedRoofSize: extractedRoofSize ?? null,
 			lastUserMessage: lastUser?.content?.slice(0, 150) ?? null
 		}));
 	}
 
 	let reply: string;
 	try {
-		reply = await chatWithLlm(llmProvider, llmModel, apiKey, messages);
+		const model = getAISdkModel(llmProvider, llmModel, apiKey);
+		const tools = createAgentTools(admin, agentAllowedTools ?? undefined);
+		const result = await generateText({
+			model,
+			system: systemPrompt,
+			messages: modelMessages,
+			tools,
+			stopWhen: stepCountIs(5),
+			maxOutputTokens: 1024,
+			experimental_context: agentContext
+		});
+		reply = result.text ?? '';
 	} catch (e) {
 		console.error('[webhooks/chatwoot] LLM error:', e);
 		reply = 'Sorry, I had trouble answering. Please try again.';
