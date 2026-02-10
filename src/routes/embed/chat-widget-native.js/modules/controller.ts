@@ -169,6 +169,18 @@ export const controller = String.raw`
     var inputEl = chatParts.input;
     var sendBtn = chatParts.sendBtn;
 
+    /* Ensure checkout button opens URL (delegated; works even if host or iframe blocks default) */
+    if (messagesArea) {
+      messagesArea.addEventListener('click', function(e) {
+        var link = e.target && e.target.closest ? e.target.closest('a.pb-checkout-button') : null;
+        if (link && link.href && link.href.indexOf('http') === 0) {
+          e.preventDefault();
+          e.stopPropagation();
+          window.open(link.href, '_blank', 'noopener,noreferrer');
+        }
+      });
+    }
+
     /* Tooltip */
     var tooltip = createTooltip(config, state, function() { openChat(); });
 
@@ -500,9 +512,10 @@ export const controller = String.raw`
             var hasLocal = false;
             for (var i = 0; i < state.messages.length; i++) { if (!state.messages[i].id) { hasLocal = true; break; } }
             if (!hasLocal || list.length >= state.messages.length) {
-              state.messages = list.map(function(m) {
+              var mapped = list.map(function(m) {
                 return { id: m.id, _localId: nextLocalId(), role: m.role === 'user' ? 'user' : 'bot', content: m.content, avatarUrl: m.avatarUrl, checkoutPreview: m.checkoutPreview, createdAt: m.createdAt };
               });
+              state.messages = mergePreservingCheckoutPreview(mapped, state.messages);
               state.showStarterPrompts = list.length === 0;
               if (forceRefresh) {
                 state.renderedIds = {};
@@ -518,9 +531,10 @@ export const controller = String.raw`
               if (!state.messages[j].id) { hasLocalMessages = true; break; }
             }
             if (hasLocalMessages) {
-              state.messages = list.map(function(m) {
+              var mappedLocal = list.map(function(m) {
                 return { id: m.id, _localId: nextLocalId(), role: m.role === 'user' ? 'user' : 'bot', content: m.content, avatarUrl: m.avatarUrl, checkoutPreview: m.checkoutPreview, createdAt: m.createdAt };
               });
+              state.messages = mergePreservingCheckoutPreview(mappedLocal, state.messages);
               state.showStarterPrompts = false;
               state.renderedIds = {};
               renderMessages(true);
@@ -545,9 +559,10 @@ export const controller = String.raw`
               if (list[k].checkoutPreview && !state.messages[k].checkoutPreview) { changed = true; break; }
             }
             if (changed) {
-              state.messages = list.map(function(m) {
+              var mappedChanged = list.map(function(m) {
                 return { id: m.id, _localId: nextLocalId(), role: m.role === 'user' ? 'user' : 'bot', content: m.content, avatarUrl: m.avatarUrl, checkoutPreview: m.checkoutPreview, createdAt: m.createdAt };
               });
+              state.messages = mergePreservingCheckoutPreview(mappedChanged, state.messages);
               state.showStarterPrompts = false; // Hide starter prompts when messages exist
               state.renderedIds = {};
               renderMessages(true);
@@ -972,6 +987,29 @@ export const controller = String.raw`
       }, 2000);
     }
 
+    /** Keep existing checkoutPreview (images + button) when server returns message without it (e.g. sync before preview linked). */
+    function mergePreservingCheckoutPreview(serverList, previous) {
+      if (!previous || previous.length === 0) return serverList;
+      var byId = {};
+      for (var i = 0; i < previous.length; i++) {
+        var m = previous[i];
+        if (m.id) byId[m.id] = m;
+      }
+      function hasGoodPreview(p) {
+        return p && p.checkoutPreview && typeof p.checkoutPreview.checkoutUrl === 'string' && p.checkoutPreview.checkoutUrl.trim();
+      }
+      return serverList.map(function(m, idx) {
+        var prev = m.id ? byId[m.id] : null;
+        if (!prev && idx < previous.length && previous[idx].role === 'bot') prev = previous[idx];
+        if (!prev || !hasGoodPreview(prev)) return m;
+        var serverPreview = m.checkoutPreview;
+        var hasServerUrl = serverPreview && typeof serverPreview.checkoutUrl === 'string' && serverPreview.checkoutUrl.trim();
+        var hasServerImages = serverPreview && Array.isArray(serverPreview.lineItemsUI) && serverPreview.lineItemsUI.length > 0 && serverPreview.lineItemsUI.some(function(it) { return it && String(it.imageUrl || it.image_url || '').trim(); });
+        if (hasServerUrl && hasServerImages) return m;
+        return { id: m.id, _localId: m._localId, role: m.role, content: m.content, avatarUrl: m.avatarUrl, checkoutPreview: prev.checkoutPreview, createdAt: m.createdAt };
+      });
+    }
+
     function silentSync() {
       if (!widgetId || !sessionId || sessionId === 'preview') return;
       var url = base + '/api/widgets/' + widgetId + '/messages?session_id=' + encodeURIComponent(sessionId);
@@ -987,11 +1025,11 @@ export const controller = String.raw`
             seenIds[m.id] = true;
             return true;
           });
-          // Always replace with server list so server is source of truth (fixes duplicate messages)
           if (list.length > 0) {
-            state.messages = list.map(function(m) {
+            var mapped = list.map(function(m) {
               return { id: m.id, _localId: nextLocalId(), role: m.role === 'user' ? 'user' : 'bot', content: m.content, avatarUrl: m.avatarUrl, checkoutPreview: m.checkoutPreview, createdAt: m.createdAt };
             });
+            state.messages = mergePreservingCheckoutPreview(mapped, state.messages);
             state.lastMessageCount = list.length;
             state.renderedIds = {};
             renderMessages(true);
