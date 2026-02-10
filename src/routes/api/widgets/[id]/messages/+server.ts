@@ -190,16 +190,10 @@ export const GET: RequestHandler = async (event) => {
 								qtyBadgeBackgroundColor: (soRaw.qtyBadgeBackgroundColor ?? soRaw.qty_badge_background_color) as string
 							}
 						: undefined;
-				const baseCheckoutUrl =
+				const checkoutUrl =
 					typeof fromMsg?.checkoutUrl === 'string' && fromMsg.checkoutUrl.trim()
 						? fromMsg.checkoutUrl.trim()
-						: r.checkout_url ?? '';
-				const redirectCheckoutUrl =
-					hasPreview && baseCheckoutUrl
-						? baseCheckoutUrl.includes('/api/checkout/redirect')
-							? baseCheckoutUrl
-							: `${event.url.origin}/api/checkout/redirect?message_id=${encodeURIComponent(r.id)}`
-						: null;
+						: (r.checkout_url ?? '').trim();
 				const summary =
 					fromMsg?.summary != null && typeof fromMsg.summary === 'object'
 						? fromMsg.summary
@@ -213,11 +207,11 @@ export const GET: RequestHandler = async (event) => {
 					createdAt: r.created_at,
 					avatarUrl: r.role === 'human_agent' ? r.avatar_url : undefined,
 					checkoutPreview:
-						hasPreview && (redirectCheckoutUrl || baseCheckoutUrl)
+						hasPreview && checkoutUrl
 							? {
 									lineItemsUI,
 									summary,
-									checkoutUrl: redirectCheckoutUrl ?? baseCheckoutUrl,
+									checkoutUrl,
 									...(styleOverrides && { styleOverrides })
 								}
 							: undefined

@@ -963,14 +963,10 @@ export const POST: RequestHandler = async (event) => {
 					// ignore
 				}
 			}
-			// Use redirect URL for checkout link so we can record clicks (checkout_clicked_at)
-			const redirectUrl =
-				insertedMessageId && event?.url?.origin
-					? `${event.url.origin}/api/checkout/redirect?message_id=${encodeURIComponent(insertedMessageId)}`
-					: checkoutPreview?.checkoutUrl ?? '';
+			// Use the real Shopify checkout URL (from DIY tool) so the button goes directly to the store
 			const checkoutPayload =
 				checkoutPreview && insertedMessageId
-					? { ...checkoutPreview, checkoutUrl: redirectUrl || checkoutPreview.checkoutUrl }
+					? { ...checkoutPreview, checkoutUrl: checkoutPreview.checkoutUrl?.trim() || '' }
 					: checkoutPreview;
 			// Persist full checkout result on the message row so it survives refresh (no join needed)
 			if (insertedMessageId && checkoutPayload && checkoutPayload.lineItemsUI?.length) {

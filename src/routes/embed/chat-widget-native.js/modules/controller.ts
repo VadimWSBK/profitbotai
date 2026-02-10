@@ -59,8 +59,7 @@ export const controller = String.raw`
 
   function renderWidget(container, widgetData) {
     var config = widgetData.config;
-    var sessionId = getSessionId();
-    
+
     // Use unique ID for scoping CSS to avoid conflicts
     var widgetUniqueId = 'profitbot-' + widgetId.replace(/[^a-z0-9]/gi, '-');
     container.setAttribute('data-profitbot-id', widgetUniqueId);
@@ -120,7 +119,7 @@ export const controller = String.raw`
       agentAvatarUrl: null,
       visitorName: null,
       showStarterPrompts: true,
-      sessionId: sessionId,
+      sessionId: getSessionId(),
       pollTimer: null,
       lastMessageCount: 0,
       localIdCounter: 0,
@@ -213,7 +212,7 @@ export const controller = String.raw`
     }, 100);
 
     /* Fetch visitor name */
-    fetch(base + '/api/widgets/' + widgetId + '/visitor?session_id=' + encodeURIComponent(sessionId))
+    fetch(base + '/api/widgets/' + widgetId + '/visitor?session_id=' + encodeURIComponent(state.sessionId))
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (data && data.name && typeof data.name === 'string' && data.name.trim()) {
@@ -274,7 +273,7 @@ export const controller = String.raw`
     /* Dispatch custom events */
     function dispatchEvent(name, detail) {
       try {
-        document.dispatchEvent(new CustomEvent(name, { detail: Object.assign({ widgetId: widgetId, sessionId: sessionId }, detail || {}) }));
+        document.dispatchEvent(new CustomEvent(name, { detail: Object.assign({ widgetId: widgetId, sessionId: state.sessionId }, detail || {}) }));
       } catch (e) {}
     }
 
@@ -468,8 +467,8 @@ export const controller = String.raw`
 
     /* ===== 8. NETWORK ===== */
     function fetchMessages(forceRefresh) {
-      if (!widgetId || !sessionId || sessionId === 'preview') {
-        console.warn('[ProfitBot] Cannot fetch messages - missing widgetId or sessionId. widgetId:', widgetId, 'sessionId:', sessionId);
+      if (!widgetId || !state.sessionId || state.sessionId === 'preview') {
+        console.warn('[ProfitBot] Cannot fetch messages - missing widgetId or sessionId. widgetId:', widgetId, 'sessionId:', state.sessionId);
         return;
       }
       // Don't fetch messages while streaming (polling will resume after stream completes)
@@ -478,7 +477,7 @@ export const controller = String.raw`
       }
       if (forceRefresh) state.messagesLoading = true;
 
-      var url = base + '/api/widgets/' + widgetId + '/messages?session_id=' + encodeURIComponent(sessionId);
+      var url = base + '/api/widgets/' + widgetId + '/messages?session_id=' + encodeURIComponent(state.sessionId);
 
       fetch(url, {
         method: 'GET',
@@ -602,7 +601,7 @@ export const controller = String.raw`
 
     function startPolling() {
       stopPolling();
-      if (!widgetId || !sessionId || sessionId === 'preview') return;
+      if (!widgetId || !state.sessionId || state.sessionId === 'preview') return;
       // Don't poll while streaming to avoid race conditions
       if (state.isStreaming) {
         return;
@@ -648,10 +647,9 @@ export const controller = String.raw`
       if (svgIcon) svgIcon.classList.add('pb-spin');
       btn.disabled = true;
       
-      // Ensure we have a valid sessionId before fetching
-      if (!sessionId || sessionId === 'preview') {
-        sessionId = getSessionId();
-      }
+      // Ensure we have a valid sessionId before fetching (re-read from cookie/localStorage)
+      state.sessionId = getSessionId();
+      if (!state.sessionId || state.sessionId === 'preview') return;
       
       fetchMessages(true);
       setTimeout(function() {
@@ -808,7 +806,7 @@ export const controller = String.raw`
       var conversationId = null;
       var backend = config.chatBackend || 'n8n';
       var useN8n = backend === 'n8n' && !!(config.n8nWebhookUrl && config.n8nWebhookUrl.trim());
-      fetch(base + '/api/widgets/' + widgetId + '/conversation?session_id=' + encodeURIComponent(sessionId))
+      fetch(base + '/api/widgets/' + widgetId + '/conversation?session_id=' + encodeURIComponent(state.sessionId))
         .then(function(r) { return r.json(); })
         .then(function(data) {
           if (data.conversationId) conversationId = data.conversationId;
@@ -863,7 +861,7 @@ export const controller = String.raw`
       // 2. Set Content-Type: text/event-stream header
       // 3. Send SSE format: data: {"token":"Hello"} data: {"token":"world"} data: {"done":true}
       // 4. Note: Streaming works best on self-hosted n8n. n8n Cloud may buffer responses behind Cloudflare
-      var body = { message: message, sessionId: sessionId, widgetId: widgetId };
+      var body = { message: message, sessionId: state.sessionId, widgetId: widgetId };
       if (conversationId) body.conversationId = conversationId;
       if (config.agentId) body.agentId = config.agentId;
       var systemPrompt = buildSystemPrompt();
@@ -924,7 +922,7 @@ export const controller = String.raw`
       fetch(base + '/api/widgets/' + widgetId + '/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: message, sessionId: sessionId, conversationId: conversationId })
+        body: JSON.stringify({ message: message, sessionId: state.sessionId, conversationId: conversationId })
       })
         .then(function(res) { return res.json(); })
         .then(function(data) {
@@ -1017,8 +1015,8 @@ export const controller = String.raw`
     }
 
     function silentSync() {
-      if (!widgetId || !sessionId || sessionId === 'preview') return;
-      var url = base + '/api/widgets/' + widgetId + '/messages?session_id=' + encodeURIComponent(sessionId);
+      if (!widgetId || !state.sessionId || state.sessionId === 'preview') return;
+      var url = base + '/api/widgets/' + widgetId + '/messages?session_id=' + encodeURIComponent(state.sessionId);
       fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' }, credentials: 'omit' })
         .then(function(res) { return res.ok ? res.json() : null; })
         .then(function(data) {
@@ -1052,9 +1050,12 @@ export const controller = String.raw`
     }
 
     /* ===== INIT ===== */
-    // Small delay to ensure DOM is fully ready and sessionId is set
+    // Re-read session from cookie/localStorage so we use persisted session after refresh
+    state.sessionId = getSessionId();
+    // Small delay to ensure DOM is fully ready
     // Only fetch messages initially, don't start polling until chat is opened
     setTimeout(function() {
+      state.sessionId = getSessionId();
       fetchMessages(true);
       // Don't start polling here - wait until chat is opened
     }, 100);

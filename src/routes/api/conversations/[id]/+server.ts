@@ -322,10 +322,6 @@ export const GET: RequestHandler = async (event) => {
 			}
 			return { ...item, title, imageUrl: url, image_url: url };
 		});
-		const redirectUrl =
-			preview.checkoutUrl.includes('/api/checkout/redirect')
-				? preview.checkoutUrl
-				: `${event.url.origin}/api/checkout/redirect?message_id=${encodeURIComponent(m.id)}`;
 		return {
 			id: m.id,
 			role: m.role,
@@ -336,7 +332,7 @@ export const GET: RequestHandler = async (event) => {
 			checkoutPreview: {
 				lineItemsUI,
 				summary: preview.summary,
-				checkoutUrl: redirectUrl,
+				checkoutUrl: (preview.checkoutUrl && String(preview.checkoutUrl).trim()) || '',
 				...(preview.styleOverrides && { styleOverrides: preview.styleOverrides })
 			}
 		};
