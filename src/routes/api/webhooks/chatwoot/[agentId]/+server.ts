@@ -127,7 +127,7 @@ export const POST: RequestHandler = async (event) => {
 
 	// Optional: log raw payload and how we process it (set CHATWOOT_DEBUG=1 in env)
 	if (env.CHATWOOT_DEBUG === '1' || env.CHATWOOT_DEBUG === 'true') {
-		console.debug('[webhooks/chatwoot] payload:', JSON.stringify({
+		console.log('[webhooks/chatwoot] payload', JSON.stringify({
 			event: body?.event,
 			message_type: messageType,
 			content: content?.slice(0, 200),
@@ -219,11 +219,10 @@ export const POST: RequestHandler = async (event) => {
 
 	if (env.CHATWOOT_DEBUG === '1' || env.CHATWOOT_DEBUG === 'true') {
 		const lastUser = [...history].reverse().find((t) => t.role === 'user');
-		console.debug('[webhooks/chatwoot] processed:', JSON.stringify({
+		console.log('[webhooks/chatwoot] processed', JSON.stringify({
 			historyTurns: history.length,
 			systemPromptChars: systemPrompt.length,
-			lastUserMessage: lastUser?.content?.slice(0, 150) ?? null,
-			replyPreview: null
+			lastUserMessage: lastUser?.content?.slice(0, 150) ?? null
 		}));
 	}
 
@@ -253,7 +252,7 @@ export const POST: RequestHandler = async (event) => {
 	}
 
 	if (env.CHATWOOT_DEBUG === '1' || env.CHATWOOT_DEBUG === 'true') {
-		console.debug('[webhooks/chatwoot] reply sent:', reply?.slice(0, 150) ?? '');
+		console.log('[webhooks/chatwoot] reply sent', reply?.slice(0, 150) ?? '');
 	}
 
 	return json({ received: true });
