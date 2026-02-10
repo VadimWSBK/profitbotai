@@ -45,3 +45,7 @@ After this, when a user sends a message in that inbox, Chatwoot will POST to you
 
 - **Conversation context:** Profitbot fetches recent messages from the Chatwoot conversation via the Chatwoot API and sends them to the LLM so the bot has dialogue history.
 - **Knowledge from Profitbot:** The bot uses your agent’s **Train Bot** rules (and, where supported, documents) from Profitbot. Configure those in **Agents → [your agent] → Train Bot**. You do **not** need to train or add knowledge inside Chatwoot—the bot uses data and tools from Profitbot only.
+
+## 6. Contact updates (CRM sync)
+
+When a user provides their **name**, **email**, **phone**, or **address** in the conversation, Profitbot updates the Chatwoot contact profile automatically after each reply (address is stored in `additional_attributes`). This uses Chatwoot's [Update Contact](https://developers.chatwoot.com/api-reference/contacts/update-contact) API (`PUT /api/v1/accounts/{account_id}/contacts/{id}`) with the same bot token. No separate webhooks or manual steps are required—contact details collected during the chat are written back to the contact record in Chatwoot so your team sees them in the sidebar and CRM.

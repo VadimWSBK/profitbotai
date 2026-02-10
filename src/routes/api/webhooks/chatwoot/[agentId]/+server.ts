@@ -35,6 +35,8 @@ type ChatwootPayload = {
 	conversation?: { id: number };
 	account?: { id: number };
 	sender?: { id: string | number };
+	/** Contact (customer) - id is required for updating contact via API */
+	contact?: { id: number; name?: string; email?: string; phone_number?: string };
 };
 
 type ChatwootMessage = {
@@ -112,6 +114,50 @@ async function getChatwootConversationHistory(
 	return out;
 }
 
+/** Extract name, email, phone, address from a message (e.g. "Vadim, weisbekvadim@gmail.com" or "address is 123 Main St"). */
+function extractContactFromText(text: string): { name?: string; email?: string; phone_number?: string; address?: string } {
+	const out: { name?: string; email?: string; phone_number?: string; address?: string } = {};
+	const t = text.trim();
+	if (!t) return out;
+	const emailMatch = t.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+	if (emailMatch) out.email = emailMatch[0].toLowerCase();
+	const phoneMatch = t.match(/(?:\+\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{2,4}[\s.-]?\d{2,4}[\s.-]?\d{0,4}/);
+	if (phoneMatch) out.phone_number = phoneMatch[0].trim();
+	const notNames = new Set('how what when where why which can could would should may might will do does has have is are'.split(' '));
+	const namePatterns = [
+		/(?:my\s+name\s+is|i['']m|name\s+is|call\s+me|i\s+am)\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)?)/i,
+		/^([A-Za-z]+)\s*[,،]\s*[\w@.]/,
+		/^([A-Za-z]+)\s+[\w@.]*@/
+	];
+	for (const re of namePatterns) {
+		const m = t.match(re);
+		if (m?.[1]?.trim()) {
+			const name = m[1].trim();
+			if (name.length >= 2 && !notNames.has(name.toLowerCase())) {
+				out.name = name;
+				break;
+			}
+		}
+	}
+	// Address: "address is X", "my address is X", "I live at X", "address: X", or line with number + street words
+	const addressPatterns = [
+		/(?:my\s+)?address\s*(?:is|:)\s*([^.?!\n]+?)(?=\s*(?:\.|$|,|email|phone|name)|$)/i,
+		/(?:i\s+live\s+at|located\s+at|at)\s+([^.?!\n]+?)(?=\s*(?:\.|$|,)|$)/i,
+		/\b(\d+[\s\w.,'-]+(?:street|st|road|rd|ave|avenue|drive|dr|lane|ln|way|place|pl|court|ct|parade|pde|blvd)[\s\w.,'-]*)/i
+	];
+	for (const re of addressPatterns) {
+		const m = t.match(re);
+		if (m?.[1]?.trim()) {
+			const addr = m[1].trim();
+			if (addr.length >= 5 && addr.length <= 200) {
+				out.address = addr;
+				break;
+			}
+		}
+	}
+	return out;
+}
+
 /** Extract roof size (sqm) from conversation history so DIY tool can be called with the right value. */
 function roofSizeFromHistory(turns: { role: string; content: string }[]): number | null {
 	const roofRe =
@@ -129,6 +175,50 @@ function roofSizeFromHistory(turns: { role: string; content: string }[]): number
 		}
 	}
 	return null;
+}
+
+/** Get contact id for this conversation (from payload or by fetching conversation details). */
+async function getChatwootContactId(
+	baseUrl: string,
+	botToken: string,
+	accountId: number,
+	conversationId: number,
+	payloadContact?: { id?: number }
+): Promise<number | null> {
+	if (payloadContact?.id != null) return Number(payloadContact.id);
+	const url = `${baseUrl}/api/v1/accounts/${accountId}/conversations/${conversationId}`;
+	const res = await fetch(url, { headers: { Accept: 'application/json', api_access_token: botToken } });
+	if (!res.ok) return null;
+	try {
+		const data = (await res.json()) as { meta?: { sender?: { id?: number } } };
+		const id = data?.meta?.sender?.id;
+		return id != null ? Number(id) : null;
+	} catch {
+		return null;
+	}
+}
+
+/** Update Chatwoot contact (name, email, phone_number, address). Only sends provided, non-empty fields. Address goes in additional_attributes. */
+async function updateChatwootContact(
+	baseUrl: string,
+	botToken: string,
+	accountId: number,
+	contactId: number,
+	updates: { name?: string; email?: string; phone_number?: string; address?: string }
+): Promise<boolean> {
+	const body: Record<string, string | Record<string, string>> = {};
+	if (updates.name?.trim()) body.name = updates.name.trim();
+	if (updates.email?.trim()) body.email = updates.email.trim();
+	if (updates.phone_number?.trim()) body.phone_number = updates.phone_number.trim();
+	if (updates.address?.trim()) body.additional_attributes = { address: updates.address.trim() };
+	if (Object.keys(body).length === 0) return false;
+	const url = `${baseUrl}/api/v1/accounts/${accountId}/contacts/${contactId}`;
+	const res = await fetch(url, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json', Accept: 'application/json', api_access_token: botToken },
+		body: JSON.stringify(body)
+	});
+	return res.ok;
 }
 
 export const POST: RequestHandler = async (event) => {
@@ -265,6 +355,10 @@ export const POST: RequestHandler = async (event) => {
 	parts.push(
 		"Respond directly to the user's latest message. If they have already stated what they want (e.g. a DIY quote, a done-for-you quote, or specific info), proceed with that—do not reintroduce yourself or re-ask the same options."
 	);
+	// So the bot doesn't try to call contact tools and then say it can't update
+	parts.push(
+		'In this channel, contact details the user provides (name, email, phone, address) are saved automatically to their Chatwoot profile. Confirm you have received their details and proceed—do not say you are unable to update contact details.'
+	);
 	const systemPrompt = parts.length > 0 ? parts.join('\n\n') : 'You are a helpful assistant.';
 
 	// Tools: use agent's allowed_tools and ensure DIY is available when Shopify is connected
@@ -341,6 +435,24 @@ export const POST: RequestHandler = async (event) => {
 		const errText = await postRes.text();
 		console.error('[webhooks/chatwoot] Chatwoot API error:', postRes.status, errText);
 		return json({ error: 'Failed to send reply to Chatwoot' }, { status: 502 });
+	}
+
+	// Update Chatwoot contact when user provides name/email/phone (so CRM stays in sync)
+	const contactId = await getChatwootContactId(baseUrl, botToken, accountId, conversationId, body.contact);
+	if (contactId != null) {
+		const allUserText = [content, ...history.filter((t) => t.role === 'user').map((t) => t.content)].join(' ');
+		const extracted = extractContactFromText(allUserText);
+		const existing = body.contact;
+		const updates = {
+			name: extracted.name ?? existing?.name?.trim(),
+			email: extracted.email ?? existing?.email?.trim(),
+			phone_number: extracted.phone_number ?? existing?.phone_number?.trim(),
+			address: extracted.address
+		};
+		const updated = await updateChatwootContact(baseUrl, botToken, accountId, contactId, updates);
+		if (env.CHATWOOT_DEBUG === '1' && updated) {
+			console.log('[webhooks/chatwoot] contact updated', { contactId, hasName: !!updates.name, hasEmail: !!updates.email, hasPhone: !!updates.phone_number });
+		}
 	}
 
 	if (env.CHATWOOT_DEBUG === '1' || env.CHATWOOT_DEBUG === 'true') {
