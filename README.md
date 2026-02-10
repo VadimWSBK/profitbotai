@@ -48,6 +48,10 @@ Add a knowledge base per widget so n8n can use **Supabase Vector Store** for RAG
 3. In the dashboard, open a widget → **Train Bot** tab: upload PDFs or paste URLs to scrape. Content is chunked, embedded, and stored in Supabase.
 4. In n8n, add **Supabase Vector Store** and use **“Retrieve documents for AI Agent as Tool”** with the same Supabase project and table `widget_documents` (filter by `metadata->>'widget_id'` = your widget ID) so the AI Agent can answer from this data.
 
+## Chatwoot (optional)
+
+Connect a Chatwoot Agent Bot to a Profitbot agent so Chatwoot conversations are answered by your AI. In Chatwoot’s **Add Bot** form, set **Webhook URL** to `https://YOUR-PROFITBOT-DOMAIN/api/webhooks/chatwoot`, then configure `CHATWOOT_AGENT_ID`, `CHATWOOT_BOT_ACCESS_TOKEN`, and `CHATWOOT_BASE_URL` in your app. See [docs/chatwoot-setup.md](docs/chatwoot-setup.md).
+
 ## n8n (optional)
 
 Use n8n to power chat responses:

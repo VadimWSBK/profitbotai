@@ -61,6 +61,16 @@ export const POST: RequestHandler = async (event) => {
 		? body.sessionId.trim()
 		: `anon-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
+	// Set session cookie so GET /messages can restore session after refresh (cookie sent with credentials)
+	const sessionCookieName = 'pb_sid_' + (widgetId || '').replace(/[^a-z0-9-]/gi, '_');
+	const isSecure = event.url.protocol === 'https:';
+	event.cookies.set(sessionCookieName, sessionId, {
+		path: '/',
+		maxAge: 31536000,
+		sameSite: isSecure ? 'none' : 'lax',
+		secure: isSecure
+	});
+
 	let conversationIdForTyping: string | null = null;
 	try {
 		const supabase = getSupabase();

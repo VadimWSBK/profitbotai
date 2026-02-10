@@ -18,24 +18,63 @@ function sizeFromTitle(title: string): number | null {
  * Priority: widget_conversation_messages (preferred) → n8n_chat_histories (fallback for n8n widgets).
  * This ensures messages are properly scoped per conversation and visible in the Messages dashboard.
  */
+const SESSION_COOKIE_PREFIX = 'pb_sid_';
+function sessionCookieName(widgetId: string): string {
+	return SESSION_COOKIE_PREFIX + (widgetId || '').replace(/[^a-z0-9-]/gi, '_');
+}
+
 export const GET: RequestHandler = async (event) => {
 	const widgetId = event.params.id;
-	const sessionId = event.url.searchParams.get('session_id');
-	if (!widgetId || !sessionId?.trim()) {
+	const cookieName = sessionCookieName(widgetId);
+	// Prefer query param (what the client sends from its state/localStorage) so we load the conversation the client expects.
+	// Use cookie only as fallback when client doesn't send session_id (matches pre-cookie behavior).
+	const fromQuery = event.url.searchParams.get('session_id')?.trim();
+	const fromCookie = event.cookies.get(cookieName)?.trim();
+	const sessionId = (fromQuery || fromCookie || '').trim();
+	if (!widgetId || !sessionId) {
 		return json({ error: 'Missing widget id or session_id' }, { status: 400 });
 	}
 	try {
 		const supabase = getSupabase();
-		
+
 		// Always prefer widget_conversation_messages over n8n_chat_histories
 		// Check if conversation exists first
-		const { data: conv, error: convError } = await supabase
-			.from('widget_conversations')
-			.select('id, is_ai_active, agent_typing_until, agent_typing_by')
-			.eq('widget_id', widgetId)
-			.eq('session_id', sessionId.trim())
-			.single();
-		
+		let conv: { id: string; is_ai_active: boolean; agent_typing_until: string | null; agent_typing_by: string | null } | null = null;
+		let convError: { code: string } | null = null;
+		{
+			const r = await supabase
+				.from('widget_conversations')
+				.select('id, is_ai_active, agent_typing_until, agent_typing_by')
+				.eq('widget_id', widgetId)
+				.eq('session_id', sessionId.trim())
+				.single();
+			conv = r.data;
+			convError = r.error;
+		}
+
+		// Reattach: if no conversation for this session (e.g. client lost storage), use most recent conversation for this widget so same visitor sees their history
+		let reattachSessionId: string | null = null;
+		if (!conv && !convError) {
+			const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+			const { data: recentList } = await supabase
+				.from('widget_conversations')
+				.select('id, is_ai_active, agent_typing_until, agent_typing_by, session_id')
+				.eq('widget_id', widgetId)
+				.gte('updated_at', twentyFourHoursAgo)
+				.order('updated_at', { ascending: false })
+				.limit(1);
+			const recent = Array.isArray(recentList) ? recentList[0] : null;
+			if (recent) {
+				conv = {
+					id: recent.id,
+					is_ai_active: recent.is_ai_active,
+					agent_typing_until: recent.agent_typing_until,
+					agent_typing_by: recent.agent_typing_by
+				};
+				reattachSessionId = (recent as { session_id?: string }).session_id ?? null;
+			}
+		}
+
 		if (!convError && conv) {
 			// Conversation exists - always load from widget_conversation_messages (even if empty)
 			const { data: rows } = await supabase.rpc('get_conversation_messages_for_embed', {
@@ -229,9 +268,14 @@ export const GET: RequestHandler = async (event) => {
 				});
 				agentAvatarUrl = avatar ?? null;
 			}
-			return json({ messages, agentTyping: !!agentTyping, agentAvatarUrl });
+			return json({
+				messages,
+				agentTyping: !!agentTyping,
+				agentAvatarUrl,
+				sessionId: reattachSessionId ?? sessionId
+			});
 		}
-		
+
 		// Only fallback to n8n_chat_histories if no conversation exists (backward compatibility for old sessions)
 		const { data: widget } = await supabase
 			.from('widgets')
@@ -288,14 +332,14 @@ export const GET: RequestHandler = async (event) => {
 							createdAt: ''
 						};
 					});
-				return json({ messages, agentTyping: false, agentAvatarUrl: null });
+				return json({ messages, agentTyping: false, agentAvatarUrl: null, sessionId });
 			}
 		}
-		
-		// No conversation and no n8n messages - return empty array
-		return json({ messages: [], agentTyping: false, agentAvatarUrl: null });
+
+		// No conversation and no n8n messages - return empty array (still return sessionId so client can persist)
+		return json({ messages: [], agentTyping: false, agentAvatarUrl: null, sessionId });
 	} catch (e) {
 		console.error('GET /api/widgets/[id]/messages:', e);
-		return json({ messages: [] }, { status: 500 });
+		return json({ messages: [], sessionId: sessionId || undefined }, { status: 500 });
 	}
 };

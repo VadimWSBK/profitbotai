@@ -22,6 +22,8 @@ function isPublicPath(pathname: string, method: string): boolean {
 	if (pathname === API_EVENTS_PATH) return true;
 	// Allow anonymous POST for Resend webhooks (authenticated via signature verification)
 	if (pathname === '/api/webhooks/resend') return method === 'POST';
+	// Allow anonymous POST for Chatwoot Agent Bot webhook (with or without agentId in path)
+	if (pathname === '/api/webhooks/chatwoot' || pathname.startsWith('/api/webhooks/chatwoot/')) return method === 'POST';
 	// Allow anonymous GET for widget config (embed loads this to display the chat)
 	if (/^\/api\/widgets\/[^/]+$/.test(pathname)) return method === 'GET';
 	// Allow anonymous POST for chat (embed widget sends messages)
@@ -65,21 +67,27 @@ export const handle: Handle = async ({ event, resolve }) => {
 		event.locals.user = null;
 		event.locals.role = null;
 	} else {
-		const supabase = getSupabaseClient(event);
-		const {
-			data: { session }
-		} = await supabase.auth.getSession();
+		try {
+			const supabase = getSupabaseClient(event);
+			const {
+				data: { session }
+			} = await supabase.auth.getSession();
 
-		event.locals.user = session?.user ?? null;
-		event.locals.role = null;
+			event.locals.user = session?.user ?? null;
+			event.locals.role = null;
 
-		if (session?.user) {
-			const { data: profile } = await supabase
-				.from('profiles')
-				.select('role')
-				.eq('user_id', session.user.id)
-				.single();
-			event.locals.role = (profile?.role as 'admin' | 'user') ?? null;
+			if (session?.user) {
+				const { data: profile } = await supabase
+					.from('profiles')
+					.select('role')
+					.eq('user_id', session.user.id)
+					.single();
+				event.locals.role = (profile?.role as 'admin' | 'user') ?? null;
+			}
+		} catch (e) {
+			console.error('[hooks.server] auth error:', e);
+			event.locals.user = null;
+			event.locals.role = null;
 		}
 	}
 

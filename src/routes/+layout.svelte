@@ -60,7 +60,7 @@
 				<svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
 				{#if sidebarExpanded}<span class="text-sm font-medium truncate">Widgets</span>{/if}
 			</a>
-			{#if data.role === 'admin'}
+			{#if data?.role === 'admin'}
 				<a href="/analytics" class="flex items-center gap-3 rounded-lg py-3 mt-1 {sidebarExpanded ? 'px-3' : 'px-3 justify-center'} hover:bg-gray-800 hover:text-white transition-colors" title="Analytics">
 					<svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4v16"/></svg>
 					{#if sidebarExpanded}<span class="text-sm font-medium truncate">Analytics</span>{/if}
@@ -69,9 +69,9 @@
 			<a href="/messages" class="relative flex items-center gap-3 rounded-lg py-3 mt-1 {sidebarExpanded ? 'px-3' : 'px-3 justify-center'} transition-colors {($page.url.pathname === '/messages' ? 'bg-gray-800 text-white' : 'hover:bg-gray-800 hover:text-white')}" title="Messages">
 				<svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
 				{#if sidebarExpanded}<span class="text-sm font-medium truncate">Messages</span>{/if}
-				{#if data.unreadCount > 0}
+				{#if (data?.unreadCount ?? 0) > 0}
 					<span class="absolute top-2 right-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-medium text-white ring-2 ring-gray-900">
-						{data.unreadCount > 99 ? '99+' : data.unreadCount}
+						{(data?.unreadCount ?? 0) > 99 ? '99+' : (data?.unreadCount ?? 0)}
 					</span>
 				{/if}
 			</a>
@@ -147,32 +147,32 @@
 		<!-- Header -->
 		<header class="flex items-center justify-between px-6 py-4 bg-white border-b border-gray-200 shrink-0">
 			<h2 class="text-lg font-medium text-gray-800">
-				{data.user
+				{data?.user
 					? `Hello, ${(data.displayName && data.displayName.trim()) || data.user.email?.split('@')[0] || 'User'} 👋`
 					: 'Dashboard'}
 			</h2>
 			<div class="flex items-center gap-3">
-				{#if data.user}
-					<span class="text-sm text-gray-500 capitalize">{data.role ?? 'user'}</span>
+				{#if data?.user}
+					<span class="text-sm text-gray-500 capitalize">{data?.role ?? 'user'}</span>
 					<a
 						href="/auth/logout"
 						class="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
 					>
 						Sign out
 					</a>
-					{#if data.avatarUrl}
+					{#if data?.avatarUrl}
 						<img
 							src={data.avatarUrl}
 							alt="Profile"
 							class="w-9 h-9 rounded-full object-cover border border-gray-200"
-							title={data.user.email ?? ''}
+							title={data.user?.email ?? ''}
 						/>
 					{:else}
 						<div
 							class="w-9 h-9 rounded-full bg-amber-600 flex items-center justify-center text-white font-semibold text-sm"
-							title={data.user.email ?? ''}
+							title={data.user?.email ?? ''}
 						>
-							{(data.user.email ?? 'U').charAt(0).toUpperCase()}
+							{(data.user?.email ?? 'U').charAt(0).toUpperCase()}
 						</div>
 					{/if}
 				{/if}

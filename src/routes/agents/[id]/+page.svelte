@@ -34,6 +34,8 @@
 	const agentId = $derived((data.agentId as string) ?? '');
 	const initial = $derived((data.initial as AgentData) ?? null);
 	const llmKeysAvailable = $derived((data.llmKeysAvailable as string[]) ?? []);
+	const origin = $derived((data.origin as string) ?? '');
+	const chatwootWebhookUrl = $derived(agentId && origin ? `${origin}/api/webhooks/chatwoot/${agentId}` : '');
 
 	let name = $state('');
 	let description = $state('');
@@ -63,8 +65,9 @@
 	let rulesLoading = $state(true);
 	let ruleSaving = $state<string | null>(null);
 
-	type AgentTab = 'tools' | 'connect' | 'train';
+	type AgentTab = 'tools' | 'connect' | 'train' | 'chatwoot';
 	let activeTab = $state<AgentTab>('train');
+	let chatwootCopyDone = $state(false);
 
 	$effect(() => {
 		const init = initial;
@@ -223,6 +226,17 @@
 		}
 	}
 
+	async function copyChatwootUrl() {
+		if (!chatwootWebhookUrl) return;
+		try {
+			await navigator.clipboard.writeText(chatwootWebhookUrl);
+			chatwootCopyDone = true;
+			setTimeout(() => (chatwootCopyDone = false), 2000);
+		} catch {
+			// fallback: select and show copied in UI still works if we focus the input
+		}
+	}
+
 	async function trainScrape() {
 		const url = trainScrapeUrl.trim();
 		if (!url || !agentId) return;
@@ -356,6 +370,17 @@
 		>
 			Train Bot
 		</button>
+		<button
+			type="button"
+			role="tab"
+			aria-selected={activeTab === 'chatwoot'}
+			aria-controls="panel-chatwoot"
+			id="tab-chatwoot"
+			class="pb-3 text-sm font-medium border-b-2 transition-colors {activeTab === 'chatwoot' ? 'border-amber-600 text-amber-600' : 'border-transparent text-gray-500 hover:text-gray-700'}"
+			onclick={() => (activeTab = 'chatwoot')}
+		>
+			Chatwoot
+		</button>
 	</div>
 
 	<form onsubmit={(e) => { e.preventDefault(); save(); }} class="space-y-6">
@@ -484,6 +509,29 @@
 					</div>
 					{/if}
 				{/if}
+			</div>
+		{:else if activeTab === 'chatwoot'}
+			<div id="panel-chatwoot" role="tabpanel" aria-labelledby="tab-chatwoot" class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+				<h2 class="text-lg font-semibold text-gray-900 mb-2">Chatwoot</h2>
+				<p class="text-sm text-gray-500 mb-4">
+					Use this webhook URL in Chatwoot when adding a bot (Settings → Bots → Add Bot). Chatwoot will send messages here and this agent will reply. Set <code class="text-xs bg-gray-100 px-1 rounded">CHATWOOT_BOT_ACCESS_TOKEN</code> and <code class="text-xs bg-gray-100 px-1 rounded">CHATWOOT_BASE_URL</code> in your app env.
+				</p>
+				<div class="flex flex-wrap items-center gap-2">
+					<input
+						type="text"
+						readonly
+						value={chatwootWebhookUrl}
+						class="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono bg-gray-50"
+						aria-label="Chatwoot webhook URL"
+					/>
+					<button
+						type="button"
+						onclick={copyChatwootUrl}
+						class="px-4 py-2 rounded-lg text-sm font-medium transition-colors {chatwootCopyDone ? 'bg-green-600 text-white' : 'bg-amber-600 hover:bg-amber-700 text-white'}"
+					>
+						{chatwootCopyDone ? 'Copied!' : 'Copy URL'}
+					</button>
+				</div>
 			</div>
 		{:else if activeTab === 'train'}
 			<div id="panel-train" role="tabpanel" aria-labelledby="tab-train" class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">

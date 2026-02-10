@@ -33,7 +33,7 @@ export const controller = String.raw`
       headers: {
         'Accept': 'application/json'
       },
-      credentials: 'omit'
+      credentials: 'include'
     })
       .then(function(res) {
         if (!res.ok) {
@@ -212,7 +212,7 @@ export const controller = String.raw`
     }, 100);
 
     /* Fetch visitor name */
-    fetch(base + '/api/widgets/' + widgetId + '/visitor?session_id=' + encodeURIComponent(state.sessionId))
+    fetch(base + '/api/widgets/' + widgetId + '/visitor?session_id=' + encodeURIComponent(state.sessionId), { credentials: 'include' })
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (data && data.name && typeof data.name === 'string' && data.name.trim()) {
@@ -238,6 +238,8 @@ export const controller = String.raw`
       chatWin.classList.remove('pb-closing');
       inputEl.focus();
       state._openingChat = true;
+      // Re-read session so we always load the right conversation (cookie/storage may have been set elsewhere)
+      state.sessionId = getSessionId();
       fetchMessages(true);
       // After window animation (250ms) settles, do a single smooth scroll
       setTimeout(function() {
@@ -245,7 +247,6 @@ export const controller = String.raw`
         scrollToBottom(true);
       }, 300);
       // Don't start continuous polling - only poll when messages are sent
-      // Initial fetchMessages(true) loads existing messages
       dispatchEvent('profitbot:chat-opened');
     }
 
@@ -484,7 +485,7 @@ export const controller = String.raw`
         headers: {
           'Accept': 'application/json'
         },
-        credentials: 'omit'
+        credentials: 'include'
       })
         .then(function(res) {
           if (!res.ok) {
@@ -493,6 +494,15 @@ export const controller = String.raw`
           return res.json();
         })
         .then(function(data) {
+          if (data.sessionId && data.sessionId !== state.sessionId) {
+            state.sessionId = data.sessionId;
+            try {
+              var key = 'profitbot_session_' + widgetId;
+              localStorage.setItem(key, data.sessionId);
+              setSessionCookie(data.sessionId);
+              if (typeof setSessionInUrl === 'function') setSessionInUrl(data.sessionId);
+            } catch (e) {}
+          }
           var list = Array.isArray(data.messages) ? data.messages : [];
           // Dedupe by id in case API returns the same message twice
           var seenIds = {};
@@ -507,10 +517,11 @@ export const controller = String.raw`
           state.messagesLoading = false;
 
           if (forceRefresh || state.messages.length === 0) {
-            // If we have local (unsaved) messages and server list is shorter, server may not have latest yet — don't overwrite
+            // On explicit refresh (e.g. open chat), always replace with server list so past conversation loads
             var hasLocal = false;
             for (var i = 0; i < state.messages.length; i++) { if (!state.messages[i].id) { hasLocal = true; break; } }
-            if (!hasLocal || list.length >= state.messages.length) {
+            var shouldReplace = forceRefresh || !hasLocal || list.length >= state.messages.length;
+            if (shouldReplace) {
               var mapped = list.map(function(m) {
                 return { id: m.id, _localId: nextLocalId(), role: m.role === 'user' ? 'user' : 'bot', content: m.content, avatarUrl: m.avatarUrl, checkoutPreview: m.checkoutPreview, createdAt: m.createdAt };
               });
@@ -573,15 +584,14 @@ export const controller = String.raw`
             state.showStarterPrompts = false;
           }
 
-          // Don't show typing when we already have the full response (same message count, last is bot)
+          // Never show typing when last message is from bot (server can lag on clearing agent_typing_until)
           var lastFromServer = list.length > 0 ? list[list.length - 1] : null;
+          var lastIsBot = lastFromServer && (lastFromServer.role === 'bot' || lastFromServer.role === 'assistant');
           var serverSaysTyping = !!data.agentTyping;
-          if (serverSaysTyping && list.length === state.messages.length && lastFromServer && (lastFromServer.role === 'bot' || lastFromServer.role === 'assistant')) {
-            serverSaysTyping = false;
-          }
+          if (lastIsBot) serverSaysTyping = false;
           state.agentTyping = serverSaysTyping;
           state.agentAvatarUrl = data.agentAvatarUrl || null;
-          
+
           // If we received new messages, reset polling attempts (keep polling)
           // If no new messages and we've been polling, we'll stop after max attempts
           var hadNewMessages = list.length > state.lastMessageCount;
@@ -649,8 +659,11 @@ export const controller = String.raw`
       
       // Ensure we have a valid sessionId before fetching (re-read from cookie/localStorage)
       state.sessionId = getSessionId();
-      if (!state.sessionId || state.sessionId === 'preview') return;
-      
+      if (!state.sessionId || state.sessionId === 'preview') {
+        state.messagesLoading = false;
+        renderMessages(true);
+        return;
+      }
       fetchMessages(true);
       setTimeout(function() {
         if (svgIcon) svgIcon.classList.remove('pb-spin');
@@ -806,7 +819,7 @@ export const controller = String.raw`
       var conversationId = null;
       var backend = config.chatBackend || 'n8n';
       var useN8n = backend === 'n8n' && !!(config.n8nWebhookUrl && config.n8nWebhookUrl.trim());
-      fetch(base + '/api/widgets/' + widgetId + '/conversation?session_id=' + encodeURIComponent(state.sessionId))
+      fetch(base + '/api/widgets/' + widgetId + '/conversation?session_id=' + encodeURIComponent(state.sessionId), { credentials: 'include' })
         .then(function(r) { return r.json(); })
         .then(function(data) {
           if (data.conversationId) conversationId = data.conversationId;
@@ -815,7 +828,8 @@ export const controller = String.raw`
             fetch(base + '/api/widgets/' + widgetId + '/messages/save', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ conversationId: conversationId, role: 'user', content: trimmed })
+              body: JSON.stringify({ conversationId: conversationId, role: 'user', content: trimmed }),
+              credentials: 'include'
             }).catch(function() {});
           }
           doSend(trimmed, conversationId);
@@ -922,7 +936,8 @@ export const controller = String.raw`
       fetch(base + '/api/widgets/' + widgetId + '/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: message, sessionId: state.sessionId, conversationId: conversationId })
+        body: JSON.stringify({ message: message, sessionId: state.sessionId, conversationId: conversationId }),
+        credentials: 'include'
       })
         .then(function(res) { return res.json(); })
         .then(function(data) {
@@ -1017,10 +1032,19 @@ export const controller = String.raw`
     function silentSync() {
       if (!widgetId || !state.sessionId || state.sessionId === 'preview') return;
       var url = base + '/api/widgets/' + widgetId + '/messages?session_id=' + encodeURIComponent(state.sessionId);
-      fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' }, credentials: 'omit' })
+      fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' }, credentials: 'include' })
         .then(function(res) { return res.ok ? res.json() : null; })
         .then(function(data) {
           if (!data) return;
+          if (data.sessionId && data.sessionId !== state.sessionId) {
+            state.sessionId = data.sessionId;
+            try {
+              var sk = 'profitbot_session_' + widgetId;
+              localStorage.setItem(sk, data.sessionId);
+              setSessionCookie(data.sessionId);
+              if (typeof setSessionInUrl === 'function') setSessionInUrl(data.sessionId);
+            } catch (e) {}
+          }
           var list = Array.isArray(data.messages) ? data.messages : [];
           var seenIds = {};
           list = list.filter(function(m) {
@@ -1039,10 +1063,9 @@ export const controller = String.raw`
             renderMessages(true);
           }
           var lastFromServer = list.length > 0 ? list[list.length - 1] : null;
+          var lastIsBot = lastFromServer && (lastFromServer.role === 'bot' || lastFromServer.role === 'assistant');
           var serverSaysTyping = !!data.agentTyping;
-          if (serverSaysTyping && list.length === state.messages.length && lastFromServer && (lastFromServer.role === 'bot' || lastFromServer.role === 'assistant')) {
-            serverSaysTyping = false;
-          }
+          if (lastIsBot) serverSaysTyping = false;
           state.agentTyping = serverSaysTyping;
           state.agentAvatarUrl = data.agentAvatarUrl || null;
         })

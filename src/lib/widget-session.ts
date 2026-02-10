@@ -29,6 +29,17 @@ function setSessionCookie(widgetId: string, sessionId: string): void {
 	}
 }
 
+function setSessionInUrl(sessionId: string): void {
+	try {
+		if (typeof window === 'undefined' || !window.history?.replaceState || !window.location) return;
+		const url = new URL(window.location.href);
+		url.searchParams.set('session_id', sessionId);
+		window.history.replaceState(null, '', url.toString());
+	} catch {
+		// ignore
+	}
+}
+
 export function getSessionId(widgetId: string | undefined, browser: boolean): string {
 	if (!widgetId) return 'preview';
 	if (!browser) return 'preview';
@@ -39,8 +50,10 @@ export function getSessionId(widgetId: string | undefined, browser: boolean): st
 	try {
 		const stored = localStorage.getItem(key) ?? '';
 		if (stored.trim()) {
-			setSessionCookie(widgetId, stored.trim());
-			return stored.trim();
+			const sid = stored.trim();
+			setSessionCookie(widgetId, sid);
+			setSessionInUrl(sid);
+			return sid;
 		}
 	} catch {
 		// ignore
@@ -50,6 +63,7 @@ export function getSessionId(widgetId: string | undefined, browser: boolean): st
 		if (fromCookie) {
 			try {
 				localStorage.setItem(key, fromCookie);
+				setSessionInUrl(fromCookie);
 			} catch {
 				// ignore
 			}
@@ -65,5 +79,19 @@ export function getSessionId(widgetId: string | undefined, browser: boolean): st
 		// ignore
 	}
 	setSessionCookie(widgetId, newId);
+	setSessionInUrl(newId);
 	return newId;
+}
+
+/** Persist session (e.g. after API returns reattach sessionId) so it survives refresh. */
+export function setSessionId(widgetId: string | undefined, sessionId: string): void {
+	if (!widgetId || !sessionId.trim()) return;
+	const key = SESSION_STORAGE_KEY(widgetId);
+	try {
+		localStorage.setItem(key, sessionId.trim());
+		setSessionCookie(widgetId, sessionId.trim());
+		setSessionInUrl(sessionId.trim());
+	} catch {
+		// ignore
+	}
 }

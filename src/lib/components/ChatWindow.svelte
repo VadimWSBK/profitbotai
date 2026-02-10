@@ -5,7 +5,7 @@
 	import { fly, fade } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import { browser } from '$app/environment';
-	import { getSessionId } from '$lib/widget-session';
+	import { getSessionId, setSessionId } from '$lib/widget-session';
 	import { sendToParent, type ShopifyContext } from '$lib/widget-postmessage';
 
 	let { config, widgetId, shopifyContext, onClose } = $props<{ config: WidgetConfig; widgetId?: string; shopifyContext?: ShopifyContext | null; onClose: () => void }>();
@@ -359,6 +359,11 @@
 		try {
 			const res = await fetch(`/api/widgets/${widgetId}/messages?session_id=${encodeURIComponent(sessionId)}`);
 			const data = await res.json().catch(() => ({}));
+			// Persist session from API (e.g. reattach) so refresh shows same conversation
+			if (data.sessionId && data.sessionId !== sessionId && widgetId) {
+				sessionId = data.sessionId;
+				setSessionId(widgetId, data.sessionId);
+			}
 			const list = Array.isArray(data.messages) ? data.messages : [];
 			const mappedList = list.map(mapMessage);
 			const mergedList = mergeCheckoutPreviews(mappedList, messages);
