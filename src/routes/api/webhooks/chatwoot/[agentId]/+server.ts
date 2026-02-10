@@ -1,7 +1,8 @@
 /**
  * POST /api/webhooks/chatwoot/[agentId]
  * Per-agent Chatwoot webhook. Use this URL in Chatwoot's Add Bot → Webhook URL
- * so that agent's role, tone, instructions, and LLM power the bot.
+ * so that agent's role, tone, instructions, Train Bot rules, and LLM power the bot.
+ * Fetches conversation history from Chatwoot and injects Profitbot agent rules (RAG) for context.
  *
  * Env: CHATWOOT_BOT_ACCESS_TOKEN, CHATWOOT_BASE_URL (no CHATWOOT_AGENT_ID needed).
  */
@@ -10,7 +11,11 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSupabaseAdmin } from '$lib/supabase.server';
 import { chatWithLlm } from '$lib/chat-llm.server';
+import { getRelevantRulesForAgent } from '$lib/agent-rules.server';
 import { env } from '$env/dynamic/private';
+
+const MAX_HISTORY_MESSAGES = 24;
+const MAX_HISTORY_CHARS = 18_000;
 
 type ChatwootPayload = {
 	event?: string;
@@ -20,6 +25,68 @@ type ChatwootPayload = {
 	account?: { id: number };
 	sender?: { id: string | number };
 };
+
+type ChatwootMessage = {
+	id?: number;
+	content?: string | null;
+	message_type?: string;
+	created_at?: string;
+};
+
+/** Fetch conversation messages from Chatwoot API and return as LLM turns (user/assistant). */
+async function getChatwootConversationHistory(
+	baseUrl: string,
+	botToken: string,
+	accountId: number,
+	conversationId: number,
+	currentUserMessage: string
+): Promise<{ role: 'user' | 'assistant'; content: string }[]> {
+	const url = `${baseUrl}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`;
+	const res = await fetch(url, {
+		headers: { Accept: 'application/json', api_access_token: botToken }
+	});
+	if (!res.ok) return [];
+
+	let list: ChatwootMessage[];
+	try {
+		list = (await res.json()) as ChatwootMessage[];
+	} catch {
+		return [];
+	}
+	if (!Array.isArray(list)) return [];
+
+	const turns: { role: 'user' | 'assistant'; content: string }[] = [];
+	for (const m of list) {
+		const type = (m.message_type ?? '').toLowerCase();
+		const text = typeof m.content === 'string' ? m.content.trim() : '';
+		if (!text) continue;
+		if (type === 'incoming') turns.push({ role: 'user', content: text });
+		else if (type === 'outgoing') turns.push({ role: 'assistant', content: text });
+	}
+
+	// Include the current message in history if not already last (Chatwoot may include it in the list)
+	const lastIncoming = turns.findLast((t) => t.role === 'user');
+	if (lastIncoming?.content !== currentUserMessage) {
+		turns.push({ role: 'user', content: currentUserMessage });
+	}
+
+	// Keep last N messages and optionally trim by char budget (oldest first)
+	let out = turns.slice(-MAX_HISTORY_MESSAGES);
+	if (MAX_HISTORY_CHARS > 0) {
+		let total = 0;
+		let start = out.length;
+		for (let i = out.length - 1; i >= 0; i--) {
+			total += out[i].content.length;
+			if (total > MAX_HISTORY_CHARS) {
+				start = i + 1;
+				break;
+			}
+			start = i;
+		}
+		out = out.slice(start);
+	}
+	return out;
+}
 
 export const POST: RequestHandler = async (event) => {
 	const agentId = event.params.agentId?.trim() ?? '';
@@ -86,6 +153,7 @@ export const POST: RequestHandler = async (event) => {
 		return json({ error: 'No LLM key configured' }, { status: 400 });
 	}
 
+	// System prompt: role, tone, instructions + Profitbot Train Bot rules (RAG)
 	const role = (agentRow.bot_role as string) ?? '';
 	const tone = (agentRow.bot_tone as string) ?? '';
 	const instructions = (agentRow.bot_instructions as string) ?? '';
@@ -93,11 +161,29 @@ export const POST: RequestHandler = async (event) => {
 	if (role) parts.push(`Role: ${role}`);
 	if (tone) parts.push(`Tone: ${tone}`);
 	if (instructions) parts.push(instructions);
+
+	try {
+		const relevantRules = await getRelevantRulesForAgent(agentId, content, 5);
+		if (relevantRules.length > 0) {
+			parts.push(`Rules (follow these):\n${relevantRules.map((r) => r.content).join('\n\n')}`);
+		}
+	} catch (e) {
+		console.error('[webhooks/chatwoot] getRelevantRulesForAgent:', e);
+	}
 	const systemPrompt = parts.length > 0 ? parts.join('\n\n') : 'You are a helpful assistant.';
+
+	// Conversation history from Chatwoot so the bot has context
+	const history = await getChatwootConversationHistory(
+		baseUrl,
+		botToken,
+		accountId,
+		conversationId,
+		content
+	);
 
 	const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
 		{ role: 'system', content: systemPrompt },
-		{ role: 'user', content }
+		...history.map((t) => ({ role: t.role, content: t.content }))
 	];
 
 	let reply: string;

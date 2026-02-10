@@ -1,6 +1,8 @@
 # Chatwoot Agent Bot setup
 
-Connect a Chatwoot Agent Bot to a Profitbot agent so that conversations in Chatwoot are answered by your Profitbot AI (role, tone, instructions, and LLM).
+Connect a Chatwoot Agent Bot to a Profitbot agent so that conversations in Chatwoot are answered by your Profitbot AI.
+
+**How it works:** This is a **webhook** integration, not MCP. Chatwoot sends each new message to your Profitbot webhook; Profitbot runs your agent (role, tone, instructions, **Train Bot** rules, and LLM) and posts the reply back. You do **not** train or configure the bot inside Chatwoot—the brain is entirely your Profitbot agent. The bot gets **conversation context** (recent Chatwoot messages) and **knowledge from Profitbot** (Train Bot rules and, when available, agent documents) so it can answer accurately instead of making things up.
 
 ## 1. Webhook URL to use in Chatwoot
 
@@ -38,3 +40,8 @@ After this, when a user sends a message in that inbox, Chatwoot will POST to you
 
 - The agent must use **Direct** chat (not n8n) in the Connect tab.
 - The agent’s owner must have an **LLM API key** set for the agent’s chosen provider (e.g. OpenAI, Anthropic) in **Settings → LLM keys**.
+
+## 5. Context and knowledge (no training in Chatwoot)
+
+- **Conversation context:** Profitbot fetches recent messages from the Chatwoot conversation via the Chatwoot API and sends them to the LLM so the bot has dialogue history.
+- **Knowledge from Profitbot:** The bot uses your agent’s **Train Bot** rules (and, where supported, documents) from Profitbot. Configure those in **Agents → [your agent] → Train Bot**. You do **not** need to train or add knowledge inside Chatwoot—the bot uses data and tools from Profitbot only.
