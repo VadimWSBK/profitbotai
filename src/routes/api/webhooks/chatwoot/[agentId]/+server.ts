@@ -427,7 +427,7 @@ export const POST: RequestHandler = async (event) => {
 			const roofKit = await getDiyKitBuilderConfig(admin, ownerId, 'roof-kit');
 			if (roofKit?.product_entries?.length) {
 				// Use "Name in checkout" (display_name) when set, so the bot uses the same names as checkout/breakdown
-				const names = [...new Set(roofKit.product_entries.map((e) => (e.display_name?.trim() || DIY_ROLE_LABELS[e.role] ?? e.role)).filter(Boolean))];
+				const names = [...new Set(roofKit.product_entries.map((e) => (e.display_name?.trim() || (DIY_ROLE_LABELS[e.role] ?? e.role))).filter(Boolean))];
 				kitProductsLine = ` This account's DIY kit contains only: ${names.join(', ')}. When describing what the quote includes, use these product names and ONLY the products in the tool result line items—do not add sealant, sealer, bonus kit, or other components unless they are in the breakdown.`;
 			}
 		} catch (e) {
