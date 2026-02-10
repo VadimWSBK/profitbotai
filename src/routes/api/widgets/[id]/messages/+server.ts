@@ -1,6 +1,12 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getSupabase } from '$lib/supabase.server';
+import { getSupabase, getSupabaseAdmin } from '$lib/supabase.server';
+import { getShopifyConfigForUser, getDiyProductImages } from '$lib/shopify.server';
+
+function sizeFromTitle(title: string): number | null {
+	const m = (typeof title === 'string' ? title : '').match(/\b(15|10|5)\s*L\b/i);
+	return m ? Number.parseInt(m[1], 10) : null;
+}
 
 /**
  * GET /api/widgets/[id]/messages?session_id= – messages for this widget + session (for embed).
@@ -45,13 +51,60 @@ export const GET: RequestHandler = async (event) => {
 				style_overrides?: unknown;
 			};
 			const rawRows = (rows ?? []) as Row[];
+			// Resolve product images for line items that have none (embed widget)
+			let imageBySize: Record<number, string> = {};
+			const rowsWithPreview = rawRows.filter(
+				(r) => r.line_items_ui != null && r.checkout_url && Array.isArray(r.line_items_ui)
+			);
+			if (rowsWithPreview.length > 0) {
+				try {
+					const admin = getSupabaseAdmin();
+					const { data: widgetRow } = await admin
+						.from('widgets')
+						.select('created_by')
+						.eq('id', widgetId)
+						.single();
+					const ownerId = (widgetRow as { created_by?: string } | null)?.created_by ?? null;
+					if (ownerId) {
+						const config = await getShopifyConfigForUser(admin, ownerId);
+						if (config) {
+							const sizeRe = /\b(15|10|5)\s*L\b/i;
+							const bucketConfig: Array<{ size: number; price: string; title: string }> = [];
+							for (const r of rowsWithPreview) {
+								const raw = Array.isArray(r.line_items_ui) ? r.line_items_ui : [];
+								for (const it of raw) {
+									const item = it != null && typeof it === 'object' ? (it as Record<string, unknown>) : {};
+									const hasImage =
+										(item?.imageUrl ?? item?.image_url) &&
+										String(item?.imageUrl ?? item?.image_url).trim();
+									if (hasImage) continue;
+									const title = (item?.title ?? '') as string;
+									const m = title.match(sizeRe);
+									if (m) {
+										const size = Number.parseInt(m[1], 10);
+										const price = (item?.unitPrice ?? item?.unit_price ?? '0') as string;
+										if (!bucketConfig.some((b) => b.size === size && b.price === price))
+											bucketConfig.push({ size, price, title });
+									}
+								}
+							}
+							if (bucketConfig.length > 0) imageBySize = await getDiyProductImages(config, bucketConfig);
+						}
+					}
+				} catch {
+					// ignore
+				}
+			}
 			const messages = rawRows.map((r) => {
 				const rawLineItems = Array.isArray(r.line_items_ui) ? r.line_items_ui : [];
-				// Normalise so each item has imageUrl (DB/json may use image_url)
-				const lineItemsUI = rawLineItems.map((it: Record<string, unknown>) => ({
-					...it,
-					imageUrl: (it?.imageUrl ?? it?.image_url ?? null) as string | null
-				}));
+				const lineItemsUI = rawLineItems.map((it: Record<string, unknown>) => {
+					let imageUrl = (it?.imageUrl ?? it?.image_url ?? null) as string | null;
+					if (!imageUrl || !String(imageUrl).trim()) {
+						const size = sizeFromTitle((it?.title ?? '') as string);
+						if (size != null && imageBySize[size]) imageUrl = imageBySize[size];
+					}
+					return { ...it, imageUrl: imageUrl ?? null };
+				});
 				const so = r.style_overrides && typeof r.style_overrides === 'object' ? (r.style_overrides as Record<string, unknown>) : {};
 				const styleOverrides =
 					so.checkout_button_color || so.qty_badge_background_color

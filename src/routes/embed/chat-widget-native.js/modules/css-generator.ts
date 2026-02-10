@@ -1,10 +1,12 @@
 /**
- * CSS generator module - Generates scoped CSS with !important flags
+ * CSS generator module - Generates scoped CSS with !important flags.
+ * All class selectors use the .pb- prefix and are scoped to the widget root
+ * via [data-profitbot-id="..."] so styles cannot bleed into the host page.
  */
 export const cssgenerator = String.raw`
   /* ===== 5. CSS GENERATOR ===== */
   function getWidgetCSS(config, scopeId) {
-    // Scope all selectors to the widget container to avoid conflicts
+    // Scope all selectors to the widget container so CSS cannot bleed into host page
     var scope = scopeId ? '[data-profitbot-id="' + scopeId + '"]' : '';
     
     function scopeSelector(sel) {
@@ -246,7 +248,7 @@ export const cssgenerator = String.raw`
       '.pb-checkout-table th:last-child, .pb-checkout-table td:last-child { display: none; }',
       '.pb-checkout-img-wrap { position: relative; display: inline-block; width: 64px; height: 64px; flex-shrink: 0; overflow: hidden; border-radius: 6px; }',
       '.pb-table-cell-image { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 6px; }',
-      '.pb-qty-badge { position: absolute; top: 2px; right: 2px; background: rgba(0,0,0,0.75); color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; line-height: 1.2; z-index: 1; }',
+      '.pb-qty-badge { position: absolute; top: 2px; right: 2px; background: rgba(0,0,0,0.75); color: #fff; padding: 4px 8px; border-radius: 6px; font-size: 0.875rem; font-weight: 600; line-height: 1.2; z-index: 1; min-width: 1.5em; text-align: center; }',
       '.pb-checkout-product-cell { display: block; font-size: 0.95em; }',
       '.pb-checkout-variant-line { display: block; margin-top: 0.2em; font-size: 0.85em; opacity: 0.85; font-weight: 400; }',
       '.pb-checkout-qty-price-line { display: block; margin-top: 0.2em; font-size: 0.85em; opacity: 0.9; font-weight: 400; }',
@@ -263,7 +265,7 @@ export const cssgenerator = String.raw`
       '.pb-checkout-line-item-image-wrap { position: relative; flex-shrink: 0; width: 64px; height: 64px; border-radius: 8px; overflow: hidden; background: rgba(0,0,0,0.06); }',
       '.pb-checkout-line-item-image { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 8px; }',
       '.pb-checkout-line-item-image.pb-image-placeholder { min-width: 64px; min-height: 64px; background: rgba(0,0,0,0.06); }',
-      '.pb-checkout-line-item-image-wrap .pb-qty-badge { position: absolute; top: 4px; right: 4px; background: #195A2A; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; line-height: 1.2; }',
+      '.pb-checkout-line-item-image-wrap .pb-qty-badge { position: absolute; top: 4px; right: 4px; background: #195A2A; color: #fff; padding: 4px 8px; border-radius: 6px; font-size: 0.875rem; font-weight: 600; line-height: 1.2; min-width: 1.5em; text-align: center; }',
       '.pb-checkout-line-item-details { flex: 1; min-width: 0; }',
       '.pb-checkout-line-item-title { font-weight: 700; font-size: 14px; line-height: 1.3; color: #111827; }',
       '.pb-checkout-line-item-details .pb-checkout-price-grid { display: flex; gap: 1.25em; margin-top: 6px; font-size: 13px; }',
@@ -280,9 +282,11 @@ export const cssgenerator = String.raw`
       '.pb-checkout-summary-table .pb-savings { color: #059669; }',
       '.pb-checkout-summary-table .pb-total td { font-weight: 700; font-size: 1.05em; padding-top: 8px; border-top: 1px solid rgba(0,0,0,0.1); }',
       '.pb-gst-note { font-size: 13px; color: #6b7280; margin-top: 8px; font-style: italic; }',
-      '.pb-checkout-button { display: inline-block; margin-top: 14px; padding: 12px 24px; background: #C8892D; color: #fff; border-radius: 8px; font-weight: 600; text-decoration: none; text-align: center; transition: background 0.15s; border: none; cursor: pointer; }',
-      '.pb-checkout-button:hover { background: color-mix(in srgb, var(--pb-checkout-btn, #C8892D) 85%, black); color: #fff; }',
+      '.pb-checkout-button { display: inline-block; margin-top: 14px; padding: 12px 24px; background: #C8892D; color: #fff; border-radius: 8px; font-weight: 600; text-decoration: none; text-align: center; transition: background 0.15s ease, transform 0.15s ease; border: none; cursor: pointer; }',
+      '.pb-checkout-button:hover { background: color-mix(in srgb, var(--pb-checkout-btn, #C8892D) 85%, black); color: #fff; transform: scale(1.03); }',
+      '.pb-checkout-button:active { transform: scale(0.98); }',
       '.pb-checkout-button-disabled { cursor: default; opacity: 0.85; pointer-events: none; }',
+      '.pb-checkout-button-disabled:active { transform: none; }',
 
       /* Backdrop for mobile */
       '.pb-backdrop { display: none; }',

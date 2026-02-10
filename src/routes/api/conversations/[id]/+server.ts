@@ -3,8 +3,14 @@ import type { RequestHandler } from './$types';
 import { getSupabaseClient, getSupabaseAdmin } from '$lib/supabase.server';
 import { syncReceivedEmailsForUser } from '$lib/sync-received-emails.server';
 import { getPrimaryEmail } from '$lib/contact-email-jsonb';
+import { getShopifyConfigForUser, getDiyProductImages } from '$lib/shopify.server';
 
 const MESSAGES_PAGE_SIZE = 20;
+
+function sizeFromTitle(title: string): number | null {
+	const m = (typeof title === 'string' ? title : '').match(/\b(15|10|5)\s*L\b/i);
+	return m ? Number.parseInt(m[1], 10) : null;
+}
 
 /**
  * GET /api/conversations/[id] – get one conversation with messages. Marks user messages as read.
@@ -25,7 +31,7 @@ export const GET: RequestHandler = async (event) => {
 	const supabase = getSupabaseClient(event);
 	const { data: conv, error: convError } = await supabase
 		.from('widget_conversations')
-		.select('id, widget_id, session_id, is_ai_active, is_ai_email_active, created_at, updated_at, widgets(id, name, n8n_webhook_url)')
+		.select('id, widget_id, session_id, is_ai_active, is_ai_email_active, created_at, updated_at, widgets(id, name, n8n_webhook_url, created_by)')
 		.eq('id', id)
 		.single();
 	if (convError || !conv) return json({ error: 'Conversation not found' }, { status: 404 });
@@ -98,6 +104,7 @@ export const GET: RequestHandler = async (event) => {
 
 	const assistantMessageIds = chatMessages.filter((m) => m.role === 'assistant').map((m) => m.id);
 	let previewByMessageId: Record<string, { line_items_ui: unknown; summary: unknown; checkout_url: string; style_overrides?: unknown }> = {};
+	let imageBySize: Record<number, string> = {};
 	if (assistantMessageIds.length > 0) {
 		const admin = getSupabaseAdmin();
 		const { data: previewRows } = await admin
@@ -117,6 +124,35 @@ export const GET: RequestHandler = async (event) => {
 			},
 			{} as Record<string, { line_items_ui: unknown; summary: unknown; checkout_url: string; style_overrides?: unknown }>
 		);
+		// Resolve product images for line items that have none (e.g. old previews or missing product pricing images)
+		const ownerId = (widgetObj as { created_by?: string } | null)?.created_by ?? null;
+		if (ownerId && Object.keys(previewByMessageId).length > 0) {
+			try {
+				const config = await getShopifyConfigForUser(admin, ownerId);
+				if (config) {
+					const bucketConfig: Array<{ size: number; price: string; title: string }> = [];
+					const sizeRe = /\b(15|10|5)\s*L\b/i;
+					for (const row of Object.values(previewByMessageId)) {
+						const raw = Array.isArray(row.line_items_ui) ? row.line_items_ui : [];
+						for (const it of raw) {
+							const item = it != null && typeof it === 'object' ? (it as Record<string, unknown>) : {};
+							const hasImage = (item?.imageUrl ?? item?.image_url) && String(item?.imageUrl ?? item?.image_url).trim();
+							if (hasImage) continue;
+							const title = (item?.title ?? '') as string;
+							const m = title.match(sizeRe);
+							if (m) {
+								const size = Number.parseInt(m[1], 10);
+								const price = (item?.unitPrice ?? item?.unit_price ?? '0') as string;
+								if (!bucketConfig.some((b) => b.size === size && b.price === price)) bucketConfig.push({ size, price, title });
+							}
+						}
+					}
+					if (bucketConfig.length > 0) imageBySize = await getDiyProductImages(config, bucketConfig);
+				}
+			} catch {
+				// ignore – images stay as placeholders
+			}
+		}
 	}
 
 	type UnifiedMessage = {
@@ -140,7 +176,12 @@ export const GET: RequestHandler = async (event) => {
 		const rawLineItems = Array.isArray(preview?.line_items_ui) ? preview.line_items_ui : [];
 		const lineItemsUI = rawLineItems.map((it: unknown) => {
 			const item = it != null && typeof it === 'object' ? (it as Record<string, unknown>) : {};
-			return { ...item, imageUrl: (item?.imageUrl ?? item?.image_url ?? null) as string | null };
+			let imageUrl = (item?.imageUrl ?? item?.image_url ?? null) as string | null;
+			if (!imageUrl || !String(imageUrl).trim()) {
+				const size = sizeFromTitle((item?.title ?? '') as string);
+				if (size != null && imageBySize[size]) imageUrl = imageBySize[size];
+			}
+			return { ...item, imageUrl: imageUrl ?? null };
 		});
 		return {
 			id: m.id,
