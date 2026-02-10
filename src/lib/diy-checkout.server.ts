@@ -50,6 +50,8 @@ export type DiyCheckoutResult = {
 		discountPercent?: number;
 		discountAmount?: string;
 	};
+	/** Style overrides from kit builder (checkout button, qty badge). */
+	styleOverrides?: { checkoutButtonColor?: string; qtyBadgeBackgroundColor?: string };
 };
 
 function calculateBucketsFromRoofSize(
@@ -136,6 +138,15 @@ export async function createDiyCheckoutForOwner(
 		return { ok: false, error: 'No product pricing configured. Add products in Settings → Product Pricing.' };
 	}
 
+	const kitConfig = await getDefaultKitBuilderConfig(admin, ownerId);
+	const styleOverrides: DiyCheckoutResult['styleOverrides'] = {};
+	if (kitConfig?.checkout_button_color?.trim()) {
+		styleOverrides.checkoutButtonColor = kitConfig.checkout_button_color.trim();
+	}
+	if (kitConfig?.qty_badge_background_color?.trim()) {
+		styleOverrides.qtyBadgeBackgroundColor = kitConfig.qty_badge_background_color.trim();
+	}
+
 	const { roof_size_sqm, count_15l, count_10l, count_5l, discount_percent, email } = input;
 	let lineItems: Array<{
 		title: string;
@@ -170,7 +181,6 @@ export async function createDiyCheckoutForOwner(
 	if (!imageBySize[5] && env.DIY_PRODUCT_IMAGE_5L?.trim()) imageBySize[5] = env.DIY_PRODUCT_IMAGE_5L.trim();
 
 	if (roof_size_sqm != null && roof_size_sqm >= 1) {
-		const kitConfig = await getDefaultKitBuilderConfig(admin, ownerId);
 		const roleHandles = kitConfig?.role_handles;
 		const hasRoleConfig =
 			roleHandles &&
@@ -181,10 +191,10 @@ export async function createDiyCheckoutForOwner(
 			const breakdown = calculateRoofKitBreakdown(
 				Number(roof_size_sqm),
 				variants,
-				kitConfig.coverage_overrides
+				kitConfig?.coverage_overrides ?? {}
 			);
 			litres = breakdown.sealantLitres;
-			notePrefix = `${kitConfig.name ?? 'DIY'} ${roof_size_sqm}m²`;
+			notePrefix = `${kitConfig?.name ?? 'DIY'} ${roof_size_sqm}m²`;
 			lineItems = resolveRoofKitToLineItems(breakdown.lineItems, products, roleHandles, imageBySize);
 		}
 
@@ -293,8 +303,10 @@ export async function createDiyCheckoutForOwner(
 			const lineTotal = unitPrice * li.quantity;
 			const variantMatch = /\d+\s*L\b|\d+\s*m\b/i.exec(li.title);
 			const variant = variantMatch ? variantMatch[0].trim() : null;
+			const imageUrl =
+				li.imageUrl && String(li.imageUrl).trim() ? String(li.imageUrl).trim() : null;
 			return {
-				imageUrl: li.imageUrl ?? null,
+				imageUrl,
 				title: li.title,
 				variant,
 				quantity: li.quantity,
@@ -319,7 +331,8 @@ export async function createDiyCheckoutForOwner(
 			data: {
 				checkoutUrl: cartUrl,
 				lineItemsUI,
-				summary
+				summary,
+				...(Object.keys(styleOverrides).length > 0 && { styleOverrides })
 			}
 		};
 	}
@@ -392,8 +405,10 @@ export async function createDiyCheckoutForOwner(
 			const lineTotal = unitPrice * quantity;
 			const variantMatch = /\d+\s*L\b/i.exec(li.title);
 			const variant = variantMatch ? variantMatch[0].trim() : null;
+			const imageUrl =
+				li.imageUrl && String(li.imageUrl).trim() ? String(li.imageUrl).trim() : null;
 			return {
-				imageUrl: li.imageUrl ?? null,
+				imageUrl,
 				title: li.title,
 				variant,
 				quantity,
@@ -420,7 +435,8 @@ export async function createDiyCheckoutForOwner(
 			data: {
 				checkoutUrl: retryResult.checkoutUrl,
 				lineItemsUI,
-				summary
+				summary,
+				...(Object.keys(styleOverrides).length > 0 && { styleOverrides })
 			}
 		};
 	}
@@ -436,8 +452,10 @@ export async function createDiyCheckoutForOwner(
 		const lineTotal = unitPrice * quantity;
 		const variantMatch = /\d+\s*L\b/i.exec(li.title);
 		const variant = variantMatch ? variantMatch[0].trim() : null;
+		const imageUrl =
+			li.imageUrl && String(li.imageUrl).trim() ? String(li.imageUrl).trim() : null;
 		return {
-			imageUrl: li.imageUrl ?? null,
+			imageUrl,
 			title: li.title,
 			variant,
 			quantity,
@@ -464,7 +482,8 @@ export async function createDiyCheckoutForOwner(
 		data: {
 			checkoutUrl: result.checkoutUrl,
 			lineItemsUI,
-			summary
+			summary,
+			...(Object.keys(styleOverrides).length > 0 && { styleOverrides })
 		}
 	};
 }

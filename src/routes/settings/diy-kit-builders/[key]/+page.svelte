@@ -5,6 +5,9 @@
 	type ProductOption = { name: string; productHandle: string };
 	type ProductEntry = { product_handle: string; role: string; coverage_per_sqm?: number | null };
 
+	const DEFAULT_CHECKOUT_BUTTON_COLOR = '#C8892D';
+	const DEFAULT_QTY_BADGE_BG_COLOR = '#195A2A';
+
 	const ROLE_OPTIONS: { value: string; label: string }[] = [
 		{ value: 'sealant', label: 'Sealant' },
 		{ value: 'thermal', label: 'Thermal coating' },
@@ -21,6 +24,8 @@
 	let name = $state('');
 	let productEntries = $state<ProductEntry[]>([]);
 	let products = $state<ProductOption[]>([]);
+	let checkoutButtonColor = $state(DEFAULT_CHECKOUT_BUTTON_COLOR);
+	let qtyBadgeBackgroundColor = $state(DEFAULT_QTY_BADGE_BG_COLOR);
 	let loaded = $state(false);
 	let saving = $state(false);
 	let errorMessage = $state<string | null>(null);
@@ -39,6 +44,8 @@
 			calculatorKey = '';
 			name = '';
 			productEntries = [];
+			checkoutButtonColor = DEFAULT_CHECKOUT_BUTTON_COLOR;
+			qtyBadgeBackgroundColor = DEFAULT_QTY_BADGE_BG_COLOR;
 			loaded = true;
 			return;
 		}
@@ -49,10 +56,18 @@
 			loaded = true;
 			return;
 		}
-		const kb = data.kitBuilder as { calculator_key: string; name: string; product_entries?: ProductEntry[] };
+		const kb = data.kitBuilder as {
+			calculator_key: string;
+			name: string;
+			product_entries?: ProductEntry[];
+			checkout_button_color?: string | null;
+			qty_badge_background_color?: string | null;
+		};
 		calculatorKey = kb.calculator_key ?? '';
 		name = kb.name ?? '';
 		productEntries = Array.isArray(kb.product_entries) ? [...kb.product_entries] : [];
+		checkoutButtonColor = (kb.checkout_button_color?.trim() || DEFAULT_CHECKOUT_BUTTON_COLOR);
+		qtyBadgeBackgroundColor = (kb.qty_badge_background_color?.trim() || DEFAULT_QTY_BADGE_BG_COLOR);
 		loaded = true;
 	}
 
@@ -93,7 +108,9 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					name: name.trim() || slug,
-					product_entries: productEntries.filter((e) => e.product_handle && e.role)
+					product_entries: productEntries.filter((e) => e.product_handle && e.role),
+					checkout_button_color: checkoutButtonColor?.trim() || null,
+					qty_badge_background_color: qtyBadgeBackgroundColor?.trim() || null
 				})
 			});
 			const data = await res.json().catch(() => ({}));
@@ -147,6 +164,25 @@
 			<span class="text-sm font-medium text-gray-700">Display name</span>
 			<input type="text" bind:value={name} placeholder="e.g. Roof kit" class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
 		</label>
+
+		<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+			<label class="block">
+				<span class="text-sm font-medium text-gray-700">Checkout button color</span>
+				<div class="mt-1 flex items-center gap-2">
+					<input type="color" bind:value={checkoutButtonColor} class="h-10 w-14 rounded border border-gray-300 cursor-pointer" />
+					<input type="text" bind:value={checkoutButtonColor} class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono" placeholder="#C8892D" />
+				</div>
+				<p class="text-xs text-gray-500 mt-1">Used for the "GO TO CHECKOUT" button in the chat preview.</p>
+			</label>
+			<label class="block">
+				<span class="text-sm font-medium text-gray-700">Qty badge background</span>
+				<div class="mt-1 flex items-center gap-2">
+					<input type="color" bind:value={qtyBadgeBackgroundColor} class="h-10 w-14 rounded border border-gray-300 cursor-pointer" />
+					<input type="text" bind:value={qtyBadgeBackgroundColor} class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono" placeholder="#195A2A" />
+				</div>
+				<p class="text-xs text-gray-500 mt-1">Background of the quantity badge on product images.</p>
+			</label>
+		</div>
 
 		<div>
 			<div class="flex items-center justify-between mb-2">

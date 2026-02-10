@@ -42,23 +42,38 @@ export const GET: RequestHandler = async (event) => {
 				line_items_ui: unknown;
 				summary: unknown;
 				checkout_url: string | null;
+				style_overrides?: unknown;
 			};
 			const rawRows = (rows ?? []) as Row[];
-			const messages = rawRows.map((r) => ({
-				id: r.id,
-				role: (r.role === 'human_agent' || r.role === 'assistant') ? 'bot' : 'user',
-				content: r.content,
-				createdAt: r.created_at,
-				avatarUrl: r.role === 'human_agent' ? r.avatar_url : undefined,
-				checkoutPreview:
-					r.line_items_ui != null && r.checkout_url
-						? {
-								lineItemsUI: Array.isArray(r.line_items_ui) ? r.line_items_ui : [],
-								summary: r.summary != null && typeof r.summary === 'object' ? r.summary : {},
-								checkoutUrl: r.checkout_url
-							}
-						: undefined
-			}));
+			const messages = rawRows.map((r) => {
+				const rawLineItems = Array.isArray(r.line_items_ui) ? r.line_items_ui : [];
+				// Normalise so each item has imageUrl (DB/json may use image_url)
+				const lineItemsUI = rawLineItems.map((it: Record<string, unknown>) => ({
+					...it,
+					imageUrl: (it?.imageUrl ?? it?.image_url ?? null) as string | null
+				}));
+				const so = r.style_overrides && typeof r.style_overrides === 'object' ? (r.style_overrides as Record<string, unknown>) : {};
+				const styleOverrides =
+					so.checkout_button_color || so.qty_badge_background_color
+						? { checkoutButtonColor: so.checkout_button_color as string, qtyBadgeBackgroundColor: so.qty_badge_background_color as string }
+						: undefined;
+				return {
+					id: r.id,
+					role: (r.role === 'human_agent' || r.role === 'assistant') ? 'bot' : 'user',
+					content: r.content,
+					createdAt: r.created_at,
+					avatarUrl: r.role === 'human_agent' ? r.avatar_url : undefined,
+					checkoutPreview:
+						r.line_items_ui != null && r.checkout_url
+							? {
+									lineItemsUI,
+									summary: r.summary != null && typeof r.summary === 'object' ? r.summary : {},
+									checkoutUrl: r.checkout_url,
+									...(styleOverrides && { styleOverrides })
+								}
+							: undefined
+				};
+			});
 			const now = new Date().toISOString();
 			const agentTyping =
 				conv.agent_typing_until &&

@@ -751,7 +751,13 @@ export const POST: RequestHandler = async (event) => {
 				.eq('id', conv.id);
 		}
 
-		type GenerateOut = { text: string; lastDiyToolResult?: { lineItemsUI: unknown[]; summary: Record<string, unknown>; checkoutUrl: string } };
+		type CheckoutPreview = {
+			lineItemsUI: unknown[];
+			summary: Record<string, unknown>;
+			checkoutUrl: string;
+			styleOverrides?: { checkoutButtonColor?: string; qtyBadgeBackgroundColor?: string };
+		};
+		type GenerateOut = { text: string; lastDiyToolResult?: CheckoutPreview };
 		async function runGenerate(provider: string, model: string, key: string): Promise<GenerateOut> {
 			const modelInstance = getAISdkModel(provider, model, key);
 			const baseOptions = {
@@ -781,7 +787,7 @@ export const POST: RequestHandler = async (event) => {
 				if (!diy || typeof diy !== 'object') return;
 				const out = (diy as { output?: unknown }).output ?? (diy as { result?: unknown }).result;
 				if (!out || typeof out !== 'object') return;
-				const r = out as { lineItemsUI?: unknown[]; summary?: Record<string, unknown>; checkoutUrl?: string };
+				const r = out as { lineItemsUI?: unknown[]; summary?: Record<string, unknown>; checkoutUrl?: string; styleOverrides?: { checkoutButtonColor?: string; qtyBadgeBackgroundColor?: string } };
 				if (
 					Array.isArray(r.lineItemsUI) &&
 					r.summary != null &&
@@ -792,7 +798,8 @@ export const POST: RequestHandler = async (event) => {
 					return {
 						lineItemsUI: r.lineItemsUI,
 						summary: r.summary,
-						checkoutUrl: r.checkoutUrl.trim()
+						checkoutUrl: r.checkoutUrl.trim(),
+						styleOverrides: r.styleOverrides
 					};
 				}
 			};
@@ -813,7 +820,7 @@ export const POST: RequestHandler = async (event) => {
 		try {
 			const { text, lastDiyToolResult } = await runGenerate(llmProvider, llmModel, apiKey);
 			await clearAiTyping();
-			let checkoutPreview: { lineItemsUI: unknown[]; summary: Record<string, unknown>; checkoutUrl: string } | null = null;
+			let checkoutPreview: CheckoutPreview | null = null;
 			// Persist assistant message
 			if (text) {
 				const { data: inserted, error: insertErr } = await supabase
@@ -839,7 +846,7 @@ export const POST: RequestHandler = async (event) => {
 							.eq('id', previewRow.id);
 						const { data: preview } = await adminSupabaseForTyping
 							.from('widget_checkout_previews')
-							.select('line_items_ui, summary, checkout_url')
+							.select('line_items_ui, summary, checkout_url, style_overrides')
 							.eq('message_id', inserted.id)
 							.single();
 						if (
@@ -847,10 +854,20 @@ export const POST: RequestHandler = async (event) => {
 							typeof preview.checkout_url === 'string' &&
 							preview.checkout_url.trim()
 						) {
+							const raw = Array.isArray(preview.line_items_ui) ? preview.line_items_ui : [];
+							const so = preview.style_overrides && typeof preview.style_overrides === 'object' ? (preview.style_overrides as Record<string, unknown>) : {};
+							const soObj =
+								so.checkout_button_color || so.qty_badge_background_color
+									? { checkoutButtonColor: so.checkout_button_color as string, qtyBadgeBackgroundColor: so.qty_badge_background_color as string }
+									: undefined;
 							checkoutPreview = {
-								lineItemsUI: Array.isArray(preview.line_items_ui) ? preview.line_items_ui : [],
+								lineItemsUI: raw.map((it: unknown) => {
+									const item = (it != null && typeof it === 'object' && it !== null) ? it as Record<string, unknown> : {};
+									return { ...item, imageUrl: (item?.imageUrl ?? item?.image_url ?? null) as string | null };
+								}),
 								summary: preview.summary != null && typeof preview.summary === 'object' ? preview.summary : {},
-								checkoutUrl: preview.checkout_url.trim()
+								checkoutUrl: preview.checkout_url.trim(),
+								...(soObj && { styleOverrides: soObj })
 							};
 						}
 					}
@@ -858,7 +875,16 @@ export const POST: RequestHandler = async (event) => {
 			}
 			// Use DIY tool result when DB did not yield a preview (e.g. link not yet committed)
 			if (!checkoutPreview && lastDiyToolResult) {
-				checkoutPreview = lastDiyToolResult;
+				const raw = lastDiyToolResult.lineItemsUI ?? [];
+				checkoutPreview = {
+					lineItemsUI: raw.map((it: unknown) => {
+						const item = (it != null && typeof it === 'object' && it !== null) ? it as Record<string, unknown> : {};
+						return { ...item, imageUrl: (item?.imageUrl ?? item?.image_url ?? null) as string | null };
+					}),
+					summary: lastDiyToolResult.summary ?? {},
+					checkoutUrl: lastDiyToolResult.checkoutUrl,
+					styleOverrides: lastDiyToolResult.styleOverrides
+				};
 			}
 			return json({
 				message: text,

@@ -214,6 +214,81 @@ body:has(.app-layout) {
 	color: #111827;
 	line-height: 1.2;
 }
+/* Card-style line items (image + qty badge, name, unit price, total) */
+.rich-message-content .checkout-preview-block .checkout-line-items {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	margin-bottom: 8px;
+}
+.rich-message-content .checkout-preview-block .checkout-line-item {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+}
+.rich-message-content .checkout-preview-block .checkout-line-item-image-wrap {
+	position: relative;
+	flex-shrink: 0;
+	width: 64px;
+	height: 64px;
+	border-radius: 8px;
+	overflow: hidden;
+	background: #f3f4f6;
+}
+.rich-message-content .checkout-preview-block .checkout-line-item-image {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	display: block;
+	border-radius: 8px;
+}
+.rich-message-content .checkout-preview-block .checkout-line-item-image.image-placeholder {
+	min-width: 64px;
+	min-height: 64px;
+	background: #f3f4f6;
+}
+.rich-message-content .checkout-preview-block .checkout-line-item-image-wrap .qty-badge {
+	position: absolute;
+	top: 4px;
+	right: 4px;
+	background: var(--qty-badge-bg, #195A2A);
+	color: #fff;
+	padding: 2px 6px;
+	border-radius: 4px;
+	font-size: 0.75rem;
+	font-weight: 600;
+	line-height: 1.2;
+}
+.rich-message-content .checkout-preview-block .checkout-line-item-details {
+	flex: 1;
+	min-width: 0;
+}
+.rich-message-content .checkout-preview-block .checkout-line-item-title {
+	font-weight: 700;
+	font-size: 14px;
+	line-height: 1.3;
+	color: #111827;
+}
+.rich-message-content .checkout-preview-block .checkout-line-item-details .checkout-price-grid {
+	display: flex;
+	gap: 1.25em;
+	margin-top: 6px;
+	font-size: 13px;
+}
+.rich-message-content .checkout-preview-block .checkout-line-item-details .checkout-price-block {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+.rich-message-content .checkout-preview-block .checkout-line-item-details .checkout-price-label {
+	opacity: 0.85;
+	font-size: 0.9em;
+	color: #6b7280;
+}
+.rich-message-content .checkout-preview-block .checkout-line-item-details .checkout-price-value {
+	font-weight: 600;
+	color: #111827;
+}
 .rich-message-content .checkout-preview-block .checkout-table-wrap {
 	overflow-x: auto;
 	margin-bottom: 4px;
@@ -322,13 +397,13 @@ body:has(.app-layout) {
 	font-weight: 600;
 	text-decoration: none;
 	text-align: center;
-	background: #ea580c;
+	background: var(--checkout-button-bg, #C8892D);
 	color: white;
 	border: none;
 	transition: background 0.15s;
 }
 .rich-message-content .checkout-preview-block .checkout-button:hover {
-	background: #c2410c;
+	background: color-mix(in srgb, var(--checkout-button-bg, #C8892D) 85%, black);
 	color: white;
 }
 .rich-message-content .chat-message-intro {

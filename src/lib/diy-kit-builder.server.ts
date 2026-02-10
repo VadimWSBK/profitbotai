@@ -28,6 +28,10 @@ export type DiyKitBuilderConfig = {
 	role_handles: RoofKitRoleHandles;
 	/** Derived: role → coverage override. First product in role with coverage_per_sqm set. */
 	coverage_overrides: RoofKitCoverageOverrides;
+	/** Checkout button background color (e.g. #C8892D). */
+	checkout_button_color?: string | null;
+	/** Qty badge background color (e.g. #195A2A). */
+	qty_badge_background_color?: string | null;
 };
 
 const DEFAULT_KIT_KEY = 'roof-kit';
@@ -73,7 +77,7 @@ export async function listDiyKitBuilders(
 ): Promise<DiyKitBuilderConfig[]> {
 	const { data: rows, error } = await admin
 		.from('calculator_config')
-		.select('id, calculator_key, name, product_entries, role_handles')
+		.select('id, calculator_key, name, product_entries, role_handles, checkout_button_color, qty_badge_background_color')
 		.eq('created_by', ownerId)
 		.order('calculator_key', { ascending: true });
 
@@ -84,6 +88,8 @@ export async function listDiyKitBuilders(
 		name: string;
 		product_entries: unknown;
 		role_handles: unknown;
+		checkout_button_color?: string | null;
+		qty_badge_background_color?: string | null;
 	}>;
 	return list.map((r) => {
 		const entries = Array.isArray(r.product_entries)
@@ -101,7 +107,9 @@ export async function listDiyKitBuilders(
 			name: r.name || r.calculator_key,
 			product_entries: entries,
 			role_handles: mergedHandles,
-			coverage_overrides
+			coverage_overrides,
+			checkout_button_color: r.checkout_button_color ?? null,
+			qty_badge_background_color: r.qty_badge_background_color ?? null
 		};
 	});
 }
@@ -117,7 +125,7 @@ export async function getDiyKitBuilderConfig(
 ): Promise<DiyKitBuilderConfig | null> {
 	const { data, error } = await admin
 		.from('calculator_config')
-		.select('id, calculator_key, name, product_entries, role_handles')
+		.select('id, calculator_key, name, product_entries, role_handles, checkout_button_color, qty_badge_background_color')
 		.eq('created_by', ownerId)
 		.eq('calculator_key', calculatorKey)
 		.maybeSingle();
@@ -129,6 +137,8 @@ export async function getDiyKitBuilderConfig(
 		name: string;
 		product_entries: unknown;
 		role_handles: unknown;
+		checkout_button_color?: string | null;
+		qty_badge_background_color?: string | null;
 	};
 	const entries = Array.isArray(r.product_entries)
 		? (r.product_entries as DiyKitBuilderProductEntry[])
@@ -145,7 +155,9 @@ export async function getDiyKitBuilderConfig(
 		name: r.name || r.calculator_key,
 		product_entries: entries,
 		role_handles: mergedHandles,
-		coverage_overrides
+		coverage_overrides,
+		checkout_button_color: r.checkout_button_color ?? null,
+		qty_badge_background_color: r.qty_badge_background_color ?? null
 	};
 }
 
@@ -169,7 +181,12 @@ export async function saveDiyKitBuilderConfig(
 	admin: SupabaseClient,
 	ownerId: string,
 	calculatorKey: string,
-	payload: { name: string; product_entries: DiyKitBuilderProductEntry[] }
+	payload: {
+		name: string;
+		product_entries: DiyKitBuilderProductEntry[];
+		checkout_button_color?: string | null;
+		qty_badge_background_color?: string | null;
+	}
 ): Promise<{ error?: string }> {
 	const { error } = await admin
 		.from('calculator_config')
@@ -180,6 +197,8 @@ export async function saveDiyKitBuilderConfig(
 				name: payload.name || calculatorKey,
 				product_entries: payload.product_entries ?? [],
 				role_handles: {}, // derived from product_entries at read time
+				checkout_button_color: payload.checkout_button_color ?? null,
+				qty_badge_background_color: payload.qty_badge_background_color ?? null,
 				updated_at: new Date().toISOString()
 			},
 			{ onConflict: 'created_by,calculator_key' }

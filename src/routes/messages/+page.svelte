@@ -37,6 +37,7 @@
 		lineItemsUI: Array<{ imageUrl: string | null; title: string; variant: string | null; quantity: number; unitPrice: string; lineTotal: string }>;
 		summary: { totalItems: number; subtotal: string; total: string; currency: string; discountPercent?: number; discountAmount?: string };
 		checkoutUrl: string;
+		styleOverrides?: { checkoutButtonColor?: string; qtyBadgeBackgroundColor?: string };
 	};
 	type Message = {
 		id: string;
@@ -62,6 +63,123 @@
 		}
 		return before.trim() || content;
 	}
+
+	/** Parse short DIY quote from content when API did not attach checkoutPreview (same as widget). */
+	function tryParseShortDiyQuote(content: string): CheckoutPreview | null {
+		if (!content?.trim()) return null;
+		const diyIntro = /(?:Here is your DIY quote|DIY quote)\s*(?:for\s*[\d.]+\s*m[²2]?)?\s*[:.]\s*/i.test(content);
+		const hasLinePattern = /\d+\s*x\s*.+?\s*(?:15|10|5)\s*L/i.test(content);
+		if (!diyIntro && !hasLinePattern) return null;
+		const defaultPrices: Record<number, string> = { 15: '389.99', 10: '285.99', 5: '149.99' };
+		const lineItemsUI: CheckoutPreview['lineItemsUI'] = [];
+		const re = /(\d+)\s*x\s*([^0-9]*?)\s*(15|10|5)\s*L/gi;
+		let m: RegExpExecArray | null;
+		while ((m = re.exec(content)) !== null) {
+			const qty = parseInt(m[1], 10);
+			const productName = (m[2] || '').trim().replace(/\s+/g, ' ') || 'Roof Coating';
+			const size = parseInt(m[3], 10);
+			if (qty < 1 || (size !== 15 && size !== 10 && size !== 5)) continue;
+			const unitPrice = defaultPrices[size] ?? '0';
+			const lineTotal = (qty * parseFloat(unitPrice)).toFixed(2);
+			lineItemsUI.push({
+				title: `${productName} ${size}L`,
+				quantity: qty,
+				unitPrice,
+				lineTotal,
+				imageUrl: null,
+				variant: null
+			});
+		}
+		if (lineItemsUI.length === 0) return null;
+		const totalItems = lineItemsUI.reduce((s, i) => s + i.quantity, 0);
+		const subtotalNum = lineItemsUI.reduce((s, i) => s + parseFloat(i.lineTotal), 0);
+		const subtotal = subtotalNum.toFixed(2);
+		let checkoutUrl = '';
+		const linkMatch = content.match(/\[(?:GO\s+TO\s+CHECKOUT|Buy\s+now[^\]]*)\]\((https:\/\/[^)]+)\)/i);
+		if (linkMatch) checkoutUrl = linkMatch[2];
+		else {
+			const cartMatch = content.match(/(https:\/\/[^\s<>"']*(?:cart|checkout|myshopify\.com)[^\s<>"']*)/i);
+			if (cartMatch) checkoutUrl = cartMatch[1];
+		}
+		return { lineItemsUI, summary: { totalItems, subtotal, total: subtotal, currency: 'AUD' }, checkoutUrl };
+	}
+
+	/** Parse full checkout block from plain text (table-style). */
+	function tryParseCheckoutFromText(content: string): CheckoutPreview | null {
+		if (!content?.trim()) return null;
+		const hasBlock = /Your\s+Checkout\s+Preview/i.test(content) && (/\bItems\s+\d+/i.test(content) || /Subtotal\s+\$/i.test(content) || /TOTAL\s+\$/i.test(content));
+		if (!hasBlock) return null;
+		const lineItemsUI: CheckoutPreview['lineItemsUI'] = [];
+		const lineItemRe = /\*\s*(\d+)\s*x\s*([^:*]+):\s*\$?\s*([\d,]+\.?\d*)\s*each\s*=\s*\$?\s*([\d,]+\.?\d*)/gi;
+		let m: RegExpExecArray | null;
+		while ((m = lineItemRe.exec(content)) !== null) {
+			const qty = parseInt(m[1], 10);
+			const title = (m[2] || '').trim() || 'Product';
+			const unitPrice = (m[3] || '').replace(/,/g, '');
+			const lineTotal = (m[4] || '').replace(/,/g, '');
+			if (qty >= 1 && (unitPrice || lineTotal)) lineItemsUI.push({ title, quantity: qty, unitPrice, lineTotal, imageUrl: null, variant: null });
+		}
+		if (lineItemsUI.length === 0) {
+			const defaultPrices: Record<number, string> = { 15: '389.99', 10: '285.99', 5: '149.99' };
+			const shortRe = /(\d+)\s*x\s*(\d+)\s*L(?:\s*bucket[s]?)?/gi;
+			while ((m = shortRe.exec(content)) !== null) {
+				const qty = parseInt(m[1], 10);
+				const size = parseInt(m[2], 10);
+				if (qty >= 1 && (size === 15 || size === 10 || size === 5)) {
+					const unit = defaultPrices[size] ?? '0';
+					const lineTotal = (qty * parseFloat(unit)).toFixed(2);
+					lineItemsUI.push({ title: `${size}L NetZero UltraTherm`, quantity: qty, unitPrice: unit, lineTotal, imageUrl: null, variant: null });
+				}
+			}
+		}
+		let totalItems = 0;
+		const itemsMatch = content.match(/\bItems\s+(\d+)/i);
+		if (itemsMatch) totalItems = parseInt(itemsMatch[1], 10);
+		else if (lineItemsUI.length) totalItems = lineItemsUI.reduce((s, i) => s + (i.quantity || 0), 0);
+		let subtotal = '';
+		const subMatch = content.match(/Subtotal\s+\$?\s*([\d,]+\.?\d*)/i);
+		if (subMatch) subtotal = subMatch[1].replace(/,/g, '');
+		let total = '';
+		const totalMatch = content.match(/TOTAL\s+\$?\s*([\d,]+\.?\d*)/i) || content.match(/(?:^|\s)Total\s+\$?\s*([\d,]+\.?\d*)/im);
+		if (totalMatch) total = totalMatch[1].replace(/,/g, '');
+		if (!subtotal && total) subtotal = total;
+		if (!total && subtotal) total = subtotal;
+		let discountPercent: number | undefined;
+		const discountMatch = content.match(/Discount\s+(\d+)\s*%?\s*OFF/i);
+		if (discountMatch) discountPercent = parseInt(discountMatch[1], 10);
+		let discountAmount: string | undefined;
+		const savingsMatch = content.match(/Savings\s+-\s*\$?\s*([\d,]+\.?\d*)/i);
+		if (savingsMatch) discountAmount = savingsMatch[1].replace(/,/g, '');
+		const currencyMatch = content.match(/\b(AUD|USD|EUR)\b/i);
+		const currency = /AUD|USD|EUR/i.test(content) ? (currencyMatch ? currencyMatch[1] : 'AUD') : 'AUD';
+		let checkoutUrl = '';
+		const linkMatch = content.match(/\[(?:GO\s+TO\s+CHECKOUT|Buy\s+now[^\]]*)\]\((https:\/\/[^)]+)\)/i);
+		if (linkMatch) checkoutUrl = linkMatch[2];
+		else {
+			const cartMatch = content.match(/(https:\/\/[^\s<>"']*(?:cart|checkout|myshopify\.com)[^\s<>"']*)/i);
+			if (cartMatch) checkoutUrl = cartMatch[1];
+		}
+		return {
+			lineItemsUI,
+			summary: { totalItems: totalItems || lineItemsUI.reduce((s, i) => s + (i.quantity || 0), 0), subtotal: subtotal || total, total: total || subtotal, currency, discountPercent, discountAmount },
+			checkoutUrl
+		};
+	}
+
+	/** Same as widget: use API preview or parse from content so Messages shows same rich view. */
+	function getEffectivePreview(msg: Message): CheckoutPreview | null {
+		const preview =
+			msg.checkoutPreview ??
+			tryParseCheckoutFromText(msg.content) ??
+			tryParseShortDiyQuote(msg.content);
+		if (!preview) return null;
+		if ((!preview.lineItemsUI || preview.lineItemsUI.length === 0) && msg.content) {
+			const parsed = tryParseCheckoutFromText(msg.content) ?? tryParseShortDiyQuote(msg.content);
+			if (parsed?.lineItemsUI?.length) return { ...preview, lineItemsUI: parsed.lineItemsUI };
+		}
+		return preview;
+	}
+
 	type ConversationDetail = {
 		id: string;
 		widgetId: string;
@@ -1156,66 +1274,76 @@
 										{/if}
 									</div>
 									<div class="wrap-break-word [&_.email-quote]:whitespace-normal [&_a]:break-all {msg.role === 'assistant' ? 'rich-message-content' : 'whitespace-pre-wrap'}">
-										{#if msg.role === 'assistant' && msg.checkoutPreview}
+										{#if msg.role === 'assistant'}
+											{@const preview = getEffectivePreview(msg)}
+											{#if preview}
 											{#if msg.content && typeof msg.content === 'string' && stripCheckoutBlock(msg.content).trim()}
 												<div class="chat-message-intro">{@html formatAssistantMessage(stripCheckoutBlock(msg.content), msg.channel === 'email')}</div>
 											{/if}
-											<div class="checkout-preview-block checkout-preview-block--messages">
+											{@const btnBg = preview.styleOverrides?.checkoutButtonColor ?? '#C8892D'}
+											{@const badgeBg = preview.styleOverrides?.qtyBadgeBackgroundColor ?? '#195A2A'}
+											<div
+												class="checkout-preview-block checkout-preview-block--messages"
+												style="--checkout-button-bg: {btnBg}; --qty-badge-bg: {badgeBg};"
+											>
 												<div class="checkout-preview">
 													<h3 class="checkout-title">Your Checkout Preview</h3>
-													{#if msg.checkoutPreview.lineItemsUI && msg.checkoutPreview.lineItemsUI.length > 0}
-														<div class="checkout-table-wrap">
-															<table class="checkout-table">
-																<thead>
-																	<tr>
-																		<th class="checkout-th-image">Image</th>
-																		<th class="checkout-th-product">Product</th>
-																		<th class="checkout-th-unit">Unit price</th>
-																		<th class="checkout-th-qty">Qty</th>
-																		<th class="checkout-th-total">Line total</th>
-																	</tr>
-																</thead>
-																<tbody>
-																	{#each msg.checkoutPreview.lineItemsUI as item}
-																		<tr class="checkout-tr">
-																			<td class="checkout-td-image">
-																				{#if item.imageUrl}
-																					<img class="product-image" src={item.imageUrl} alt={item.title} loading="lazy" />
-																				{:else}
-																					<div class="product-image image-placeholder" aria-hidden="true"></div>
-																				{/if}
-																			</td>
-																			<td class="checkout-td-product"><div class="product-title">{item.title}</div></td>
-																			<td class="checkout-td-unit">${item.unitPrice} {msg.checkoutPreview.summary.currency ?? 'AUD'}</td>
-																			<td class="checkout-td-qty">{item.quantity}</td>
-																			<td class="checkout-td-total"><strong>${item.lineTotal} {msg.checkoutPreview.summary.currency ?? 'AUD'}</strong></td>
-																		</tr>
-																	{/each}
-																</tbody>
-															</table>
+													{#if preview.lineItemsUI && preview.lineItemsUI.length > 0}
+														<div class="checkout-line-items">
+															{#each preview.lineItemsUI as item}
+																{@const imgUrl = item.imageUrl ?? (item as { image_url?: string }).image_url}
+																<div class="checkout-line-item">
+																	<div class="checkout-line-item-image-wrap">
+																		{#if imgUrl}
+																			<img class="checkout-line-item-image" src={imgUrl} alt={item.title} loading="lazy" />
+																		{:else}
+																			<div class="checkout-line-item-image image-placeholder" aria-hidden="true"></div>
+																		{/if}
+																		<span class="qty-badge">{item.quantity}</span>
+																	</div>
+																	<div class="checkout-line-item-details">
+																		<div class="checkout-line-item-title">{item.title}</div>
+																		<div class="checkout-price-grid">
+																			<div class="checkout-price-block">
+																				<span class="checkout-price-label">Unit Price</span>
+																				<span class="checkout-price-value">${item.unitPrice} {preview.summary.currency ?? 'AUD'}</span>
+																			</div>
+																			<div class="checkout-price-block">
+																				<span class="checkout-price-label">Total</span>
+																				<span class="checkout-price-value">${item.lineTotal} {preview.summary.currency ?? 'AUD'}</span>
+																			</div>
+																		</div>
+																	</div>
+																</div>
+															{/each}
 														</div>
 													{/if}
 													<hr class="checkout-hr" />
 													<table class="checkout-summary-table">
 														<tbody>
-															<tr class="summary-row"><td>Items</td><td>{msg.checkoutPreview.summary.totalItems}</td></tr>
-															{#if msg.checkoutPreview.summary.discountPercent != null}
-																<tr class="summary-row"><td>Discount</td><td>{msg.checkoutPreview.summary.discountPercent}% OFF</td></tr>
+															<tr class="summary-row"><td>Items</td><td>{preview.summary.totalItems}</td></tr>
+															{#if preview.summary.discountPercent != null}
+																<tr class="summary-row"><td>Discount</td><td>{preview.summary.discountPercent}% OFF</td></tr>
 															{/if}
 															<tr class="summary-row"><td>Shipping</td><td>FREE</td></tr>
-															<tr class="summary-row subtotal"><td>Subtotal</td><td>${msg.checkoutPreview.summary.subtotal} {msg.checkoutPreview.summary.currency}</td></tr>
-															{#if msg.checkoutPreview.summary.discountAmount != null}
-																<tr class="summary-row savings"><td>Savings</td><td>- ${msg.checkoutPreview.summary.discountAmount} {msg.checkoutPreview.summary.currency}</td></tr>
+															<tr class="summary-row subtotal"><td>Subtotal</td><td>${preview.summary.subtotal} {preview.summary.currency}</td></tr>
+															{#if preview.summary.discountAmount != null}
+																<tr class="summary-row savings"><td>Savings</td><td>- ${preview.summary.discountAmount} {preview.summary.currency}</td></tr>
 															{/if}
-															<tr class="summary-row total"><td>Total</td><td>${msg.checkoutPreview.summary.total} {msg.checkoutPreview.summary.currency}</td></tr>
+															<tr class="summary-row total"><td>Total</td><td>${preview.summary.total} {preview.summary.currency}</td></tr>
 														</tbody>
 													</table>
 													<div class="gst-note">GST included</div>
-													<a href={msg.checkoutPreview.checkoutUrl} target="_blank" rel="noopener noreferrer" class="checkout-button">GO TO CHECKOUT</a>
+													{#if preview.checkoutUrl}
+														<a href={preview.checkoutUrl} target="_blank" rel="noopener noreferrer" class="checkout-button">GO TO CHECKOUT</a>
+													{/if}
 												</div>
 											</div>
+											{:else}
+												{@html formatAssistantMessage(typeof msg.content === 'string' ? msg.content : '', msg.channel === 'email')}
+											{/if}
 										{:else}
-											{@html msg.role === 'assistant' ? formatAssistantMessage(typeof msg.content === 'string' ? msg.content : '', msg.channel === 'email') : formatMessageContent(typeof msg.content === 'string' ? msg.content : '', msg.channel === 'email')}
+											{@html formatMessageContent(typeof msg.content === 'string' ? msg.content : '', msg.channel === 'email')}
 										{/if}
 									</div>
 									<div class="flex items-center gap-2 mt-1">

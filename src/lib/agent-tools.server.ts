@@ -506,7 +506,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 
 			if (!result.ok) return { error: result.error ?? 'Failed to create checkout link' };
 
-			const { checkoutUrl, lineItemsUI, summary } = result.data;
+			const { checkoutUrl, lineItemsUI, summary, styleOverrides } = result.data;
 			const totalItems = summary.totalItems;
 			const hasDiscount = summary.discountPercent != null;
 			const previewParts: string[] = [
@@ -527,6 +527,13 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 			const previewMarkdown = previewParts.filter(Boolean).join('\n');
 			const lineItemsText = lineItemsUI.map((li) => `${li.quantity}× ${li.title}`).join(', ');
 
+			const styleOverridesDb =
+				styleOverrides && (styleOverrides.checkoutButtonColor || styleOverrides.qtyBadgeBackgroundColor)
+					? {
+							checkout_button_color: styleOverrides.checkoutButtonColor ?? null,
+							qty_badge_background_color: styleOverrides.qtyBadgeBackgroundColor ?? null
+						}
+					: {};
 			const { error: previewErr } = await admin
 				.from('widget_checkout_previews')
 				.insert({
@@ -534,7 +541,8 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 					widget_id: c.widgetId,
 					line_items_ui: lineItemsUI,
 					summary,
-					checkout_url: checkoutUrl
+					checkout_url: checkoutUrl,
+					...(Object.keys(styleOverridesDb).length > 0 && { style_overrides: styleOverridesDb })
 				});
 			if (previewErr) console.error('Failed to save checkout preview:', previewErr);
 
@@ -542,6 +550,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 				success: true,
 				checkoutUrl,
 				lineItemsUI,
+				styleOverrides: styleOverrides ?? undefined,
 				summary: {
 					totalItems: summary.totalItems,
 					subtotal: summary.subtotal,

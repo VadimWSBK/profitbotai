@@ -32,7 +32,7 @@ export const PUT: RequestHandler = async (event) => {
 	if (!event.locals.user) return json({ error: 'Unauthorized' }, { status: 401 });
 	const key = event.params.key;
 	if (!key || !SLUG_REGEX.test(key)) return json({ error: 'Invalid key' }, { status: 400 });
-	let body: { name?: string; product_entries?: DiyKitBuilderProductEntry[] };
+	let body: { name?: string; product_entries?: DiyKitBuilderProductEntry[]; checkout_button_color?: string | null; qty_badge_background_color?: string | null };
 	try {
 		body = await event.request.json();
 	} catch {
@@ -49,7 +49,9 @@ export const PUT: RequestHandler = async (event) => {
 	const admin = getSupabaseAdmin();
 	const { error } = await saveDiyKitBuilderConfig(admin, event.locals.user.id, key, {
 		name: typeof body.name === 'string' ? body.name.trim() || key : key,
-		product_entries
+		product_entries,
+		checkout_button_color: typeof body.checkout_button_color === 'string' ? body.checkout_button_color.trim() || null : null,
+		qty_badge_background_color: typeof body.qty_badge_background_color === 'string' ? body.qty_badge_background_color.trim() || null : null
 	});
 	if (error) return json({ error }, { status: 400 });
 	return json({ ok: true });

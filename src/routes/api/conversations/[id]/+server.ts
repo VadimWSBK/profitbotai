@@ -97,19 +97,25 @@ export const GET: RequestHandler = async (event) => {
 	}
 
 	const assistantMessageIds = chatMessages.filter((m) => m.role === 'assistant').map((m) => m.id);
-	let previewByMessageId: Record<string, { line_items_ui: unknown; summary: unknown; checkout_url: string }> = {};
+	let previewByMessageId: Record<string, { line_items_ui: unknown; summary: unknown; checkout_url: string; style_overrides?: unknown }> = {};
 	if (assistantMessageIds.length > 0) {
 		const admin = getSupabaseAdmin();
 		const { data: previewRows } = await admin
 			.from('widget_checkout_previews')
-			.select('message_id, line_items_ui, summary, checkout_url')
+			.select('message_id, line_items_ui, summary, checkout_url, style_overrides')
 			.in('message_id', assistantMessageIds);
 		previewByMessageId = (previewRows ?? []).reduce(
 			(acc, row) => {
-				if (row.message_id) acc[row.message_id] = { line_items_ui: row.line_items_ui, summary: row.summary, checkout_url: row.checkout_url ?? '' };
+				if (row.message_id)
+					acc[row.message_id] = {
+						line_items_ui: row.line_items_ui,
+						summary: row.summary,
+						checkout_url: row.checkout_url ?? '',
+						style_overrides: row.style_overrides
+					};
 				return acc;
 			},
-			{} as Record<string, { line_items_ui: unknown; summary: unknown; checkout_url: string }>
+			{} as Record<string, { line_items_ui: unknown; summary: unknown; checkout_url: string; style_overrides?: unknown }>
 		);
 	}
 
@@ -122,10 +128,20 @@ export const GET: RequestHandler = async (event) => {
 		channel: 'chat' | 'email';
 		status?: string;
 		direction?: 'outbound' | 'inbound';
-		checkoutPreview?: { lineItemsUI: unknown[]; summary: Record<string, unknown>; checkoutUrl: string };
+		checkoutPreview?: {
+			lineItemsUI: unknown[];
+			summary: Record<string, unknown>;
+			checkoutUrl: string;
+			styleOverrides?: { checkoutButtonColor?: string; qtyBadgeBackgroundColor?: string };
+		};
 	};
 	const chatUnified: UnifiedMessage[] = chatMessages.map((m) => {
 		const preview = previewByMessageId[m.id];
+		const rawLineItems = Array.isArray(preview?.line_items_ui) ? preview.line_items_ui : [];
+		const lineItemsUI = rawLineItems.map((it: unknown) => {
+			const item = it != null && typeof it === 'object' ? (it as Record<string, unknown>) : {};
+			return { ...item, imageUrl: (item?.imageUrl ?? item?.image_url ?? null) as string | null };
+		});
 		return {
 			id: m.id,
 			role: m.role,
@@ -134,11 +150,19 @@ export const GET: RequestHandler = async (event) => {
 			createdAt: m.created_at,
 			channel: 'chat' as const,
 			...(preview && {
-				checkoutPreview: {
-					lineItemsUI: Array.isArray(preview.line_items_ui) ? preview.line_items_ui : [],
-					summary: (preview.summary != null && typeof preview.summary === 'object' ? preview.summary : {}) as Record<string, unknown>,
-					checkoutUrl: preview.checkout_url
-				}
+				checkoutPreview: (() => {
+					const so = preview.style_overrides && typeof preview.style_overrides === 'object' ? (preview.style_overrides as Record<string, unknown>) : {};
+					const styleOverrides =
+						so.checkout_button_color || so.qty_badge_background_color
+							? { checkoutButtonColor: so.checkout_button_color as string, qtyBadgeBackgroundColor: so.qty_badge_background_color as string }
+							: undefined;
+					return {
+						lineItemsUI,
+						summary: (preview.summary != null && typeof preview.summary === 'object' ? preview.summary : {}) as Record<string, unknown>,
+						checkoutUrl: preview.checkout_url,
+						...(styleOverrides && { styleOverrides })
+					};
+				})()
 			})
 		};
 	});

@@ -238,7 +238,8 @@ export const components = String.raw`
     if (!diyIntro && !hasLinePattern) return null;
     var defaultPrices = { 15: '389.99', 10: '285.99', 5: '149.99' };
     var lineItemsUI = [];
-    var re = /(\d+)\s*x\s*(.+?)\s*(15|10|5)\s*L/gi;
+    /* Product name must not contain digits so "15L" matches as 15 not 5 */
+    var re = /(\d+)\s*x\s*([^0-9]*?)\s*(15|10|5)\s*L/gi;
     var m;
     while ((m = re.exec(content)) !== null) {
       var qty = parseInt(m[1], 10);
@@ -331,33 +332,33 @@ export const components = String.raw`
 
   function renderCheckoutPreview(preview) {
     var cur = preview.summary && preview.summary.currency ? escapeHtml(String(preview.summary.currency)) : 'AUD';
+    var btnColor = (preview.styleOverrides && preview.styleOverrides.checkoutButtonColor) ? preview.styleOverrides.checkoutButtonColor : '#C8892D';
+    var badgeColor = (preview.styleOverrides && preview.styleOverrides.qtyBadgeBackgroundColor) ? preview.styleOverrides.qtyBadgeBackgroundColor : '#195A2A';
+    var btnStyle = 'background:' + escapeHtml(btnColor) + ';';
+    var badgeStyle = 'background:' + escapeHtml(badgeColor) + ';';
     var html = '<div class="pb-checkout-preview">';
     html += '<h3 class="pb-checkout-title">Your Checkout Preview</h3>';
     if (preview.lineItemsUI && Array.isArray(preview.lineItemsUI) && preview.lineItemsUI.length > 0) {
-      html += '<div class="pb-checkout-table-wrap"><table class="pb-checkout-table"><thead><tr>';
-      html += '<th class="pb-checkout-th-image">Image</th>';
-      html += '<th class="pb-checkout-th-product">Product</th>';
-      html += '<th class="pb-checkout-th-unit">Unit price</th>';
-      html += '<th class="pb-checkout-th-qty">Qty</th>';
-      html += '<th class="pb-checkout-th-total">Line total</th>';
-      html += '</tr></thead><tbody>';
+      html += '<div class="pb-checkout-line-items">';
       for (var i = 0; i < preview.lineItemsUI.length; i++) {
         var item = preview.lineItemsUI[i];
-        html += '<tr class="pb-checkout-tr">';
-        html += '<td class="pb-checkout-td-image">';
-        if (item.imageUrl) {
-          html += '<img class="pb-product-image" src="' + escapeHtml(item.imageUrl) + '" alt="' + escapeHtml(item.title || '') + '" loading="lazy" />';
+        var imgUrl = (item && (item.imageUrl || item.image_url)) ? (item.imageUrl || item.image_url) : '';
+        html += '<div class="pb-checkout-line-item">';
+        html += '<div class="pb-checkout-line-item-image-wrap">';
+        if (imgUrl) {
+          html += '<img class="pb-checkout-line-item-image" src="' + escapeHtml(imgUrl) + '" alt="' + escapeHtml(item.title || '') + '" loading="lazy" />';
         } else {
-          html += '<div class="pb-product-image pb-image-placeholder" aria-hidden="true"></div>';
+          html += '<div class="pb-checkout-line-item-image pb-image-placeholder" aria-hidden="true"></div>';
         }
-        html += '</td>';
-        html += '<td class="pb-checkout-td-product"><div class="pb-product-title">' + escapeHtml(item.title || '') + '</div></td>';
-        html += '<td class="pb-checkout-td-unit">$' + escapeHtml(String(item.unitPrice || '')) + ' ' + cur + '</td>';
-        html += '<td class="pb-checkout-td-qty">' + escapeHtml(String(item.quantity || 1)) + '</td>';
-        html += '<td class="pb-checkout-td-total"><strong>$' + escapeHtml(String(item.lineTotal || '')) + ' ' + cur + '</strong></td>';
-        html += '</tr>';
+        html += '<span class="pb-qty-badge" style="' + badgeStyle + '">' + escapeHtml(String(item.quantity || 1)) + '</span></div>';
+        html += '<div class="pb-checkout-line-item-details">';
+        html += '<div class="pb-checkout-line-item-title">' + escapeHtml(item.title || '') + '</div>';
+        html += '<div class="pb-checkout-price-grid">';
+        html += '<div class="pb-checkout-price-block"><span class="pb-checkout-price-label">Unit Price</span><span class="pb-checkout-price-value">$' + escapeHtml(String(item.unitPrice || '')) + ' ' + cur + '</span></div>';
+        html += '<div class="pb-checkout-price-block"><span class="pb-checkout-price-label">Total</span><span class="pb-checkout-price-value">$' + escapeHtml(String(item.lineTotal || '')) + ' ' + cur + '</span></div>';
+        html += '</div></div></div>';
       }
-      html += '</tbody></table></div>';
+      html += '</div>';
     }
     html += '<hr class="pb-checkout-hr" />';
     if (preview.summary) {
@@ -371,8 +372,8 @@ export const components = String.raw`
       html += '</tbody></table>';
     }
     html += '<div class="pb-gst-note">GST included</div>';
-    if (preview.checkoutUrl) html += '<a href="' + escapeHtml(preview.checkoutUrl) + '" target="_blank" rel="noopener noreferrer" class="pb-checkout-button">GO TO CHECKOUT</a>';
-    else html += '<span class="pb-checkout-button pb-checkout-button-disabled" aria-disabled="true">GO TO CHECKOUT</span>';
+    if (preview.checkoutUrl) html += '<a href="' + escapeHtml(preview.checkoutUrl) + '" target="_blank" rel="noopener noreferrer" class="pb-checkout-button" style="' + btnStyle + '">GO TO CHECKOUT</a>';
+    else html += '<span class="pb-checkout-button pb-checkout-button-disabled" aria-disabled="true" style="' + btnStyle + '">GO TO CHECKOUT</span>';
     html += '</div>';
     return html;
   }

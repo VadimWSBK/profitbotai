@@ -36,6 +36,7 @@
 			discountAmount?: string;
 		};
 		checkoutUrl: string;
+		styleOverrides?: { checkoutButtonColor?: string; qtyBadgeBackgroundColor?: string };
 	};
 	type Message = { id?: string; _localId: number; role: 'user' | 'bot'; content: string; avatarUrl?: string; checkoutPreview?: CheckoutPreview; createdAt?: string };
 	function mapMessage(m: { id?: string; role: string; content: string; avatarUrl?: string; checkoutPreview?: CheckoutPreview; createdAt?: string }): Message {
@@ -95,8 +96,8 @@
 		if (!diyIntro && !hasLinePattern) return null;
 		const defaultPrices: Record<number, string> = { 15: '389.99', 10: '285.99', 5: '149.99' };
 		const lineItemsUI: CheckoutPreview['lineItemsUI'] = [];
-		// Match "11x Product Name 15L" or "1x NetZero UltraTherm 5L"
-		const re = /(\d+)\s*x\s*(.+?)\s*(15|10|5)\s*L/gi;
+		// Match "11x Product Name 15L" – product name must not contain digits so "15L" matches as 15 not 5
+		const re = /(\d+)\s*x\s*([^0-9]*?)\s*(15|10|5)\s*L/gi;
 		let m: RegExpExecArray | null;
 		while ((m = re.exec(content)) !== null) {
 			const qty = parseInt(m[1], 10);
@@ -927,44 +928,47 @@
 									border-radius: {win.messageBorderRadius}px;
 								"
 							>
-								<div class="flex-1 min-w-0 overflow-x-auto overflow-y-visible max-w-full wrap-break-word">
+									<div class="flex-1 min-w-0 overflow-x-auto overflow-y-visible max-w-full wrap-break-word">
 									{#if preview}
 										{#if stripCheckoutBlock(msg.content, preview.checkoutUrl).trim()}
 											<div class="chat-message-intro">{@html formatMessage(stripCheckoutBlock(msg.content, preview.checkoutUrl))}</div>
 										{/if}
-										<div class="checkout-preview-block">
+										{@const btnBg = preview.styleOverrides?.checkoutButtonColor ?? '#C8892D'}
+										{@const badgeBg = preview.styleOverrides?.qtyBadgeBackgroundColor ?? '#195A2A'}
+										<div
+											class="checkout-preview-block"
+											style="--checkout-button-bg: {btnBg}; --qty-badge-bg: {badgeBg};"
+										>
 											<div class="checkout-preview">
 												<h3 class="checkout-title">Your Checkout Preview</h3>
 												{#if preview.lineItemsUI && preview.lineItemsUI.length > 0}
-													<div class="checkout-table-wrap">
-														<table class="checkout-table">
-															<thead>
-																<tr>
-																	<th class="checkout-th-image">Image</th>
-																	<th class="checkout-th-product">Product</th>
-																	<th class="checkout-th-unit">Unit price</th>
-																	<th class="checkout-th-qty">Qty</th>
-																	<th class="checkout-th-total">Line total</th>
-																</tr>
-															</thead>
-															<tbody>
-																{#each preview.lineItemsUI as item}
-																	<tr class="checkout-tr">
-																		<td class="checkout-td-image">
-																			{#if item.imageUrl}
-																				<img class="product-image" src={item.imageUrl} alt={item.title} loading="lazy" />
-																			{:else}
-																				<div class="product-image image-placeholder" aria-hidden="true"></div>
-																			{/if}
-																		</td>
-																		<td class="checkout-td-product"><div class="product-title">{item.title}</div></td>
-																		<td class="checkout-td-unit">${item.unitPrice} {preview.summary.currency ?? 'AUD'}</td>
-																		<td class="checkout-td-qty">{item.quantity}</td>
-																		<td class="checkout-td-total"><strong>${item.lineTotal} {preview.summary.currency ?? 'AUD'}</strong></td>
-																	</tr>
-																{/each}
-															</tbody>
-														</table>
+													<div class="checkout-line-items">
+														{#each preview.lineItemsUI as item}
+															{@const itemImageUrl = item.imageUrl ?? (item as { image_url?: string }).image_url ?? null}
+															<div class="checkout-line-item">
+																<div class="checkout-line-item-image-wrap">
+																	{#if itemImageUrl}
+																		<img class="checkout-line-item-image" src={itemImageUrl} alt={item.title} loading="lazy" />
+																	{:else}
+																		<div class="checkout-line-item-image image-placeholder" aria-hidden="true"></div>
+																	{/if}
+																	<span class="qty-badge">{item.quantity}</span>
+																</div>
+																<div class="checkout-line-item-details">
+																	<div class="checkout-line-item-title">{item.title}</div>
+																	<div class="checkout-price-grid">
+																		<div class="checkout-price-block">
+																			<span class="checkout-price-label">Unit Price</span>
+																			<span class="checkout-price-value">${item.unitPrice} {preview.summary.currency ?? 'AUD'}</span>
+																		</div>
+																		<div class="checkout-price-block">
+																			<span class="checkout-price-label">Total</span>
+																			<span class="checkout-price-value">${item.lineTotal} {preview.summary.currency ?? 'AUD'}</span>
+																		</div>
+																	</div>
+																</div>
+															</div>
+														{/each}
 													</div>
 												{/if}
 												<hr class="checkout-hr" />
@@ -1460,6 +1464,80 @@
 		color: inherit;
 		line-height: 1.2;
 	}
+	/* Card-style line items (image + qty badge, name, unit price, total) */
+	:global(.checkout-preview-block .checkout-line-items) {
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+		margin-bottom: 8px;
+	}
+	:global(.checkout-preview-block .checkout-line-item) {
+		display: flex;
+		align-items: flex-start;
+		gap: 12px;
+		padding: 0;
+	}
+	:global(.checkout-preview-block .checkout-line-item-image-wrap) {
+		position: relative;
+		flex-shrink: 0;
+		width: 64px;
+		height: 64px;
+		border-radius: 8px;
+		overflow: hidden;
+		background: rgba(255, 255, 255, 0.1);
+	}
+	:global(.checkout-preview-block .checkout-line-item-image) {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		display: block;
+		border-radius: 8px;
+	}
+	:global(.checkout-preview-block .checkout-line-item-image.image-placeholder) {
+		min-width: 64px;
+		min-height: 64px;
+		background: rgba(255, 255, 255, 0.1);
+	}
+	:global(.checkout-preview-block .checkout-line-item-image-wrap .qty-badge) {
+		position: absolute;
+		top: 4px;
+		right: 4px;
+		background: var(--qty-badge-bg, #195A2A);
+		color: #fff;
+		padding: 2px 6px;
+		border-radius: 4px;
+		font-size: 0.75rem;
+		font-weight: 600;
+		line-height: 1.2;
+	}
+	:global(.checkout-preview-block .checkout-line-item-details) {
+		flex: 1;
+		min-width: 0;
+	}
+	:global(.checkout-preview-block .checkout-line-item-title) {
+		font-weight: 700;
+		font-size: 14px;
+		line-height: 1.3;
+		color: inherit;
+	}
+	:global(.checkout-preview-block .checkout-line-item-details .checkout-price-grid) {
+		display: flex;
+		gap: 1.25em;
+		margin-top: 6px;
+		font-size: 13px;
+	}
+	:global(.checkout-preview-block .checkout-line-item-details .checkout-price-block) {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+	:global(.checkout-preview-block .checkout-line-item-details .checkout-price-label) {
+		opacity: 0.85;
+		font-size: 0.9em;
+	}
+	:global(.checkout-preview-block .checkout-line-item-details .checkout-price-value) {
+		font-weight: 600;
+	}
 	:global(.checkout-preview-block .checkout-table-wrap) {
 		overflow-x: auto;
 		margin-bottom: 4px;
@@ -1566,13 +1644,13 @@
 		font-weight: 600;
 		text-decoration: none;
 		text-align: center;
-		background: #ea580c;
+		background: var(--checkout-button-bg, #C8892D);
 		color: #fff;
 		border: none;
 		transition: background 0.15s;
 	}
 	:global(.checkout-preview-block .checkout-button:hover) {
-		background: #c2410c;
+		background: color-mix(in srgb, var(--checkout-button-bg, #C8892D) 85%, black);
 		color: #fff;
 	}
 	:global(.checkout-preview-block .checkout-button-disabled) {
