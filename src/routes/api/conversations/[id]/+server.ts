@@ -126,6 +126,32 @@ export const GET: RequestHandler = async (event) => {
 			},
 			{} as Record<string, { line_items_ui: unknown; summary: unknown; checkout_url: string; style_overrides?: unknown }>
 		);
+		// Fallback: use an unlinked preview for this conversation so sessions where the link step failed (or message came from n8n) still show checkout + button
+		const hasCheckoutContent = (c: string) => {
+			const s = (c ?? '').toLowerCase();
+			return s.includes('checkout preview') || s.includes('diy quote') || /\d+\s*x\s*.+?\s*(?:15|10|5)\s*l/.test(s);
+		};
+		const assistantWithoutPreview = chatMessages
+			.filter((m) => m.role === 'assistant' && !previewByMessageId[m.id] && hasCheckoutContent(m.content))
+			.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+		if (assistantWithoutPreview) {
+			const { data: unlinked } = await admin
+				.from('widget_checkout_previews')
+				.select('line_items_ui, summary, checkout_url, style_overrides')
+				.eq('conversation_id', id)
+				.is('message_id', null)
+				.order('created_at', { ascending: false })
+				.limit(1)
+				.maybeSingle();
+			if (unlinked && typeof unlinked.checkout_url === 'string' && unlinked.checkout_url.trim()) {
+				previewByMessageId[assistantWithoutPreview.id] = {
+					line_items_ui: unlinked.line_items_ui,
+					summary: unlinked.summary,
+					checkout_url: unlinked.checkout_url.trim(),
+					style_overrides: unlinked.style_overrides
+				};
+			}
+		}
 		// Resolve product images from product_pricing (one Supabase query), then Shopify/env fallbacks
 		const ownerId = (widgetObj as { created_by?: string } | null)?.created_by ?? null;
 		if (ownerId && Object.keys(previewByMessageId).length > 0) {

@@ -64,6 +64,15 @@ const DEFAULT_PRODUCT: Omit<ProductPricing, 'id'> = {
 	]
 };
 
+/** Infer size (L) from image URL or text when variant has no sizeLitres (e.g. "5L_NetZero" or "_15L."). */
+function inferSizeLitres(imageUrl: string | null, fallback: number): number {
+	if (!imageUrl || typeof imageUrl !== 'string') return fallback;
+	const re1 = /\b(15|10|5)\s*L\b/i;
+	const re2 = /[-_/](15|10|5)\s*L(?:[-_/.]|$)/i;
+	const m = re1.exec(imageUrl) ?? re2.exec(imageUrl);
+	return m ? Number.parseInt(m[1], 10) : fallback;
+}
+
 function parseVariants(json: unknown): ProductVariant[] {
 	if (!Array.isArray(json)) return [];
 	return json.map((v) => {
@@ -71,14 +80,17 @@ function parseVariants(json: unknown): ProductVariant[] {
 		const imageUrl =
 			(typeof raw?.imageUrl === 'string' ? raw.imageUrl : null) ??
 			(typeof raw?.image_url === 'string' ? raw.image_url : null);
+		let sizeLitres = Number(raw?.sizeLitres) || Number(raw?.size_litres) || 0;
+		if (sizeLitres === 0 && imageUrl) sizeLitres = inferSizeLitres(imageUrl, 0);
+		const coverageSqm = Number(raw?.coverageSqm) || Number(raw?.coverage_sqm) || 0;
 		return {
 			shopifyVariantId: raw?.shopifyVariantId == null ? null : Number(raw.shopifyVariantId),
-			sizeLitres: Number(raw?.sizeLitres) || 0,
+			sizeLitres,
 			color: typeof raw?.color === 'string' ? raw.color : null,
 			price: Number(raw?.price) || 0,
 			currency: typeof raw?.currency === 'string' ? raw.currency : 'AUD',
-			coverageSqm: Number(raw?.coverageSqm) || 0,
-			imageUrl: imageUrl && imageUrl.trim() ? imageUrl.trim() : null
+			coverageSqm,
+			imageUrl: imageUrl?.trim() || null
 		};
 	});
 }
@@ -158,11 +170,11 @@ export async function getProductPricingForOwner(ownerId: string): Promise<Produc
 export async function getProductImageUrlsBySize(ownerId: string): Promise<Record<number, string>> {
 	const products = await getProductPricingForOwner(ownerId);
 	const result: Record<number, string> = {};
-	const sizes = [15, 10, 5];
+	const sizes = new Set([15, 10, 5]);
 	for (const p of products) {
 		for (const v of p.variants) {
 			const size = v.sizeLitres;
-			if (sizes.includes(size) && v.imageUrl?.trim() && !result[size]) result[size] = v.imageUrl.trim();
+			if (sizes.has(size) && v.imageUrl?.trim() && !result[size]) result[size] = v.imageUrl.trim();
 		}
 	}
 	return result;

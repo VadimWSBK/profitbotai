@@ -166,6 +166,21 @@
 		};
 	}
 
+	/** When a later fetch returns messages without checkoutPreview, keep the preview we already had (avoids flash of good then broken after invalidateAll/realtime). */
+	function mergePreservingCheckoutPreview(
+		incoming: Message[],
+		previous: Message[]
+	): Message[] {
+		if (previous.length === 0) return incoming;
+		const byId = new Map(previous.map((m) => [m.id, m]));
+		return incoming.map((msg) => {
+			const prev = byId.get(msg.id);
+			if (!prev?.checkoutPreview) return msg;
+			if (msg.checkoutPreview && (msg.checkoutPreview.lineItemsUI?.length ?? 0) > 0) return msg;
+			return { ...msg, checkoutPreview: prev.checkoutPreview };
+		});
+	}
+
 	/** Same as widget: use API preview or parse from content so Messages shows same rich view. */
 	function getEffectivePreview(msg: Message): CheckoutPreview | null {
 		const preview =
@@ -387,7 +402,8 @@
 			const res = await fetch(`/api/conversations/${conv.id}?limit=${MESSAGES_PAGE_SIZE}`);
 			const json = await res.json().catch(() => ({}));
 			conversationDetail = json.conversation ?? null;
-			messages = Array.isArray(json.messages) ? json.messages : [];
+			const incoming = Array.isArray(json.messages) ? json.messages : [];
+			messages = mergePreservingCheckoutPreview(incoming, messages);
 			hasMoreMessages = !!json.hasMore;
 			scrollToBottom();
 			// Refresh sidebar unread badge (conversation GET marks user messages as read)
@@ -481,7 +497,7 @@
 					messages = [...messages, ...json.messages];
 					scrollToBottom();
 				} else if (!newestCreatedAt) {
-					messages = json.messages;
+					messages = mergePreservingCheckoutPreview(json.messages, messages);
 					hasMoreMessages = !!json.hasMore;
 					scrollToBottom();
 				}
