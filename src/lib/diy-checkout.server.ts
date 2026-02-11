@@ -667,16 +667,30 @@ export async function calculateBucketBreakdownForOwner(
 		return { title: li.title, quantity: li.quantity, unitPrice: fmt(unitPrice), lineTotal: fmt(lineTotal) };
 	});
 
+	const totalItems = lineItems.reduce((s, li) => s + li.quantity, 0);
+	const summary: {
+		totalItems: number;
+		subtotal: string;
+		total: string;
+		currency: string;
+		discountPercent?: number;
+		discountAmount?: string;
+	} = {
+		totalItems,
+		subtotal: fmt(subtotal),
+		total: fmt(total),
+		currency
+	};
+	if (discount_percent != null && discount_percent >= 1 && discountAmount > 0) {
+		summary.discountPercent = discount_percent;
+		summary.discountAmount = fmt(discountAmount);
+	}
+
 	return {
 		ok: true,
 		data: {
 			lineItemsUI,
-			summary: {
-				totalItems: lineItems.reduce((s, li) => s + li.quantity, 0),
-				subtotal: fmt(subtotal),
-				total: fmt(total),
-				currency
-			},
+			summary,
 			litres,
 			roofSizeSqm: roof_size_sqm
 		}

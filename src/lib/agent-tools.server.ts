@@ -520,6 +520,44 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 				email: getPrimaryEmail(c.contact?.email)?.trim() || undefined
 			});
 
+			// Use checkout result summary when available (has discount fields); fallback to bucket breakdown summary
+			const summaryWithDiscount = summary as {
+				totalItems: number;
+				subtotal: string;
+				total: string;
+				currency: string;
+				discountPercent?: number;
+				discountAmount?: string;
+			};
+			const effectiveSummary =
+				checkoutResult.ok && checkoutResult.data.summary
+					? checkoutResult.data.summary
+					: summaryWithDiscount;
+
+			// Build previewMarkdown in the same format as shopify_create_diy_checkout_link
+			const totalItems = effectiveSummary.totalItems;
+			const hasDiscount =
+				effectiveSummary.discountPercent != null && effectiveSummary.discountPercent >= 1;
+			const previewParts: string[] = [
+				'**Your Checkout Preview**',
+				'',
+				`**Items** ${totalItems}`,
+				...(hasDiscount ? [`**Discount** ${effectiveSummary.discountPercent}% OFF`] : []),
+				'**Shipping** FREE',
+				'',
+				`**Subtotal** ${effectiveSummary.subtotal} ${effectiveSummary.currency}`,
+				...(hasDiscount && effectiveSummary.discountAmount
+					? [`**Savings** -${effectiveSummary.discountAmount} ${effectiveSummary.currency}`]
+					: []),
+				`**TOTAL** **${effectiveSummary.total} ${effectiveSummary.currency}**`,
+				'',
+				'_GST included_'
+			];
+			const previewMarkdown =
+				checkoutResult.ok && checkoutResult.data.checkoutUrl
+					? previewParts.concat('', '[GO TO CHECKOUT](' + checkoutResult.data.checkoutUrl + ')').join('\n')
+					: previewParts.join('\n');
+
 			const base = {
 				success: true,
 				roofSizeSqm,
@@ -527,10 +565,16 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 				lineItemsUI,
 				breakdown,
 				summary: {
-					totalItems: summary.totalItems,
-					subtotal: summary.subtotal,
-					total: summary.total,
-					currency: summary.currency
+					totalItems: effectiveSummary.totalItems,
+					subtotal: effectiveSummary.subtotal,
+					total: effectiveSummary.total,
+					currency: effectiveSummary.currency,
+					...(effectiveSummary.discountPercent != null && {
+						discountPercent: effectiveSummary.discountPercent
+					}),
+					...(effectiveSummary.discountAmount != null && {
+						discountAmount: effectiveSummary.discountAmount
+					})
 				}
 			};
 
@@ -539,11 +583,11 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 				return {
 					...base,
 					checkoutUrl,
-					message:
-						'Breakdown and checkout link ready. In your reply, give a short intro with the product breakdown (e.g. "For a 342 m² roof you need 11 × 15L and 1 × 10L NetZero UltraTherm. Total $X AUD."). Do NOT add "Items:" or "Proceed to checkout:"—the widget shows the table and checkout button automatically.'
+					previewMarkdown,
+					message: `Breakdown and checkout link ready. In your reply: 1) Give a short intro with the product breakdown and total. 2) Include the full checkout preview block exactly as below (copy it). Use for BOTH discounted and non-discounted quotes:\n\n${previewMarkdown}`
 				};
 			}
-			return base;
+			return { ...base, previewMarkdown, message: `Breakdown ready (no checkout link). Include this preview in your reply:\n\n${previewMarkdown}` };
 		}
 	});
 
@@ -703,7 +747,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 				total: summary.total,
 				lineItems: lineItemsUI.map((li) => `${li.quantity}× ${li.title} (${li.unitPrice} each)`),
 				previewMarkdown,
-				message: `Checkout link created. In your reply, write a short intro that includes the product breakdown, e.g. "Here is your DIY quote for [X] m²: ${lineItemsText}. The total cost is $[total] AUD." Use the exact quantities from the lineItems. Do NOT add "Items:" or "Proceed to checkout:" as separate lines—the widget shows the table and button automatically. Do NOT paste the raw checkout URL. Use "calculated" not "estimated".`
+				message: `Checkout link created. In your reply: 1) Give a short intro with the product breakdown and total (e.g. "Here is your DIY quote for [X] m²: ${lineItemsText}. The total cost is $[total] AUD."). 2) Include the full checkout preview block exactly as below—use for BOTH discounted and non-discounted quotes. Copy it exactly:\n\n${previewMarkdown}`
 			};
 		}
 	});

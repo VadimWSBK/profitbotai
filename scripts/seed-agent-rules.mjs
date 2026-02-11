@@ -138,7 +138,7 @@ const RULES = [
 	},
 	{
 		content:
-			'QUOTE FORMATTING RULES: When Shopify is connected and customer wants DIY, call shopify_create_diy_checkout_link and reply with a short intro only—do not paste Items/Subtotal/TOTAL or preview markdown; the widget renders the checkout block from the tool. When Shopify is not connected, use bullet lines for line items (* N x size buckets: $unit each = $lineTotal) so the widget can parse and display a table. Never use ** for bolding in quote text.',
+			'QUOTE FORMATTING RULES: When Shopify is connected and customer wants DIY, call the DIY tool and include both the short intro AND the full checkout preview block (Items, Discount if any, Shipping, Subtotal, Savings if discount, TOTAL, GST included, GO TO CHECKOUT). When Shopify is not connected, use bullet lines for line items (* N x size buckets: $unit each = $lineTotal) so the widget can parse and display a table. Never use ** for bolding in quote text.',
 		tags: ['quote', 'format', 'diy', 'presentation']
 	},
 	{
@@ -153,7 +153,7 @@ const RULES = [
 	},
 	{
 		content:
-			'DIY CHECKOUT LINK (when Shopify connected): When customer asks for a DIY quote, call shopify_create_diy_checkout_link with roof_size_sqm or bucket counts. In your reply, include the bucket breakdown so the customer sees what they need, e.g. "Here is your DIY quote for 555 m²: you need 18 x 15L and 1 x 10L NetZero UltraTherm. Total cost $X AUD. Would you like to proceed to checkout?" Do NOT add "Items:" or "Proceed to checkout:" as separate lines—the widget shows the table and checkout button. Do NOT paste the full Items/Subtotal/TOTAL block. Always call the tool and give the intro with breakdown in one message.',
+			'DIY CHECKOUT LINK (when Shopify connected): When customer asks for a DIY quote, call shopify_create_diy_checkout_link or calculate_bucket_breakdown. In your reply, include: 1) A short intro with bucket breakdown and total. 2) The full checkout preview block from the tool (Items, Discount if any, Shipping, Subtotal, Savings if discount, TOTAL, GST included, GO TO CHECKOUT). Use this format for BOTH discounted and non-discounted quotes. Always call the tool and include the preview.',
 		tags: ['quote', 'diy', 'checkout', 'shopify']
 	},
 	{
@@ -163,7 +163,7 @@ const RULES = [
 	},
 	{
 		content:
-			'CHECKOUT PREVIEW: When you call shopify_create_diy_checkout_link, include the bucket breakdown in your reply (e.g. "you need 18 x 15L and 1 x 10L NetZero UltraTherm. Total $X AUD."). The widget shows the full table and GO TO CHECKOUT button. Do NOT add "Items:" or "Proceed to checkout:"—they duplicate the table and the latter has no link. Do NOT paste the full Items/Subtotal/TOTAL block—just the intro with the breakdown.',
+			'CHECKOUT PREVIEW: For every DIY quote (with or without discount), include the full checkout preview block from the tool: Your Checkout Preview, Items N, Discount X% OFF (if discount), Shipping FREE, Subtotal, Savings (if discount), TOTAL, GST included, GO TO CHECKOUT. Copy it exactly from the tool response.',
 		tags: ['checkout', 'preview', 'diy', 'shopify']
 	},
 	{

@@ -429,7 +429,7 @@ export const POST: RequestHandler = async (event) => {
 						triggerResult = {
 							triggerId: triggerResult!.triggerId,
 							triggerName: triggerResult!.triggerName,
-							webhookResult: `The customer wants DIY and we have their roof size (${roofSqm} m²). Call calculate_bucket_breakdown(roof_size_sqm: ${roofSqm})—it returns breakdown and checkout link. Reply with a short intro that includes the bucket breakdown and total cost. Do NOT add "Items:" or "Proceed to checkout:"—the widget shows the table and button. Do NOT use generate_quote or create a PDF for DIY.`
+							webhookResult: `The customer wants DIY and we have their roof size (${roofSqm} m²). Call calculate_bucket_breakdown(roof_size_sqm: ${roofSqm})—it returns breakdown and checkout link. Include both: 1) Short intro with bucket breakdown and total. 2) The full checkout preview block from the tool (Items, Shipping, Subtotal, TOTAL, GST included, GO TO CHECKOUT). Use for both discounted and non-discounted. Do NOT use generate_quote or create a PDF for DIY.`
 						};
 					} else {
 						triggerResult = {
@@ -550,7 +550,7 @@ export const POST: RequestHandler = async (event) => {
 						triggerResult = {
 							triggerId: triggerResult!.triggerId,
 							triggerName: triggerResult!.triggerName,
-							webhookResult: `The customer is asking for a price and we have their roof size (${roofSqmForDiy} m²). Call calculate_bucket_breakdown(roof_size_sqm: ${roofSqmForDiy})—it returns breakdown and checkout link. Reply with a short intro that includes the bucket breakdown and total cost. Do NOT add "Items:" or "Proceed to checkout:"—the widget shows the table and button. Do NOT use generate_quote or create a PDF. If they want to proceed to checkout, ask for their name and email.`
+							webhookResult: `The customer is asking for a price and we have their roof size (${roofSqmForDiy} m²). Call calculate_bucket_breakdown(roof_size_sqm: ${roofSqmForDiy})—it returns breakdown and checkout link. Include both: 1) Short intro with bucket breakdown and total. 2) The full checkout preview block from the tool. Use for both discounted and non-discounted. Do NOT use generate_quote or create a PDF. If they want to proceed to checkout, ask for their name and email.`
 						};
 						console.log(
 							'[chat/quote] Roof size only + price request: forcing DIY calculator',
@@ -601,7 +601,7 @@ export const POST: RequestHandler = async (event) => {
 				triggerResult = {
 					triggerId: 'quote',
 					triggerName: 'Quote',
-					webhookResult: `The customer wants DIY and we have their roof size (${roofSqm} m²). Call calculate_bucket_breakdown(roof_size_sqm: ${roofSqm})—it returns breakdown and checkout link. Reply with a short intro that includes the bucket breakdown and total cost. Do NOT add "Items:" or "Proceed to checkout:"—the widget shows the table and button. Do NOT use generate_quote or create a PDF for DIY.`
+					webhookResult: `The customer wants DIY and we have their roof size (${roofSqm} m²). Call calculate_bucket_breakdown(roof_size_sqm: ${roofSqm})—it returns breakdown and checkout link. Include both: 1) Short intro with bucket breakdown and total. 2) The full checkout preview block from the tool (Items, Shipping, Subtotal, TOTAL, GST included, GO TO CHECKOUT). Use for both discounted and non-discounted. Do NOT use generate_quote or create a PDF for DIY.`
 				};
 				console.log('[chat/quote] DIY fallback: forcing tool call so widget shows table + button');
 			}

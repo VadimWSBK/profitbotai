@@ -884,33 +884,61 @@ export const POST: RequestHandler = async (event) => {
 		storedReply = reply.trimEnd() + '\n\n[Download your quote](' + quoteDownloadUrl + ')';
 	}
 
-	// 3) If we have a DIY quote, send a single article card (Proceed to checkout—no extra text)
+	// 3) If we have a DIY quote, send a card with a button-style "Proceed to checkout" link
+	// Chatwoot accepts: article (title+link) or cards (title+description+actions with type link)
+	// Cards with actions render as a proper button; article shows as a link card.
 	if (diyCheckoutUrl) {
-		const diyArticleRes = await fetch(postUrl, {
+		const diyCardRes = await fetch(postUrl, {
 			method: 'POST',
 			headers: postHeaders,
 			body: JSON.stringify({
-				content: '',
+				content: 'Your DIY quote is ready.',
 				message_type: 'outgoing',
-				content_type: 'article',
+				content_type: 'cards',
 				content_attributes: {
 					items: [
 						{
 							title: 'Proceed to checkout',
-							description: '',
-							link: diyCheckoutUrl
+							description: 'Click to complete your purchase.',
+							actions: [
+								{
+									type: 'link',
+									text: 'Proceed to checkout',
+									uri: diyCheckoutUrl
+								}
+							]
 						}
 					]
 				}
 			})
 		});
-		if (!diyArticleRes.ok) {
-			const errText = await diyArticleRes.text();
-			console.error('[webhooks/chatwoot] Chatwoot article message error:', diyArticleRes.status, errText);
+		if (!diyCardRes.ok) {
+			// Fallback: try article format (some Chatwoot setups may prefer it)
+			const diyArticleRes = await fetch(postUrl, {
+				method: 'POST',
+				headers: postHeaders,
+				body: JSON.stringify({
+					content: '',
+					message_type: 'outgoing',
+					content_type: 'article',
+					content_attributes: {
+						items: [
+							{
+								title: 'Proceed to checkout',
+								description: 'Click the link below to proceed to checkout.',
+								link: diyCheckoutUrl
+							}
+						]
+					}
+				})
+			});
+			if (!diyArticleRes.ok) {
+				const errText = await diyArticleRes.text();
+				console.error('[webhooks/chatwoot] Chatwoot DIY message error (cards+article fallback):', diyArticleRes.status, errText);
+			}
 		}
-		// Keep stored context so next turn knows we sent the quote and link (no raw URL—article has it)
-		storedReply =
-			contentToPost + (diyLineItemsSummary ? '\n\n**Items:** ' + diyLineItemsSummary : '');
+		// Keep stored context (reply includes full checkout preview block from LLM; no raw URL—card has the button)
+		storedReply = contentToPost;
 	}
 
 	// 4) If we generated a Done For You quote, send the quote link by email when we have the contact's email (automatic; bot already said "I've sent it to your email")
