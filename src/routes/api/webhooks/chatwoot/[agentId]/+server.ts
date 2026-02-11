@@ -468,6 +468,9 @@ export const POST: RequestHandler = async (event) => {
 		'Be positive when collecting details; thank the user. Do NOT apologize. Never ask for info already in "Current contact info we have". If we have name+email+roof, call generate_quote immediately. Ask only the one missing piece at a time.'
 	);
 	staticParts.push('Finish with a full sentence. For email requests: use send_email tool, include link in body, confirm in chat.');
+	staticParts.push(
+		'DIY: when roof size is known, call calculate_bucket_breakdown only—it returns breakdown and checkout link. Include the link in your first reply.'
+	);
 
 	// ---- DYNAMIC (per request: RAG, pricing, DIY situational, contact) ----
 	const RAG_RULE_LIMIT = 3;
@@ -518,11 +521,11 @@ export const POST: RequestHandler = async (event) => {
 		if (extractedRoofSize != null && extractedRoofSize >= 1) {
 			const roofSqm = Math.round(extractedRoofSize * 10) / 10;
 			dynamicParts.push(
-				`DIY: roof ${roofSqm} m². Call calculate_bucket_breakdown(roof_size_sqm:${roofSqm}) for pricing, shopify_create_diy_checkout_link(roof_size_sqm:${roofSqm}) for checkout. Use tool result for reply. Never calculate buckets yourself. Do NOT use generate_quote.${kitProductsLine || ''}`
+				`DIY: roof ${roofSqm} m². Call calculate_bucket_breakdown(roof_size_sqm:${roofSqm})—it returns breakdown and checkout link in one call. Include the link in your reply. Never calculate buckets yourself. Do NOT use generate_quote.${kitProductsLine || ''}`
 			);
 		} else {
 			dynamicParts.push(
-				`DIY: call calculate_bucket_breakdown (ask roof size if missing), shopify_create_diy_checkout_link for checkout. Use tool result. Never calculate yourself. Do NOT use generate_quote.${kitProductsLine || ''}`
+				`DIY: call calculate_bucket_breakdown (ask roof size if missing). It returns breakdown and checkout link together. Use tool result. Never calculate yourself. Do NOT use generate_quote.${kitProductsLine || ''}`
 			);
 		}
 	}
@@ -677,7 +680,10 @@ export const POST: RequestHandler = async (event) => {
 				});
 				reply = text ?? '';
 
-				const diyOut = extractFromToolResults(toolResults, 'shopify_create_diy_checkout_link');
+				// Check calculate_bucket_breakdown first (now includes checkout), then shopify_create_diy_checkout_link
+				const diyOut =
+					extractFromToolResults(toolResults, 'calculate_bucket_breakdown') ??
+					extractFromToolResults(toolResults, 'shopify_create_diy_checkout_link');
 				if (diyOut && typeof diyOut === 'object') {
 					const r = diyOut as { lineItemsUI?: { quantity?: number; title?: string }[]; checkoutUrl?: string };
 					if (typeof r.checkoutUrl === 'string' && r.checkoutUrl.trim()) {
@@ -722,7 +728,9 @@ export const POST: RequestHandler = async (event) => {
 						if (out) return out;
 					}
 				};
-				const diyOut = searchToolResults('shopify_create_diy_checkout_link');
+				const diyOut =
+					searchToolResults('calculate_bucket_breakdown') ??
+					searchToolResults('shopify_create_diy_checkout_link');
 				if (diyOut && typeof diyOut === 'object') {
 					const r = diyOut as { lineItemsUI?: { quantity?: number; title?: string }[]; checkoutUrl?: string };
 					if (typeof r.checkoutUrl === 'string' && r.checkoutUrl.trim()) {
@@ -767,7 +775,9 @@ export const POST: RequestHandler = async (event) => {
 					if (out) return out;
 				}
 			};
-			const diyOut = searchToolResults('shopify_create_diy_checkout_link');
+			const diyOut =
+				searchToolResults('calculate_bucket_breakdown') ??
+				searchToolResults('shopify_create_diy_checkout_link');
 			if (diyOut && typeof diyOut === 'object') {
 				const r = diyOut as { lineItemsUI?: { quantity?: number; title?: string }[]; checkoutUrl?: string };
 				if (typeof r.checkoutUrl === 'string' && r.checkoutUrl.trim()) {

@@ -482,7 +482,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 
 	tools.calculate_bucket_breakdown = tool({
 		description:
-			'Calculate DIY bucket breakdown for a roof size. Call this when the customer asks "how much" or "what do I need" for their roof—do NOT calculate in chat. Returns litres needed, bucket counts, and total price. Use roof_size_sqm. For checkout link, call shopify_create_diy_checkout_link afterwards.',
+			'Calculate DIY bucket breakdown for a roof size. Call this when the customer asks "how much" or "what do I need" for their roof—do NOT calculate in chat. Returns litres needed, bucket counts, total price, AND checkout link automatically. One call gives everything; no need to call shopify_create_diy_checkout_link separately when you have roof_size_sqm.',
 		inputSchema: z.object({
 			roof_size_sqm: z
 				.number()
@@ -512,7 +512,15 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 
 			const { lineItemsUI, summary, litres, roofSizeSqm } = result.data;
 			const breakdown = lineItemsUI.map((li) => `${li.quantity}× ${li.title} @ ${li.unitPrice} = ${li.lineTotal}`).join(', ');
-			return {
+
+			// Automatically create checkout link (same flow as shopify_create_diy_checkout_link)
+			const checkoutResult = await createDiyCheckoutForOwner(admin, c.ownerId, {
+				roof_size_sqm,
+				discount_percent,
+				email: getPrimaryEmail(c.contact?.email)?.trim() || undefined
+			});
+
+			const base = {
 				success: true,
 				roofSizeSqm,
 				litres,
@@ -525,6 +533,17 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 					currency: summary.currency
 				}
 			};
+
+			if (checkoutResult.ok) {
+				const { checkoutUrl } = checkoutResult.data;
+				return {
+					...base,
+					checkoutUrl,
+					message:
+						'Breakdown and checkout link ready. In your reply, include the line items summary and the checkout link so the customer can proceed directly.'
+				};
+			}
+			return base;
 		}
 	});
 
@@ -712,7 +731,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 				success: true,
 				code,
 				discountPercent: discount_percent,
-				message: `A ${discount_percent}% discount (${code}) will be applied. When you send the checkout link, use shopify_create_diy_checkout_link with discount_percent: ${discount_percent} so the link includes the discount.`
+				message: `A ${discount_percent}% discount (${code}) will be applied. When you send the checkout link, use calculate_bucket_breakdown (or shopify_create_diy_checkout_link) with discount_percent: ${discount_percent} so the link includes the discount.`
 			};
 		}
 	});

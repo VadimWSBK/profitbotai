@@ -429,7 +429,7 @@ export const POST: RequestHandler = async (event) => {
 						triggerResult = {
 							triggerId: triggerResult!.triggerId,
 							triggerName: triggerResult!.triggerName,
-							webhookResult: `The customer wants DIY and we have their roof size (${roofSqm} m²). You MUST call the shopify_create_diy_checkout_link tool with roof_size_sqm: ${roofSqm}. After calling it, reply with a short intro that INCLUDES the bucket breakdown so the customer sees what they need, e.g. "Here is your DIY quote for ${roofSqm} m²: you need 18 x 15L and 1 x 10L NetZero UltraTherm." Use the exact quantities from the tool result (e.g. "X x 15L", "Y x 10L", "Z x 5L"). Do NOT paste the full preview markdown or Items/Subtotal/TOTAL block—the widget will show the table. Do NOT use generate_quote or create a PDF for DIY.`
+							webhookResult: `The customer wants DIY and we have their roof size (${roofSqm} m²). Call calculate_bucket_breakdown(roof_size_sqm: ${roofSqm})—it returns breakdown and checkout link. Reply with a short intro that includes the bucket breakdown and checkout link. Do NOT paste the full preview block—the widget will show the table. Do NOT use generate_quote or create a PDF for DIY.`
 						};
 					} else {
 						triggerResult = {
@@ -445,7 +445,7 @@ export const POST: RequestHandler = async (event) => {
 						triggerId: triggerResult!.triggerId,
 						triggerName: triggerResult!.triggerName,
 						webhookResult:
-							'We have name, email, and roof size. Ask: "Do you plan to do it yourself (DIY) or would you like us to coat the roof for you?" For DIY, use shopify_create_diy_checkout_link (if available) so the chat shows the product table and checkout button. For Done For You, they will confirm and you can use generate_quote.'
+							'We have name, email, and roof size. Ask: "Do you plan to do it yourself (DIY) or would you like us to coat the roof for you?" For DIY, use calculate_bucket_breakdown (returns breakdown + checkout link) so the chat shows the product table and checkout button. For Done For You, they will confirm and you can use generate_quote.'
 					};
 				} else {
 					// wantsDoneForYou: generate the PDF
@@ -550,7 +550,7 @@ export const POST: RequestHandler = async (event) => {
 						triggerResult = {
 							triggerId: triggerResult!.triggerId,
 							triggerName: triggerResult!.triggerName,
-							webhookResult: `The customer is asking for a price and we have their roof size (${roofSqmForDiy} m²). You MUST call the shopify_create_diy_checkout_link tool with roof_size_sqm: ${roofSqmForDiy}. After calling it, reply with a short intro that INCLUDES the bucket breakdown so the customer sees what they need, e.g. "Here is your DIY quote for ${roofSqmForDiy} m²: you need 18 x 15L and 1 x 10L NetZero UltraTherm." Use the exact quantities from the tool result (e.g. "X x 15L", "Y x 10L", "Z x 5L"). Do NOT paste the full preview markdown or Items/Subtotal/TOTAL block—the widget will show the table. Do NOT use generate_quote or create a PDF. If they want to proceed to checkout, ask for their name and email.`
+							webhookResult: `The customer is asking for a price and we have their roof size (${roofSqmForDiy} m²). Call calculate_bucket_breakdown(roof_size_sqm: ${roofSqmForDiy})—it returns breakdown and checkout link. Reply with a short intro that includes the bucket breakdown and checkout link. Do NOT paste the full preview block—the widget will show the table. Do NOT use generate_quote or create a PDF. If they want to proceed to checkout, ask for their name and email.`
 						};
 						console.log(
 							'[chat/quote] Roof size only + price request: forcing DIY calculator',
@@ -558,7 +558,10 @@ export const POST: RequestHandler = async (event) => {
 						);
 					}
 				}
-				if (!triggerResult?.webhookResult?.includes('shopify_create_diy_checkout_link')) {
+				if (
+					!triggerResult?.webhookResult?.includes('shopify_create_diy_checkout_link') &&
+					!triggerResult?.webhookResult?.includes('calculate_bucket_breakdown')
+				) {
 					console.log('[chat/quote] Workflow not run: missing', missing.join(', '));
 					const instruction = `The user wants a quote but we need the following before we can help: ${missing.join(', ')}. Politely ask for only the missing information. Once we have name, email, and roof size, we will ask whether they want DIY (we calculate in chat) or Done For You (we coat the roof for them—PDF quote).`;
 					triggerResult = {
@@ -580,7 +583,9 @@ export const POST: RequestHandler = async (event) => {
 			(contactForPrompt?.roof_size_sqm != null && Number(contactForPrompt.roof_size_sqm) >= 0);
 		const hasNameForDiy = !!(contactForPrompt?.name ?? extractedContact.name);
 		const hasEmailForDiy = !!(contactForPrompt?.email ?? extractedContact.email);
-		const alreadyHasDiyInstruction = triggerResult?.webhookResult?.includes('shopify_create_diy_checkout_link');
+		const alreadyHasDiyInstruction =
+			triggerResult?.webhookResult?.includes('shopify_create_diy_checkout_link') ||
+			triggerResult?.webhookResult?.includes('calculate_bucket_breakdown');
 		if (
 			wantsDiyFallback &&
 			hasRoofForDiy &&
@@ -596,7 +601,7 @@ export const POST: RequestHandler = async (event) => {
 				triggerResult = {
 					triggerId: 'quote',
 					triggerName: 'Quote',
-					webhookResult: `The customer wants DIY and we have their roof size (${roofSqm} m²). You MUST call the shopify_create_diy_checkout_link tool with roof_size_sqm: ${roofSqm}. After calling it, reply with a short intro that INCLUDES the bucket breakdown so the customer sees what they need, e.g. "Here is your DIY quote for ${roofSqm} m²: you need 18 x 15L and 1 x 10L NetZero UltraTherm." Use the exact quantities from the tool result (e.g. "X x 15L", "Y x 10L", "Z x 5L"). Do NOT paste the full preview markdown or Items/Subtotal/TOTAL block—the widget will show the table. Do NOT use generate_quote or create a PDF for DIY.`
+					webhookResult: `The customer wants DIY and we have their roof size (${roofSqm} m²). Call calculate_bucket_breakdown(roof_size_sqm: ${roofSqm})—it returns breakdown and checkout link. Reply with a short intro that includes the bucket breakdown and checkout link. Do NOT paste the full preview block—the widget will show the table. Do NOT use generate_quote or create a PDF for DIY.`
 				};
 				console.log('[chat/quote] DIY fallback: forcing tool call so widget shows table + button');
 			}
@@ -610,8 +615,8 @@ export const POST: RequestHandler = async (event) => {
 				const shopify = await getShopifyConfigForUser(adminSupabaseForTyping, ownerId);
 				if (shopify) {
 					const base = Array.isArray(agentAllowedTools) ? agentAllowedTools : [];
-					if (!base.includes('shopify_create_diy_checkout_link')) {
-						agentAllowedTools = [...base, 'shopify_create_diy_checkout_link'];
+					if (!base.includes('shopify_create_diy_checkout_link') && !base.includes('calculate_bucket_breakdown')) {
+						agentAllowedTools = [...base, 'calculate_bucket_breakdown', 'shopify_create_diy_checkout_link'];
 					}
 				}
 			} catch {
@@ -628,14 +633,18 @@ export const POST: RequestHandler = async (event) => {
 		if (bot.tone?.trim()) parts.push(`Tone: ${bot.tone.trim()}`);
 		if (bot.instructions?.trim()) parts.push(bot.instructions.trim());
 
-		// ── RAG: retrieve relevant rules for this message ──────────────────
+		// ── RAG: retrieve relevant rules (limit 3, 280 chars each to save tokens) ──
+		const RAG_RULE_LIMIT = 3;
+		const RAG_RULE_MAX_CHARS = 280;
 		if (agentId && message) {
 			try {
-				const relevantRules = await getRelevantRulesForAgent(agentId, message, 5);
+				const relevantRules = await getRelevantRulesForAgent(agentId, message, RAG_RULE_LIMIT);
 				if (relevantRules.length > 0) {
-					parts.push(
-						`Rules (follow these):\n${relevantRules.map((r) => r.content).join('\n\n')}`
-					);
+					const ruleTexts = relevantRules.map((r) => {
+						const c = r.content.trim();
+						return c.length > RAG_RULE_MAX_CHARS ? c.slice(0, RAG_RULE_MAX_CHARS) + '…' : c;
+					});
+					parts.push(`Rules (follow these):\n${ruleTexts.join('\n\n')}`);
 				}
 			} catch (e) {
 				console.error('[chat] getRelevantRulesForAgent:', e);
@@ -808,7 +817,10 @@ export const POST: RequestHandler = async (event) => {
 			let lastDiyToolResult: GenerateOut['lastDiyToolResult'] | undefined;
 			const pickDiy = (tr: Array<{ toolName?: string; output?: unknown; result?: unknown }> | undefined) => {
 				if (!Array.isArray(tr)) return;
-				const diy = tr.find((r) => r.toolName === 'shopify_create_diy_checkout_link');
+				// Prefer calculate_bucket_breakdown (now includes checkout), then shopify_create_diy_checkout_link
+				const diy =
+					tr.find((r) => r.toolName === 'calculate_bucket_breakdown') ??
+					tr.find((r) => r.toolName === 'shopify_create_diy_checkout_link');
 				if (!diy || typeof diy !== 'object') return;
 				const out = (diy as { output?: unknown }).output ?? (diy as { result?: unknown }).result;
 				if (!out || typeof out !== 'object') return;
