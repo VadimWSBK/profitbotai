@@ -25,6 +25,8 @@ import { generateText, stepCountIs } from 'ai';
 import { getSupabaseAdmin } from '$lib/supabase.server';
 import { getAISdkModel } from '$lib/ai-sdk-model.server';
 import { createAgentTools } from '$lib/agent-tools.server';
+import { getOrCreateAgentCache } from '$lib/gemini-cache.server';
+import { generateWithCache } from '$lib/gemini-cached-generate.server';
 import { getRelevantRulesForAgent } from '$lib/agent-rules.server';
 import { getProductPricingForOwner, formatProductPricingForAgent } from '$lib/product-pricing.server';
 import { getShopifyConfigForUser } from '$lib/shopify.server';
@@ -452,34 +454,32 @@ export const POST: RequestHandler = async (event) => {
 	if (role.trim()) staticParts.push(role.trim());
 	if (tone.trim()) staticParts.push(`Tone: ${tone.trim()}`);
 	if (instructions.trim()) staticParts.push(instructions.trim());
+	// Consolidated hardcoded rules (kept short to save tokens)
 	staticParts.push(
-		"When the user only says hi, hello, or a simple greeting, respond briefly and naturally like a human would (e.g. \"Hi there! How can I help?\" or \"Hello! What can I do for you?\"). Do NOT launch into a full company intro, product pitch, or list options (DIY vs professional installation) until they have shown interest or asked about quotes, pricing, or help."
+		'Greeting: if user says hi/hello only, respond briefly (e.g. "Hi! How can I help?"). Do NOT launch into intro or pitch until they ask about quotes/pricing.'
 	);
 	staticParts.push(
-		"Respond directly to the user's latest message. If they have already stated what they want (e.g. a DIY quote, a done-for-you quote, or specific info), proceed with that—do not reintroduce yourself or re-ask the same options."
+		'Proceed with what the user already stated (DIY quote, Done For You, etc.)—do not reintroduce or re-ask options.'
 	);
 	staticParts.push(
-		'In this channel, name, email, phone, and address are saved automatically in the background. Do NOT say things like "I\'ve updated your name", "I\'ve saved your email", or "Thank you, I have your details"—just proceed to the next step. Only mention that details were saved if the user explicitly asks. Do NOT say you are unable to update or save contact details; they are saved automatically. After generating a Done For You quote: the system automatically sends the PDF to the customer\'s email. Say that you have sent it to their email (e.g. "I\'ve sent it to your email."). Do NOT ask "Would you like me to send it to your email?"—it is sent automatically. Do NOT include the quote download URL in your reply—the system will add a single download link below your message.'
+		'Contact/quote: name, email, phone, address saved automatically. Do NOT announce "I\'ve saved your email" or similar. PDF quote is emailed automatically—say "I\'ve sent it to your email." Do NOT include quote URL. Never say "technical issue"; if generate_quote errors, ask for the missing piece (e.g. email).'
 	);
 	staticParts.push(
-		'When asking for or receiving name, email, roof size, or other details: always be positive and thank the user when they share information (e.g. "Thanks, got it!" or "Perfect, thank you."). Do NOT apologize—never say "I\'m sorry", "I apologise", "sorry about that", or "I\'m sorry for the inconvenience" when collecting details. There is nothing to apologise for; just thank them and move on.'
+		'Be positive when collecting details; thank the user. Do NOT apologize. Never ask for info already in "Current contact info we have". If we have name+email+roof, call generate_quote immediately. Ask only the one missing piece at a time.'
 	);
-	staticParts.push(
-		'CRITICAL: Never ask for or reconfirm information that is already listed below in "Current contact info we have". Never say "I need your name" or "please provide your email" when it is already there. Never say "our system needs to reconfirm", "please provide again", or "could you provide your full name once more". If we have name, email, and roof size, call generate_quote immediately—do not ask the user to confirm or repeat anything. Only ask for the one next missing piece (e.g. if we have name and roof size but no email, ask only for email). Act like a human: use what you have and move on.'
-	);
-	staticParts.push(
-		'If generate_quote returns an error (e.g. contact name/email/roof size required), ask for that one missing piece in a friendly way (e.g. "I just need your email address to send you the quote."). Do NOT say "technical issue", "I\'m unable to generate", or "experiencing a problem"—there is no technical issue, just ask for the missing detail.'
-	);
-	staticParts.push('Always complete your reply with a full sentence. Never end mid-sentence or mid-word.');
-	staticParts.push(
-		'When the user asks to receive something by email (e.g. the DIY quote, the checkout link, the PDF quote, or any info), use the send_email tool. Use their email from "Current contact info we have" if you have it, or ask once for their email. In the email body include the relevant link or content (e.g. DIY checkout link, quote download link) and a short friendly message. Then confirm in chat that you have sent it.'
-	);
+	staticParts.push('Finish with a full sentence. For email requests: use send_email tool, include link in body, confirm in chat.');
 
 	// ---- DYNAMIC (per request: RAG, pricing, DIY situational, contact) ----
+	const RAG_RULE_LIMIT = 3;
+	const RAG_RULE_MAX_CHARS = 280;
 	try {
-		const relevantRules = await getRelevantRulesForAgent(agentId, content, 5);
+		const relevantRules = await getRelevantRulesForAgent(agentId, content, RAG_RULE_LIMIT);
 		if (relevantRules.length > 0) {
-			dynamicParts.push(`Rules (follow these):\n${relevantRules.map((r) => r.content).join('\n\n')}`);
+			const ruleTexts = relevantRules.map((r) => {
+				const c = r.content.trim();
+				return c.length > RAG_RULE_MAX_CHARS ? c.slice(0, RAG_RULE_MAX_CHARS) + '…' : c;
+			});
+			dynamicParts.push(`Rules (follow these):\n${ruleTexts.join('\n\n')}`);
 		}
 	} catch (e) {
 		console.error('[webhooks/chatwoot] getRelevantRulesForAgent:', e);
@@ -510,7 +510,7 @@ export const POST: RequestHandler = async (event) => {
 			const roofKit = await getDiyKitBuilderConfig(admin, ownerId, 'roof-kit');
 			if (roofKit?.product_entries?.length) {
 				const names = [...new Set(roofKit.product_entries.map((e) => (e.display_name?.trim() || (DIY_ROLE_LABELS[e.role] ?? e.role))).filter(Boolean))];
-				kitProductsLine = ` This account's DIY kit contains only: ${names.join(', ')}. When describing what the quote includes, use these product names and ONLY the products in the tool result line items—do not add sealant, sealer, bonus kit, or other components unless they are in the breakdown.`;
+				kitProductsLine = ` Kit: ${names.join(', ')}. Use ONLY tool result line items.`;
 			}
 		} catch (e) {
 			console.error('[webhooks/chatwoot] getDiyKitBuilderConfig:', e);
@@ -518,36 +518,54 @@ export const POST: RequestHandler = async (event) => {
 		if (extractedRoofSize != null && extractedRoofSize >= 1) {
 			const roofSqm = Math.round(extractedRoofSize * 10) / 10;
 			dynamicParts.push(
-				`DIY quote: we have roof size ${roofSqm} m². NEVER calculate buckets yourself—always call a tool. For "how much" or "what do I need" questions: call calculate_bucket_breakdown with roof_size_sqm: ${roofSqm} and use the result to reply. For checkout link: call shopify_create_diy_checkout_link with roof_size_sqm: ${roofSqm}. When replying, use the exact bucket breakdown from the tool (e.g. "For your ${roofSqm} m² area, you need X x 15L and Y x 10L."). Offer checkout: "If you wish to proceed, I can send you a checkout link." Do NOT paste Items/Subtotal/TOTAL block. Do NOT use generate_quote for DIY.${kitProductsLine || ''}`
+				`DIY: roof ${roofSqm} m². Call calculate_bucket_breakdown(roof_size_sqm:${roofSqm}) for pricing, shopify_create_diy_checkout_link(roof_size_sqm:${roofSqm}) for checkout. Use tool result for reply. Never calculate buckets yourself. Do NOT use generate_quote.${kitProductsLine || ''}`
 			);
 		} else {
 			dynamicParts.push(
-				`DIY quote: NEVER calculate buckets yourself—always call a tool. For "how much" or pricing: call calculate_bucket_breakdown with roof_size_sqm (ask for roof size once if missing). For checkout link: call shopify_create_diy_checkout_link. Use the exact bucket breakdown from the tool result. Do NOT use generate_quote for DIY.${kitProductsLine || ''}`
+				`DIY: call calculate_bucket_breakdown (ask roof size if missing), shopify_create_diy_checkout_link for checkout. Use tool result. Never calculate yourself. Do NOT use generate_quote.${kitProductsLine || ''}`
 			);
 		}
 	}
 
 	if (internalContact && (internalContact.name ?? internalContact.email ?? internalContact.phone ?? internalContact.address ?? internalContact.roof_size_sqm != null)) {
-		const lines: string[] = ['Current contact info we have:'];
+		const lines: string[] = ['Current contact info:'];
 		if (internalContact.name) lines.push(`Name: ${internalContact.name}`);
 		if (internalContact.email) lines.push(`Email: ${internalContact.email}`);
 		if (internalContact.phone) lines.push(`Phone: ${internalContact.phone}`);
 		if (internalContact.address) lines.push(`Address: ${internalContact.address}`);
-		if (internalContact.roof_size_sqm != null) lines.push(`Roof size: ${internalContact.roof_size_sqm} m²`);
+		if (internalContact.roof_size_sqm != null) lines.push(`Roof: ${internalContact.roof_size_sqm} m²`);
 		dynamicParts.push(lines.join(' '));
-		if (internalContact.name && internalContact.email) {
-			dynamicParts.push(
-				'We already have the contact\'s name and email saved. Do NOT ask for name or email again. Do NOT say "I need your name" or "please provide your email" or "confirm your name". If roof size is still needed for the quote, ask only for roof size once, then call generate_quote.'
-			);
-			if (internalContact.roof_size_sqm != null && !wantsDiyOrQuote) {
-				dynamicParts.push(
-					'MANDATORY: Call generate_quote now. Do not ask the user to confirm or provide anything. The details above are already in the system.'
-				);
-			}
+		if (internalContact.name && internalContact.email && internalContact.roof_size_sqm != null && !wantsDiyOrQuote) {
+			dynamicParts.push('MANDATORY: Call generate_quote now. Do not ask to confirm.');
+		} else if (internalContact.name && internalContact.email) {
+			dynamicParts.push('We have name and email. Do NOT ask again. If roof size needed, ask once then generate_quote.');
 		}
 	}
 
-	const systemPrompt = [...staticParts, ...dynamicParts].length > 0 ? [...staticParts, ...dynamicParts].join('\n\n') : 'You are a helpful assistant.';
+	const staticSystemPrompt =
+		staticParts.length > 0 ? staticParts.join('\n\n') : 'You are a helpful assistant.';
+	const dynamicBlock = dynamicParts.length > 0 ? dynamicParts.join('\n\n') : '';
+	const systemPrompt =
+		[...staticParts, ...dynamicParts].length > 0
+			? [...staticParts, ...dynamicParts].join('\n\n')
+			: 'You are a helpful assistant.';
+
+	if (env.CHATWOOT_DEBUG === '1' || env.CHATWOOT_DEBUG === 'true') {
+		const dynamicLen = dynamicBlock.length;
+		const staticLen = staticSystemPrompt.length;
+		console.log(
+			'[webhooks/chatwoot] promptSections',
+			JSON.stringify({
+				role: role.length,
+				tone: tone.length,
+				instructions: instructions.length,
+				static: staticLen,
+				dynamic: dynamicLen,
+				total: systemPrompt.length,
+				estTokens: Math.ceil(systemPrompt.length / 4)
+			})
+		);
+	}
 
 	// Tools: use agent's allowed_tools; ensure send_email, bucket calculator, and DIY checkout are available for Chatwoot
 	let agentAllowedTools: string[] = Array.isArray(agentRow.allowed_tools) ? (agentRow.allowed_tools as string[]) : [];
@@ -608,56 +626,166 @@ export const POST: RequestHandler = async (event) => {
 	let diyCheckoutUrl: string | null = null;
 	let diyLineItemsSummary: string | null = null;
 	let quoteDownloadUrl: string | null = null;
+
+	const tools = createAgentTools(admin, agentAllowedTools ?? undefined);
+	const useExplicitCache = llmProvider?.toLowerCase() === 'google' && (apiKey?.trim?.() ?? '').length > 0;
+	const modelForCache = llmModel?.trim() || 'gemini-2.5-flash';
+
+	const extractFromToolResults = (
+		toolResults: Array<{ toolName: string; output: unknown }>,
+		name: string
+	): unknown => {
+		const t = toolResults.find((r) => r.toolName === name);
+		return t?.output;
+	};
+
 	try {
-		const model = getAISdkModel(llmProvider, llmModel, apiKey);
-		const tools = createAgentTools(admin, agentAllowedTools ?? undefined);
-		const result = await generateText({
-			model,
-			system: systemPrompt,
-			messages: modelMessages,
-			tools,
-			stopWhen: stepCountIs(5),
-			maxOutputTokens: 2048,
-			experimental_context: agentContext
-		});
-		reply = result.text ?? '';
-		const raw = result as {
-			steps?: Array<{ toolResults?: Array<{ toolName?: string; output?: unknown; result?: unknown }> }>;
-			toolResults?: Array<{ toolName?: string; output?: unknown; result?: unknown }>;
-		};
-		const getToolOutput = (tr: Array<{ toolName?: string; output?: unknown; result?: unknown }> | undefined, name: string) => {
-			if (!Array.isArray(tr)) return;
-			const t = tr.find((r) => r.toolName === name);
-			if (!t || typeof t !== 'object') return;
-			return (t as { output?: unknown }).output ?? (t as { result?: unknown }).result;
-		};
-		const searchToolResults = (name: string) => {
-			let out = getToolOutput(raw.toolResults, name);
-			if (out) return out;
-			if (Array.isArray(raw.steps)) {
-				for (let i = raw.steps.length - 1; i >= 0; i--) {
-					out = getToolOutput(raw.steps[i].toolResults, name);
+		if (useExplicitCache) {
+			const cacheName = await getOrCreateAgentCache({
+				agentId,
+				model: modelForCache,
+				apiKey,
+				staticSystemPrompt,
+				tools,
+				allowedToolNames: agentAllowedTools ?? []
+			});
+
+			if (cacheName) {
+				// Prepend dynamic context to first user message (or insert if history starts with assistant)
+				let messagesWithContext = modelMessages;
+				if (dynamicBlock) {
+					const first = modelMessages[0];
+					if (first?.role === 'user') {
+						messagesWithContext = [
+							{ ...first, content: dynamicBlock + '\n\n---\n\n' + first.content },
+							...modelMessages.slice(1)
+						];
+					} else {
+						messagesWithContext = [{ role: 'user' as const, content: dynamicBlock }, ...modelMessages];
+					}
+				}
+
+				const { text, toolResults } = await generateWithCache({
+					cacheName,
+					model: modelForCache,
+					apiKey,
+					messages: messagesWithContext,
+					tools,
+					agentContext,
+					maxSteps: 5,
+					maxOutputTokens: 2048
+				});
+				reply = text ?? '';
+
+				const diyOut = extractFromToolResults(toolResults, 'shopify_create_diy_checkout_link');
+				if (diyOut && typeof diyOut === 'object') {
+					const r = diyOut as { lineItemsUI?: { quantity?: number; title?: string }[]; checkoutUrl?: string };
+					if (typeof r.checkoutUrl === 'string' && r.checkoutUrl.trim()) {
+						diyCheckoutUrl = r.checkoutUrl.trim();
+						if (Array.isArray(r.lineItemsUI) && r.lineItemsUI.length > 0) {
+							diyLineItemsSummary = r.lineItemsUI
+								.map((li) => `${li.quantity ?? 0} x ${li.title ?? ''}`)
+								.filter(Boolean)
+								.join(', ');
+						}
+					}
+				}
+				const quoteOut = extractFromToolResults(toolResults, 'generate_quote');
+				if (quoteOut && typeof quoteOut === 'object') {
+					const r = quoteOut as { downloadUrl?: string };
+					if (typeof r.downloadUrl === 'string' && r.downloadUrl.trim()) {
+						quoteDownloadUrl = r.downloadUrl.trim();
+					}
+				}
+			} else {
+				// Cache creation failed, fallback to generateText
+				const model = getAISdkModel(llmProvider, llmModel, apiKey);
+				const result = await generateText({
+					model,
+					system: systemPrompt,
+					messages: modelMessages,
+					tools,
+					stopWhen: stepCountIs(5),
+					maxOutputTokens: 2048,
+					experimental_context: agentContext
+				});
+				reply = result.text ?? '';
+				const raw = result as {
+					steps?: Array<{ toolResults?: Array<{ toolName?: string; output?: unknown }> }>;
+					toolResults?: Array<{ toolName?: string; output?: unknown }>;
+				};
+				const searchToolResults = (name: string) => {
+					let out = raw.toolResults?.find((r) => r.toolName === name)?.output;
+					if (out) return out;
+					for (let i = (raw.steps?.length ?? 0) - 1; i >= 0; i--) {
+						out = raw.steps?.[i]?.toolResults?.find((r) => r.toolName === name)?.output;
+						if (out) return out;
+					}
+				};
+				const diyOut = searchToolResults('shopify_create_diy_checkout_link');
+				if (diyOut && typeof diyOut === 'object') {
+					const r = diyOut as { lineItemsUI?: { quantity?: number; title?: string }[]; checkoutUrl?: string };
+					if (typeof r.checkoutUrl === 'string' && r.checkoutUrl.trim()) {
+						diyCheckoutUrl = r.checkoutUrl.trim();
+						if (Array.isArray(r.lineItemsUI) && r.lineItemsUI.length > 0) {
+							diyLineItemsSummary = r.lineItemsUI
+								.map((li) => `${li.quantity ?? 0} x ${li.title ?? ''}`)
+								.filter(Boolean)
+								.join(', ');
+						}
+					}
+				}
+				const quoteOut = searchToolResults('generate_quote');
+				if (quoteOut && typeof quoteOut === 'object') {
+					const r = quoteOut as { downloadUrl?: string };
+					if (typeof r.downloadUrl === 'string' && r.downloadUrl.trim()) {
+						quoteDownloadUrl = r.downloadUrl.trim();
+					}
+				}
+			}
+		} else {
+			const model = getAISdkModel(llmProvider, llmModel, apiKey);
+			const result = await generateText({
+				model,
+				system: systemPrompt,
+				messages: modelMessages,
+				tools,
+				stopWhen: stepCountIs(5),
+				maxOutputTokens: 2048,
+				experimental_context: agentContext
+			});
+			reply = result.text ?? '';
+			const raw = result as {
+				steps?: Array<{ toolResults?: Array<{ toolName?: string; output?: unknown }> }>;
+				toolResults?: Array<{ toolName?: string; output?: unknown }>;
+			};
+			const searchToolResults = (name: string) => {
+				let out = raw.toolResults?.find((r) => r.toolName === name)?.output;
+				if (out) return out;
+				for (let i = (raw.steps?.length ?? 0) - 1; i >= 0; i--) {
+					out = raw.steps?.[i]?.toolResults?.find((r) => r.toolName === name)?.output;
 					if (out) return out;
 				}
-			}
-		};
-		// DIY: get checkout URL and line items so we append them to the reply (Chatwoot has no widget UI)
-		const diyOut = searchToolResults('shopify_create_diy_checkout_link');
-		if (diyOut && typeof diyOut === 'object') {
-			const r = diyOut as { lineItemsUI?: { quantity?: number; title?: string }[]; checkoutUrl?: string };
-			if (typeof r.checkoutUrl === 'string' && r.checkoutUrl.trim()) {
-				diyCheckoutUrl = r.checkoutUrl.trim();
-				if (Array.isArray(r.lineItemsUI) && r.lineItemsUI.length > 0) {
-					diyLineItemsSummary = r.lineItemsUI.map((li) => `${li.quantity ?? 0} x ${li.title ?? ''}`).filter(Boolean).join(', ');
+			};
+			const diyOut = searchToolResults('shopify_create_diy_checkout_link');
+			if (diyOut && typeof diyOut === 'object') {
+				const r = diyOut as { lineItemsUI?: { quantity?: number; title?: string }[]; checkoutUrl?: string };
+				if (typeof r.checkoutUrl === 'string' && r.checkoutUrl.trim()) {
+					diyCheckoutUrl = r.checkoutUrl.trim();
+					if (Array.isArray(r.lineItemsUI) && r.lineItemsUI.length > 0) {
+						diyLineItemsSummary = r.lineItemsUI
+							.map((li) => `${li.quantity ?? 0} x ${li.title ?? ''}`)
+							.filter(Boolean)
+							.join(', ');
+					}
 				}
 			}
-		}
-		// Done For You quote: get download URL so we post it in chat and send by email
-		const quoteOut = searchToolResults('generate_quote');
-		if (quoteOut && typeof quoteOut === 'object') {
-			const r = quoteOut as { downloadUrl?: string };
-			if (typeof r.downloadUrl === 'string' && r.downloadUrl.trim()) {
-				quoteDownloadUrl = r.downloadUrl.trim();
+			const quoteOut = searchToolResults('generate_quote');
+			if (quoteOut && typeof quoteOut === 'object') {
+				const r = quoteOut as { downloadUrl?: string };
+				if (typeof r.downloadUrl === 'string' && r.downloadUrl.trim()) {
+					quoteDownloadUrl = r.downloadUrl.trim();
+				}
 			}
 		}
 	} catch (e) {
