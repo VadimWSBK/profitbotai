@@ -84,7 +84,7 @@ async function getChatwootHistoryFromDb(
 	return out.map((r) => ({ role: r.role as 'user' | 'assistant', content: r.content ?? '' }));
 }
 
-/** Extract name, email, phone, address from a message (e.g. "Vadim, weisbekvadim@gmail.com" or "address is 123 Main St"). */
+/** Extract name, email, phone, address from a message (e.g. "Vadim", "weisbekvadim@gmail.com", or "Vadim, weisbekvadim@gmail.com"). */
 function extractContactFromText(text: string): { name?: string; email?: string; phone_number?: string; address?: string } {
 	const out: { name?: string; email?: string; phone_number?: string; address?: string } = {};
 	const t = text.trim();
@@ -93,21 +93,26 @@ function extractContactFromText(text: string): { name?: string; email?: string; 
 	if (emailMatch) out.email = emailMatch[0].toLowerCase();
 	const phoneMatch = t.match(/(?:\+\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{2,4}[\s.-]?\d{2,4}[\s.-]?\d{0,4}/);
 	if (phoneMatch) out.phone_number = phoneMatch[0].trim();
-	const notNames = new Set('how what when where why which can could would should may might will do does has have is are'.split(' '));
+	const notNames = new Set('how what when where why which can could would should may might will do does has have is are yes no ok okay the and for you'.split(' '));
 	const namePatterns = [
 		/(?:my\s+name\s+is|i['']m|name\s+is|call\s+me|i\s+am)\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)?)/i,
 		/^([A-Za-z]+)\s*[,،]\s*[\w@.]/,
-		/^([A-Za-z]+)\s+[\w@.]*@/
+		/^([A-Za-z]+)\s+[\w@.]*@/,
+		/(?:^|[\s,])([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*$/  // name at end (e.g. "... Vadim" or "Vadim Weisbek")
 	];
 	for (const re of namePatterns) {
 		const m = t.match(re);
 		if (m?.[1]?.trim()) {
 			const name = m[1].trim();
-			if (name.length >= 2 && !notNames.has(name.toLowerCase())) {
+			if (name.length >= 2 && name.length <= 50 && !notNames.has(name.toLowerCase())) {
 				out.name = name;
 				break;
 			}
 		}
+	}
+	// When the whole message is just a name (e.g. "Vadim" or "Vadim Weisbek") we might have missed it
+	if (!out.name && /^[A-Za-z][a-zA-Z\s-]{1,49}$/.test(t) && !notNames.has(t.toLowerCase()) && t.length >= 2) {
+		out.name = t.trim();
 	}
 	// Address: "address is X", "my address is X", "I live at X", "address: X", or line with number + street words
 	const addressPatterns = [
@@ -191,6 +196,19 @@ async function updateChatwootContact(
 	return res.ok;
 }
 
+/** Merge two contact extractions (prefer non-empty from either). */
+function mergeContactExtractions(
+	a: { name?: string; email?: string; phone_number?: string; address?: string },
+	b: { name?: string; email?: string; phone_number?: string; address?: string }
+): { name?: string; email?: string; phone_number?: string; address?: string } {
+	return {
+		name: (a.name?.trim() || b.name?.trim()) || undefined,
+		email: (a.email?.trim() || b.email?.trim()) || undefined,
+		phone_number: (a.phone_number?.trim() || b.phone_number?.trim()) || undefined,
+		address: (a.address?.trim() || b.address?.trim()) || undefined
+	};
+}
+
 /** Upsert our internal contact for this Chatwoot conversation so the LLM can see what we already have. Returns contact for context. */
 async function upsertChatwootInternalContact(
 	admin: SupabaseClient,
@@ -199,9 +217,14 @@ async function upsertChatwootInternalContact(
 	agentId: string,
 	allUserText: string,
 	roofSizeSqm: number | null,
-	existingChatwootContact?: { name?: string; email?: string; phone_number?: string }
+	existingChatwootContact?: { name?: string; email?: string; phone_number?: string },
+	currentMessageContent?: string
 ): Promise<{ name?: string | null; email?: string | null; phone?: string | null; address?: string | null; roof_size_sqm?: number | null } | null> {
-	const extracted = extractContactFromText(allUserText);
+	// Extract from current message (e.g. "Vadim") and from full conversation; merge so we don't miss single-token replies
+	const extracted = mergeContactExtractions(
+		extractContactFromText(currentMessageContent ?? ''),
+		extractContactFromText(allUserText)
+	);
 	const { data: existing } = await admin
 		.from('contacts')
 		.select('id, name, email, phone, address, roof_size_sqm')
@@ -377,7 +400,8 @@ export const POST: RequestHandler = async (event) => {
 		agentId,
 		allUserText,
 		extractedRoofSize,
-		chatwootContactFromPayload
+		chatwootContactFromPayload,
+		content
 	);
 
 	const contentLower = content.toLowerCase();
@@ -447,13 +471,20 @@ export const POST: RequestHandler = async (event) => {
 	}
 
 	parts.push(
+		"When the user only says hi, hello, or a simple greeting, respond briefly and naturally like a human would (e.g. \"Hi there! How can I help?\" or \"Hello! What can I do for you?\"). Do NOT launch into a full company intro, product pitch, or list options (DIY vs professional installation) until they have shown interest or asked about quotes, pricing, or help."
+	);
+	parts.push(
 		"Respond directly to the user's latest message. If they have already stated what they want (e.g. a DIY quote, a done-for-you quote, or specific info), proceed with that—do not reintroduce yourself or re-ask the same options."
 	);
 	// Contact details are saved automatically; do not announce it. Do not say you cannot save.
 	parts.push(
-		'In this channel, name, email, phone, and address are saved automatically in the background. Do NOT say things like "I\'ve updated your name", "I\'ve saved your email", or "Thank you, I have your details"—just proceed to the next step (e.g. ask for the next detail or generate the quote). Only mention that details were saved if the user explicitly asks. Do NOT say you are unable to update or save contact details; they are saved automatically. After generating a Done For You quote, you must share the download link in your reply so the user can click it; the system will also send the link by email when possible.'
+		'In this channel, name, email, phone, and address are saved automatically in the background. Do NOT say things like "I\'ve updated your name", "I\'ve saved your email", or "Thank you, I have your details"—just proceed to the next step. Only mention that details were saved if the user explicitly asks. Do NOT say you are unable to update or save contact details; they are saved automatically. After generating a Done For You quote, the system will post the download link and send it by email.'
 	);
-	// So the LLM knows what we already have and can respond accordingly (e.g. skip asking for name/email if we have them)
+	// Never ask for or reconfirm info we already have. Be human: one missing piece at a time, then generate.
+	parts.push(
+		'CRITICAL: Never ask for or reconfirm information that is already listed below in "Current contact info we have". Never say "I need your name" or "please provide your email" when it is already there. Never say "our system needs to reconfirm", "please provide again", or "could you provide your full name once more". If we have name, email, and roof size, call generate_quote immediately—do not ask the user to confirm or repeat anything. Only ask for the one next missing piece (e.g. if we have name and roof size but no email, ask only for email). Act like a human: use what you have and move on.'
+	);
+	// So the LLM knows what we already have and can respond accordingly
 	if (internalContact && (internalContact.name ?? internalContact.email ?? internalContact.phone ?? internalContact.address ?? internalContact.roof_size_sqm != null)) {
 		const lines: string[] = ['Current contact info we have:'];
 		if (internalContact.name) lines.push(`Name: ${internalContact.name}`);
@@ -462,6 +493,12 @@ export const POST: RequestHandler = async (event) => {
 		if (internalContact.address) lines.push(`Address: ${internalContact.address}`);
 		if (internalContact.roof_size_sqm != null) lines.push(`Roof size: ${internalContact.roof_size_sqm} m²`);
 		parts.push(lines.join(' '));
+		// When we have everything for a Done For You quote, tell the model to generate now
+		if (internalContact.name && internalContact.email && internalContact.roof_size_sqm != null) {
+			parts.push(
+				'We have name, email, and roof size. For a Done For You quote request: call generate_quote now. Do not ask the user to confirm or provide anything again.'
+			);
+		}
 	}
 	const systemPrompt = parts.length > 0 ? parts.join('\n\n') : 'You are a helpful assistant.';
 
@@ -662,19 +699,28 @@ export const POST: RequestHandler = async (event) => {
 
 	// Update Chatwoot contact when user provides name/email/phone (so CRM stays in sync)
 	const contactId = await getChatwootContactId(baseUrl, botToken, accountId, conversationId, body.contact);
+	if (contactId == null && (env.CHATWOOT_DEBUG === '1' || env.CHATWOOT_DEBUG === 'true')) {
+		console.warn('[webhooks/chatwoot] No Chatwoot contact id (body.contact.id or conversation meta.sender.id); cannot update Chatwoot contact');
+	}
 	if (contactId != null) {
-		const allUserText = [content, ...history.filter((t) => t.role === 'user').map((t) => t.content)].join(' ');
-		const extracted = extractContactFromText(allUserText);
-		const existing = body.contact;
+		const allUserTextForContact = [content, ...history.filter((t) => t.role === 'user').map((t) => t.content)].join(' ');
+		const extracted = mergeContactExtractions(
+			extractContactFromText(content),
+			extractContactFromText(allUserTextForContact)
+		);
+		const existing = body.contact as { name?: string; email?: string; phone_number?: string } | undefined;
 		const updates = {
-			name: extracted.name ?? existing?.name?.trim(),
-			email: extracted.email ?? existing?.email?.trim(),
-			phone_number: extracted.phone_number ?? existing?.phone_number?.trim(),
-			address: extracted.address
+			name: (extracted.name?.trim() || existing?.name?.trim()) || undefined,
+			email: (extracted.email?.trim() || existing?.email?.trim()) || undefined,
+			phone_number: (extracted.phone_number?.trim() || existing?.phone_number?.trim()) || undefined,
+			address: extracted.address?.trim() || undefined
 		};
-		const updated = await updateChatwootContact(baseUrl, botToken, accountId, contactId, updates);
-		if (env.CHATWOOT_DEBUG === '1' && updated) {
-			console.log('[webhooks/chatwoot] contact updated', { contactId, hasName: !!updates.name, hasEmail: !!updates.email, hasPhone: !!updates.phone_number });
+		// Only call API when we have at least one field to update (Chatwoot may reject empty PUT)
+		if (updates.name || updates.email || updates.phone_number || updates.address) {
+			const updated = await updateChatwootContact(baseUrl, botToken, accountId, contactId, updates);
+			if (!updated && (env.CHATWOOT_DEBUG === '1' || env.CHATWOOT_DEBUG === 'true')) {
+				console.warn('[webhooks/chatwoot] Chatwoot contact update failed or returned non-OK', { contactId, updates: !!updates.name });
+			}
 		}
 	}
 
