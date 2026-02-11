@@ -2,7 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { env } from '$env/dynamic/private';
 import { getSupabaseClient } from '$lib/supabase.server';
-import { parseChatwootConversationId } from '../../+server';
+import { parseChatwootConversationId } from '$lib/chatwoot-conversation-id';
 
 /**
  * POST /api/conversations/[id]/messages – send a message as human_agent (take over reply).

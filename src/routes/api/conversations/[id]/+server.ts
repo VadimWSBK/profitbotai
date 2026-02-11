@@ -7,7 +7,7 @@ import { getPrimaryEmail } from '$lib/contact-email-jsonb';
 import { getProductImageUrlsBySize } from '$lib/product-pricing.server';
 import { getShopifyConfigForUser, getDiyProductImages } from '$lib/shopify.server';
 import { getDefaultKitBuilderConfig } from '$lib/diy-kit-builder.server';
-import { parseChatwootConversationId } from '../+server';
+import { parseChatwootConversationId } from '$lib/chatwoot-conversation-id';
 
 const MESSAGES_PAGE_SIZE = 20;
 

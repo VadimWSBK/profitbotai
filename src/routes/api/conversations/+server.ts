@@ -2,17 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSupabaseClient } from '$lib/supabase.server';
 import { getPrimaryEmail } from '$lib/contact-email-jsonb';
-
-/** Synthetic id for Chatwoot conversations in the Messages list */
-export function chatwootConversationId(accountId: number, conversationId: number): string {
-	return `chatwoot-${accountId}-${conversationId}`;
-}
-
-export function parseChatwootConversationId(id: string): { accountId: number; conversationId: number } | null {
-	const m = id.match(/^chatwoot-(\d+)-(\d+)$/);
-	if (!m) return null;
-	return { accountId: Number(m[1]), conversationId: Number(m[2]) };
-}
+import { chatwootConversationId } from '$lib/chatwoot-conversation-id';
 
 /**
  * GET /api/conversations?widget_id= – list conversations for widgets the user owns,
