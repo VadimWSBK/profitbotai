@@ -114,7 +114,11 @@ function extractContactFromText(text: string): { name?: string; email?: string; 
 	if (emailMatch) out.email = emailMatch[0].toLowerCase();
 	const phoneMatch = t.match(/(?:\+\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{2,4}[\s.-]?\d{2,4}[\s.-]?\d{0,4}/);
 	if (phoneMatch) out.phone_number = phoneMatch[0].trim();
-	const notNames = new Set('how what when where why which can could would should may might will do does has have is are yes no ok okay the and for you'.split(' '));
+	const notNames = new Set(
+		'how what when where why which can could would should may might will do does has have is are yes no ok okay the and for you try again common give quote done mail by now need want like get send'.split(
+			' '
+		)
+	);
 	const namePatterns = [
 		/(?:my\s+name\s+is|i['']m|name\s+is|call\s+me|i\s+am)\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)?)/i,
 		/^([A-Za-z]+)\s*[,،]\s*[\w@.]/,
@@ -125,20 +129,26 @@ function extractContactFromText(text: string): { name?: string; email?: string; 
 		const m = t.match(re);
 		if (m?.[1]?.trim()) {
 			const name = m[1].trim();
-			if (name.length >= 2 && name.length <= 50 && !notNames.has(name.toLowerCase())) {
+			const words = name.toLowerCase().split(/\s+/);
+			if (name.length >= 2 && name.length <= 50 && !words.some((w) => notNames.has(w))) {
 				out.name = name;
 				break;
 			}
 		}
 	}
-	// When the whole message is just a name (e.g. "Vadim" or "Vadim Weisbek") we might have missed it
-	if (!out.name && /^[A-Za-z][a-zA-Z\s-]{1,49}$/.test(t) && !notNames.has(t.toLowerCase()) && t.length >= 2) {
+	// When the whole message is just a name (e.g. "Vadim" or "Vadim Weisbek") we might have missed it—reject if any word is a common word
+	if (
+		!out.name &&
+		/^[A-Za-z][a-zA-Z\s-]{1,49}$/.test(t) &&
+		t.length >= 2 &&
+		!t.toLowerCase().split(/\s+/).some((w) => notNames.has(w))
+	) {
 		out.name = t.trim();
 	}
-	// Address: "address is X", "my address is X", "I live at X", "address: X", or line with number + street words
+	// Address: only from explicit "address is X", "I live at X", or street-style; do NOT use bare "at" (matches "quote at 242" / conversation text)
 	const addressPatterns = [
 		/(?:my\s+)?address\s*(?:is|:)\s*([^.?!\n]+?)(?=\s*(?:\.|$|,|email|phone|name)|$)/i,
-		/(?:i\s+live\s+at|located\s+at|at)\s+([^.?!\n]+?)(?=\s*(?:\.|$|,)|$)/i,
+		/(?:i\s+live\s+at|located\s+at)\s+([^.?!\n]+?)(?=\s*(?:\.|$|,)|$)/i,
 		/\b(\d+[\s\w.,'-]+(?:street|st|road|rd|ave|avenue|drive|dr|lane|ln|way|place|pl|court|ct|parade|pde|blvd)[\s\w.,'-]*)/i
 	];
 	for (const re of addressPatterns) {

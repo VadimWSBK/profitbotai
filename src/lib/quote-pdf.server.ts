@@ -95,12 +95,28 @@ export async function generateQuoteForConversation(
 		currency: settingsRow.currency ?? 'USD'
 	};
 
-	const customer = { name: contact.name ?? '', email: getPrimaryEmail(contact.email) ?? '', phone: contact.phone ?? '' };
+	// Never put conversation text in the quote: reject name/address that look like chat messages
+	const conversationLike = (s: string | null | undefined) => {
+		if (!s || typeof s !== 'string') return true;
+		const lower = s.toLowerCase();
+		return (
+			/\b(sqm|m2|quote|please|can you|could you|try again|give me|done for you|diy|ok |yes |no )\b/i.test(lower) ||
+			/\d+\s*(sqm|m²)/i.test(lower) ||
+			lower.length > 120
+		);
+	};
+	const safeName = conversationLike(contact.name) ? '' : (contact.name ?? '').trim();
+	const safeAddress = conversationLike(contact.address) ? '' : (contact.address ?? '').trim();
+	const customer = {
+		name: safeName || 'Customer',
+		email: getPrimaryEmail(contact.email) ?? '',
+		phone: contact.phone ?? ''
+	};
 	const roofFromExtracted = extracted?.roofSize;
 	const roofFromContact = contact.roof_size_sqm != null ? Number(contact.roof_size_sqm) : null;
 	const project = {
 		roofSize: extractAreaDigits(roofFromExtracted ?? roofFromContact ?? 0),
-		fullAddress: contact.address ?? ''
+		fullAddress: safeAddress
 	};
 	const roofSize = project.roofSize;
 	const computed = computeQuoteFromSettings(settings, roofSize);
