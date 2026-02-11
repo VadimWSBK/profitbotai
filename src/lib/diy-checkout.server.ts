@@ -17,6 +17,7 @@ import {
 } from '$lib/shopify.server';
 import {
 	calculateRoofKitBreakdown,
+	findOptimalBuckets,
 	productListToRoofKitVariants,
 	type RoofKitLineItem,
 	type RoofKitRoleHandles
@@ -54,29 +55,20 @@ export type DiyCheckoutResult = {
 	styleOverrides?: { checkoutButtonColor?: string; qtyBadgeBackgroundColor?: string };
 };
 
+/** Cost-optimized bucket selection (LRIDY-style DP). Returns counts by size and litres needed. */
 function calculateBucketsFromRoofSize(
 	roofSqm: number,
-	products: Array<{ sizeLitres: number; coverageSqm: number }>
+	products: Array<{ sizeLitres: number; coverageSqm: number; price: number }>
 ): { countsBySize: Record<number, number>; litres: number } {
-	// coverageSqm is now sqm/L rate. Use the first product's rate (they should all be the same) or default to 2.
 	const sqmPerLitre = products[0]?.coverageSqm || 2;
-	const litres = Math.ceil(roofSqm / sqmPerLitre);
-	const sorted = [...products].sort((a, b) => b.sizeLitres - a.sizeLitres);
+	const litresNeeded = Math.ceil((roofSqm / sqmPerLitre) * 100) / 100;
+	const variants = products.map((p) => ({ size: p.sizeLitres, price: p.price }));
+	const buckets = findOptimalBuckets(litresNeeded, variants);
 	const countsBySize: Record<number, number> = {};
-	let remaining = litres;
-	for (const p of sorted) {
-		const size = p.sizeLitres;
-		countsBySize[size] = 0;
-		while (remaining >= size) {
-			countsBySize[size]++;
-			remaining -= size;
-		}
+	for (const b of buckets) {
+		countsBySize[b.size] = (countsBySize[b.size] ?? 0) + b.quantity;
 	}
-	if (remaining > 0 && sorted.length > 0) {
-		const smallest = sorted.at(-1)!.sizeLitres;
-		countsBySize[smallest] = (countsBySize[smallest] ?? 0) + 1;
-	}
-	return { countsBySize, litres };
+	return { countsBySize, litres: litresNeeded };
 }
 
 const normHandle = (h: string | null | undefined) => h?.trim().toLowerCase() ?? '';
@@ -263,7 +255,11 @@ export async function createDiyCheckoutForOwner(
 			if (firstPerSize.length > 0) {
 				const { countsBySize, litres: fallbackLitres } = calculateBucketsFromRoofSize(
 					Number(roof_size_sqm),
-					firstPerSize.map((r) => ({ sizeLitres: r.sizeLitres, coverageSqm: r.coverageSqm || 2 }))
+					firstPerSize.map((r) => ({
+						sizeLitres: r.sizeLitres,
+						coverageSqm: r.coverageSqm || 2,
+						price: r.price
+					}))
 				);
 				litres = fallbackLitres;
 				notePrefix = `DIY ${roof_size_sqm}m²`;
@@ -550,6 +546,139 @@ export async function createDiyCheckoutForOwner(
 			lineItemsUI,
 			summary,
 			...(Object.keys(styleOverrides).length > 0 && { styleOverrides })
+		}
+	};
+}
+
+/** Bucket breakdown for display only. No Shopify call. AI uses this for "how much" questions instead of calculating. */
+export type BucketBreakdownResult = {
+	lineItemsUI: Array<{ title: string; quantity: number; unitPrice: string; lineTotal: string }>;
+	summary: { totalItems: number; subtotal: string; total: string; currency: string };
+	litres: number;
+	roofSizeSqm: number;
+};
+
+export async function calculateBucketBreakdownForOwner(
+	admin: SupabaseClient,
+	ownerId: string,
+	input: { roof_size_sqm: number; discount_percent?: number }
+): Promise<{ ok: true; data: BucketBreakdownResult } | { ok: false; error: string }> {
+	const { roof_size_sqm, discount_percent } = input;
+	if (roof_size_sqm == null || roof_size_sqm < 1) {
+		return { ok: false, error: 'roof_size_sqm is required and must be at least 1.' };
+	}
+
+	const products = await getProductPricingForOwner(ownerId);
+	if (!products.length) {
+		return { ok: false, error: 'No product pricing configured. Add products in Settings → Product Pricing.' };
+	}
+
+	const kitConfig = await getDefaultKitBuilderConfig(admin, ownerId);
+	const flat = flattenProductVariants(products);
+	const displayNameByHandle = new Map<string, string>();
+	if (kitConfig?.product_entries?.length) {
+		for (const e of kitConfig.product_entries) {
+			const h = e.product_handle?.trim();
+			const d = e.display_name?.trim();
+			if (h && d && !displayNameByHandle.has(normHandle(h))) displayNameByHandle.set(normHandle(h), d);
+		}
+	}
+	const roofKitOptions = products.flatMap((p) => {
+		const seen = new Set<number>();
+		return p.variants
+			.filter((v) => !seen.has(v.sizeLitres) && (seen.add(v.sizeLitres), true))
+			.map((v) => ({ productHandle: p.productHandle, sizeLitres: v.sizeLitres, price: v.price }));
+	});
+	const imageBySize: Record<number, string> = {};
+
+	let lineItems: Array<{ title: string; quantity: number; price: string }> = [];
+	let litres = 0;
+
+	const roleHandles = kitConfig?.role_handles;
+	const hasRoleConfig =
+		roleHandles && Object.values(roleHandles).some((arr) => Array.isArray(arr) && arr.length > 0);
+
+	if (hasRoleConfig && roleHandles) {
+		const variants = productListToRoofKitVariants(roofKitOptions, roleHandles);
+		const breakdown = calculateRoofKitBreakdown(
+			Number(roof_size_sqm),
+			variants,
+			kitConfig?.coverage_overrides ?? {}
+		);
+		litres = breakdown.sealantLitres;
+		const resolved = resolveRoofKitToLineItems(
+			breakdown.lineItems,
+			products,
+			roleHandles,
+			imageBySize,
+			kitConfig.product_entries
+		);
+		lineItems = resolved.map((r) => ({ title: r.title, quantity: r.quantity, price: r.price }));
+	}
+
+	if (lineItems.length === 0) {
+		const bucketSizes = flat.filter((r) => r.sizeLitres >= 1);
+		const seenSize = new Set<number>();
+		const firstPerSize = bucketSizes.filter((r) => {
+			if (seenSize.has(r.sizeLitres)) return false;
+			seenSize.add(r.sizeLitres);
+			return true;
+		});
+		if (firstPerSize.length > 0) {
+			const { countsBySize, litres: fallbackLitres } = calculateBucketsFromRoofSize(
+				Number(roof_size_sqm),
+				firstPerSize.map((r) => ({
+					sizeLitres: r.sizeLitres,
+					coverageSqm: r.coverageSqm || 2,
+					price: r.price
+				}))
+			);
+			litres = fallbackLitres;
+			for (const row of firstPerSize) {
+				const qty = countsBySize[row.sizeLitres] ?? 0;
+				if (qty > 0) {
+					let customName = row.productHandle ? displayNameByHandle.get(normHandle(row.productHandle)) : undefined;
+					if (customName) customName = customName.replace(/\s*\d+\s*L\s*$/i, '').trim() || customName;
+					const sizeSuffix = row.sizeLitres > 0 ? ` ${row.sizeLitres}L` : '';
+					lineItems.push({
+						title: customName ? customName + sizeSuffix : row.name,
+						quantity: qty,
+						price: row.price.toFixed(2)
+					});
+				}
+			}
+		}
+	}
+
+	if (lineItems.length === 0) return { ok: false, error: 'No items calculated. Check product pricing and DIY kit config.' };
+
+	const currency = products[0]?.variants?.[0]?.currency ?? flat[0]?.currency ?? 'AUD';
+	const subtotal = lineItems.reduce((sum, li) => sum + Number.parseFloat(li.price) * li.quantity, 0);
+	let discountAmount = 0;
+	if (discount_percent != null && discount_percent >= 1 && discount_percent <= 20) {
+		discountAmount = Math.round((subtotal * discount_percent) / 100 * 100) / 100;
+	}
+	const total = Math.round((subtotal - discountAmount) * 100) / 100;
+	const fmt = (n: number) => n.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+	const lineItemsUI = lineItems.map((li) => {
+		const unitPrice = Number(li.price);
+		const lineTotal = unitPrice * li.quantity;
+		return { title: li.title, quantity: li.quantity, unitPrice: fmt(unitPrice), lineTotal: fmt(lineTotal) };
+	});
+
+	return {
+		ok: true,
+		data: {
+			lineItemsUI,
+			summary: {
+				totalItems: lineItems.reduce((s, li) => s + li.quantity, 0),
+				subtotal: fmt(subtotal),
+				total: fmt(total),
+				currency
+			},
+			litres,
+			roofSizeSqm: roof_size_sqm
 		}
 	};
 }

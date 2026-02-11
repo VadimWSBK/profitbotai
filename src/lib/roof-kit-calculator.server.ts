@@ -65,7 +65,8 @@ export type RoofKitBreakdown = {
 /** Variants per role (size + price). Built from products + role_handles. */
 export type RoofKitVariantsByRole = Record<RoofKitRole, Array<{ size: number; price: number }>>;
 
-function findOptimalBuckets(
+/** Cost-optimized bucket selection (DP). Same logic as LRIDY caravan-calculator findOptimalCombo. */
+export function findOptimalBuckets(
 	litresNeeded: number,
 	variants: Array<{ size: number; price: number }>
 ): Array<{ size: number; quantity: number }> {

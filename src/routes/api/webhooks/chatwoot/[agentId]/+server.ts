@@ -440,35 +440,62 @@ export const POST: RequestHandler = async (event) => {
 		/\b(diy|do it myself|supply only|product only|quote|cost|price|how much|coat my roof)\b/i.test(contentLower) ||
 		/\d+\s*(sqm|m2|m²)/i.test(content);
 
-	// System prompt: role, tone, instructions (same as widget), RAG rules, product pricing, DIY instruction, current contact
+	// System prompt: ordered for Gemini implicit context caching (static first, dynamic last).
+	// Implicit caching: Gemini 2.5 Flash caches ≥1024 tokens; static prefix = cache hits across requests.
 	const role = (agentRow.bot_role as string) ?? '';
 	const tone = (agentRow.bot_tone as string) ?? '';
 	const instructions = (agentRow.bot_instructions as string) ?? '';
-	const parts: string[] = [];
-	if (role.trim()) parts.push(role.trim());
-	if (tone.trim()) parts.push(`Tone: ${tone.trim()}`);
-	if (instructions.trim()) parts.push(instructions.trim());
+	const staticParts: string[] = [];
+	const dynamicParts: string[] = [];
 
+	// ---- STATIC (cached across requests) ----
+	if (role.trim()) staticParts.push(role.trim());
+	if (tone.trim()) staticParts.push(`Tone: ${tone.trim()}`);
+	if (instructions.trim()) staticParts.push(instructions.trim());
+	staticParts.push(
+		"When the user only says hi, hello, or a simple greeting, respond briefly and naturally like a human would (e.g. \"Hi there! How can I help?\" or \"Hello! What can I do for you?\"). Do NOT launch into a full company intro, product pitch, or list options (DIY vs professional installation) until they have shown interest or asked about quotes, pricing, or help."
+	);
+	staticParts.push(
+		"Respond directly to the user's latest message. If they have already stated what they want (e.g. a DIY quote, a done-for-you quote, or specific info), proceed with that—do not reintroduce yourself or re-ask the same options."
+	);
+	staticParts.push(
+		'In this channel, name, email, phone, and address are saved automatically in the background. Do NOT say things like "I\'ve updated your name", "I\'ve saved your email", or "Thank you, I have your details"—just proceed to the next step. Only mention that details were saved if the user explicitly asks. Do NOT say you are unable to update or save contact details; they are saved automatically. After generating a Done For You quote: the system automatically sends the PDF to the customer\'s email. Say that you have sent it to their email (e.g. "I\'ve sent it to your email."). Do NOT ask "Would you like me to send it to your email?"—it is sent automatically. Do NOT include the quote download URL in your reply—the system will add a single download link below your message.'
+	);
+	staticParts.push(
+		'When asking for or receiving name, email, roof size, or other details: always be positive and thank the user when they share information (e.g. "Thanks, got it!" or "Perfect, thank you."). Do NOT apologize—never say "I\'m sorry", "I apologise", "sorry about that", or "I\'m sorry for the inconvenience" when collecting details. There is nothing to apologise for; just thank them and move on.'
+	);
+	staticParts.push(
+		'CRITICAL: Never ask for or reconfirm information that is already listed below in "Current contact info we have". Never say "I need your name" or "please provide your email" when it is already there. Never say "our system needs to reconfirm", "please provide again", or "could you provide your full name once more". If we have name, email, and roof size, call generate_quote immediately—do not ask the user to confirm or repeat anything. Only ask for the one next missing piece (e.g. if we have name and roof size but no email, ask only for email). Act like a human: use what you have and move on.'
+	);
+	staticParts.push(
+		'If generate_quote returns an error (e.g. contact name/email/roof size required), ask for that one missing piece in a friendly way (e.g. "I just need your email address to send you the quote."). Do NOT say "technical issue", "I\'m unable to generate", or "experiencing a problem"—there is no technical issue, just ask for the missing detail.'
+	);
+	staticParts.push('Always complete your reply with a full sentence. Never end mid-sentence or mid-word.');
+	staticParts.push(
+		'When the user asks to receive something by email (e.g. the DIY quote, the checkout link, the PDF quote, or any info), use the send_email tool. Use their email from "Current contact info we have" if you have it, or ask once for their email. In the email body include the relevant link or content (e.g. DIY checkout link, quote download link) and a short friendly message. Then confirm in chat that you have sent it.'
+	);
+
+	// ---- DYNAMIC (per request: RAG, pricing, DIY situational, contact) ----
 	try {
 		const relevantRules = await getRelevantRulesForAgent(agentId, content, 5);
 		if (relevantRules.length > 0) {
-			parts.push(`Rules (follow these):\n${relevantRules.map((r) => r.content).join('\n\n')}`);
+			dynamicParts.push(`Rules (follow these):\n${relevantRules.map((r) => r.content).join('\n\n')}`);
 		}
 	} catch (e) {
 		console.error('[webhooks/chatwoot] getRelevantRulesForAgent:', e);
 	}
 
-	// Product pricing (same as widget) so the bot can answer product/price questions
-	try {
-		const products = await getProductPricingForOwner(ownerId);
-		if (products.length > 0) {
-			parts.push(`Current product pricing: ${formatProductPricingForAgent(products)}`);
+	if (!wantsDiyOrQuote) {
+		try {
+			const products = await getProductPricingForOwner(ownerId);
+			if (products.length > 0) {
+				dynamicParts.push(`Current product pricing: ${formatProductPricingForAgent(products)}`);
+			}
+		} catch (e) {
+			console.error('[webhooks/chatwoot] getProductPricingForOwner:', e);
 		}
-	} catch (e) {
-		console.error('[webhooks/chatwoot] getProductPricingForOwner:', e);
 	}
 
-	// DIY checkout: when user asks for DIY quote, tell the model to call the tool and to describe only what's in the kit
 	const DIY_ROLE_LABELS: Record<string, string> = {
 		sealant: 'Sealant',
 		thermal: 'Thermal coating',
@@ -482,7 +509,6 @@ export const POST: RequestHandler = async (event) => {
 		try {
 			const roofKit = await getDiyKitBuilderConfig(admin, ownerId, 'roof-kit');
 			if (roofKit?.product_entries?.length) {
-				// Use "Name in checkout" (display_name) when set, so the bot uses the same names as checkout/breakdown
 				const names = [...new Set(roofKit.product_entries.map((e) => (e.display_name?.trim() || (DIY_ROLE_LABELS[e.role] ?? e.role))).filter(Boolean))];
 				kitProductsLine = ` This account's DIY kit contains only: ${names.join(', ')}. When describing what the quote includes, use these product names and ONLY the products in the tool result line items—do not add sealant, sealer, bonus kit, or other components unless they are in the breakdown.`;
 			}
@@ -491,35 +517,16 @@ export const POST: RequestHandler = async (event) => {
 		}
 		if (extractedRoofSize != null && extractedRoofSize >= 1) {
 			const roofSqm = Math.round(extractedRoofSize * 10) / 10;
-			parts.push(
-				`The customer is asking for a DIY quote and we have their roof size (${roofSqm} m²). You MUST call the shopify_create_diy_checkout_link tool with roof_size_sqm: ${roofSqm}. After calling it, reply in a friendly, warm tone: thank them for their interest in NetZero UltraTherm (or the product name from the kit), then give the DIY quote with the exact bucket breakdown from the tool result (e.g. "For your ${roofSqm} m² area, you need X x 15L and Y x 10L NetZero UltraTherm."). End by inviting them to checkout: e.g. "If you wish to proceed with checkout, simply click the link below." Do NOT paste the full Items/Subtotal/TOTAL block. Do NOT use generate_quote or create a PDF for DIY.${kitProductsLine || ' When describing what the quote includes, mention ONLY the products that appear in the tool result line items—do not add sealant, sealer, bonus kit, or other components unless they are in the breakdown.'}`
+			dynamicParts.push(
+				`DIY quote: we have roof size ${roofSqm} m². NEVER calculate buckets yourself—always call a tool. For "how much" or "what do I need" questions: call calculate_bucket_breakdown with roof_size_sqm: ${roofSqm} and use the result to reply. For checkout link: call shopify_create_diy_checkout_link with roof_size_sqm: ${roofSqm}. When replying, use the exact bucket breakdown from the tool (e.g. "For your ${roofSqm} m² area, you need X x 15L and Y x 10L."). Offer checkout: "If you wish to proceed, I can send you a checkout link." Do NOT paste Items/Subtotal/TOTAL block. Do NOT use generate_quote for DIY.${kitProductsLine || ''}`
 			);
 		} else {
-			parts.push(
-				`When the customer asks for a DIY quote or to buy product themselves: if they provide a roof size (e.g. "400 sqm"), call shopify_create_diy_checkout_link with that roof_size_sqm. If they have not given roof size yet, ask for it once, then call the tool with the value they provide. Reply in a friendly tone: thank them for their interest (e.g. in NetZero UltraTherm coating), then give the quote with the bucket breakdown from the tool result, and invite them to click the link below to proceed to checkout. Do NOT use generate_quote for DIY requests.${kitProductsLine || ' When describing the quote, mention ONLY the products in the tool result—do not add sealant, sealer, bonus kit, or other components unless they appear in the breakdown.'}`
+			dynamicParts.push(
+				`DIY quote: NEVER calculate buckets yourself—always call a tool. For "how much" or pricing: call calculate_bucket_breakdown with roof_size_sqm (ask for roof size once if missing). For checkout link: call shopify_create_diy_checkout_link. Use the exact bucket breakdown from the tool result. Do NOT use generate_quote for DIY.${kitProductsLine || ''}`
 			);
 		}
 	}
 
-	parts.push(
-		"When the user only says hi, hello, or a simple greeting, respond briefly and naturally like a human would (e.g. \"Hi there! How can I help?\" or \"Hello! What can I do for you?\"). Do NOT launch into a full company intro, product pitch, or list options (DIY vs professional installation) until they have shown interest or asked about quotes, pricing, or help."
-	);
-	parts.push(
-		"Respond directly to the user's latest message. If they have already stated what they want (e.g. a DIY quote, a done-for-you quote, or specific info), proceed with that—do not reintroduce yourself or re-ask the same options."
-	);
-	// Contact details are saved automatically; do not announce it. Do not say you cannot save.
-	parts.push(
-		'In this channel, name, email, phone, and address are saved automatically in the background. Do NOT say things like "I\'ve updated your name", "I\'ve saved your email", or "Thank you, I have your details"—just proceed to the next step. Only mention that details were saved if the user explicitly asks. Do NOT say you are unable to update or save contact details; they are saved automatically. After generating a Done For You quote: the system automatically sends the PDF to the customer\'s email. Say that you have sent it to their email (e.g. "I\'ve sent it to your email."). Do NOT ask "Would you like me to send it to your email?"—it is sent automatically. Do NOT include the quote download URL in your reply—the system will add a single download link below your message.'
-	);
-	// When collecting info: be positive and thank the user; never apologize.
-	parts.push(
-		'When asking for or receiving name, email, roof size, or other details: always be positive and thank the user when they share information (e.g. "Thanks, got it!" or "Perfect, thank you."). Do NOT apologize—never say "I\'m sorry", "I apologise", "sorry about that", or "I\'m sorry for the inconvenience" when collecting details. There is nothing to apologise for; just thank them and move on.'
-	);
-	// Never ask for or reconfirm info we already have. Be human: one missing piece at a time, then generate.
-	parts.push(
-		'CRITICAL: Never ask for or reconfirm information that is already listed below in "Current contact info we have". Never say "I need your name" or "please provide your email" when it is already there. Never say "our system needs to reconfirm", "please provide again", or "could you provide your full name once more". If we have name, email, and roof size, call generate_quote immediately—do not ask the user to confirm or repeat anything. Only ask for the one next missing piece (e.g. if we have name and roof size but no email, ask only for email). Act like a human: use what you have and move on.'
-	);
-	// So the LLM knows what we already have and can respond accordingly
 	if (internalContact && (internalContact.name ?? internalContact.email ?? internalContact.phone ?? internalContact.address ?? internalContact.roof_size_sqm != null)) {
 		const lines: string[] = ['Current contact info we have:'];
 		if (internalContact.name) lines.push(`Name: ${internalContact.name}`);
@@ -527,33 +534,27 @@ export const POST: RequestHandler = async (event) => {
 		if (internalContact.phone) lines.push(`Phone: ${internalContact.phone}`);
 		if (internalContact.address) lines.push(`Address: ${internalContact.address}`);
 		if (internalContact.roof_size_sqm != null) lines.push(`Roof size: ${internalContact.roof_size_sqm} m²`);
-		parts.push(lines.join(' '));
-		// When we have name and email, never ask for them again (even if roof size is missing)
+		dynamicParts.push(lines.join(' '));
 		if (internalContact.name && internalContact.email) {
-			parts.push(
+			dynamicParts.push(
 				'We already have the contact\'s name and email saved. Do NOT ask for name or email again. Do NOT say "I need your name" or "please provide your email" or "confirm your name". If roof size is still needed for the quote, ask only for roof size once, then call generate_quote.'
 			);
-			// When we also have roof size: for Done For You, call generate_quote; for DIY, call shopify_create_diy_checkout_link (added above when wantsDiyOrQuote)
 			if (internalContact.roof_size_sqm != null && !wantsDiyOrQuote) {
-				parts.push(
+				dynamicParts.push(
 					'MANDATORY: Call generate_quote now. Do not ask the user to confirm or provide anything. The details above are already in the system.'
 				);
 			}
 		}
 	}
-	// When generate_quote fails (e.g. missing email), ask for the missing piece—never say "technical issue" or "I'm unable to generate"
-	parts.push(
-		'If generate_quote returns an error (e.g. contact name/email/roof size required), ask for that one missing piece in a friendly way (e.g. "I just need your email address to send you the quote."). Do NOT say "technical issue", "I\'m unable to generate", or "experiencing a problem"—there is no technical issue, just ask for the missing detail.'
-	);
-	parts.push('Always complete your reply with a full sentence. Never end mid-sentence or mid-word.');
-	parts.push(
-		'When the user asks to receive something by email (e.g. the DIY quote, the checkout link, the PDF quote, or any info), use the send_email tool. Use their email from "Current contact info we have" if you have it, or ask once for their email. In the email body include the relevant link or content (e.g. DIY checkout link, quote download link) and a short friendly message. Then confirm in chat that you have sent it.'
-	);
-	const systemPrompt = parts.length > 0 ? parts.join('\n\n') : 'You are a helpful assistant.';
 
-	// Tools: use agent's allowed_tools; ensure send_email and DIY checkout are available for Chatwoot
+	const systemPrompt = [...staticParts, ...dynamicParts].length > 0 ? [...staticParts, ...dynamicParts].join('\n\n') : 'You are a helpful assistant.';
+
+	// Tools: use agent's allowed_tools; ensure send_email, bucket calculator, and DIY checkout are available for Chatwoot
 	let agentAllowedTools: string[] = Array.isArray(agentRow.allowed_tools) ? (agentRow.allowed_tools as string[]) : [];
 	if (!agentAllowedTools.includes('send_email')) agentAllowedTools = [...agentAllowedTools, 'send_email'];
+	if (wantsDiyOrQuote && !agentAllowedTools.includes('calculate_bucket_breakdown')) {
+		agentAllowedTools = [...agentAllowedTools, 'calculate_bucket_breakdown'];
+	}
 	try {
 		const shopifyConnected = Boolean(await getShopifyConfigForUser(admin, ownerId));
 		if (shopifyConnected && !agentAllowedTools.includes('shopify_create_diy_checkout_link')) {

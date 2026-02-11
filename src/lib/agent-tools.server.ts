@@ -11,7 +11,7 @@ import { getPrimaryEmail, mergeEmailIntoList, emailsToJsonb } from '$lib/contact
 import { generateQuoteForConversation, type GenerateQuoteForConversationResult } from '$lib/quote-pdf.server';
 import { sendQuoteEmail, sendContactEmail } from '$lib/send-quote-email.server';
 import { AGENT_TOOL_IDS, type AgentToolId } from '$lib/agent-tools';
-import { createDiyCheckoutForOwner } from '$lib/diy-checkout.server';
+import { createDiyCheckoutForOwner, calculateBucketBreakdownForOwner } from '$lib/diy-checkout.server';
 import {
 	cancelOrder,
 	createDraftOrder,
@@ -478,6 +478,54 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 			if (upsertErr) return { error: upsertErr.message };
 			return { success: true, message: 'Contact moved to stage.' };
 		},
+	});
+
+	tools.calculate_bucket_breakdown = tool({
+		description:
+			'Calculate DIY bucket breakdown for a roof size. Call this when the customer asks "how much" or "what do I need" for their roof—do NOT calculate in chat. Returns litres needed, bucket counts, and total price. Use roof_size_sqm. For checkout link, call shopify_create_diy_checkout_link afterwards.',
+		inputSchema: z.object({
+			roof_size_sqm: z
+				.number()
+				.min(1)
+				.describe('Roof size in square metres. Required.'),
+			discount_percent: z
+				.number()
+				.int()
+				.min(1)
+				.max(20)
+				.optional()
+				.describe('Optional discount: 10, 15, or 20.')
+		}),
+		execute: async (
+			{ roof_size_sqm, discount_percent },
+			{ experimental_context }: { experimental_context?: unknown }
+		) => {
+			const c = getContext(experimental_context);
+			if (!c) return { error: 'Missing context' };
+
+			const result = await calculateBucketBreakdownForOwner(admin, c.ownerId, {
+				roof_size_sqm,
+				discount_percent
+			});
+
+			if (!result.ok) return { error: result.error ?? 'Failed to calculate breakdown' };
+
+			const { lineItemsUI, summary, litres, roofSizeSqm } = result.data;
+			const breakdown = lineItemsUI.map((li) => `${li.quantity}× ${li.title} @ ${li.unitPrice} = ${li.lineTotal}`).join(', ');
+			return {
+				success: true,
+				roofSizeSqm,
+				litres,
+				lineItemsUI,
+				breakdown,
+				summary: {
+					totalItems: summary.totalItems,
+					subtotal: summary.subtotal,
+					total: summary.total,
+					currency: summary.currency
+				}
+			};
+		}
 	});
 
 	tools.shopify_check_orders = tool({
