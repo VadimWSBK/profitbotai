@@ -500,6 +500,10 @@ export const POST: RequestHandler = async (event) => {
 			);
 		}
 	}
+	// When generate_quote fails (e.g. missing email), ask for the missing piece—never say "technical issue" or "I'm unable to generate"
+	parts.push(
+		'If generate_quote returns an error (e.g. contact name/email/roof size required), ask for that one missing piece in a friendly way (e.g. "I just need your email address to send you the quote."). Do NOT say "technical issue", "I\'m unable to generate", or "experiencing a problem"—there is no technical issue, just ask for the missing detail.'
+	);
 	const systemPrompt = parts.length > 0 ? parts.join('\n\n') : 'You are a helpful assistant.';
 
 	// Tools: use agent's allowed_tools and ensure DIY is available when Shopify is connected
