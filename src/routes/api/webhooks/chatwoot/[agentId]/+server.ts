@@ -499,7 +499,11 @@ export const POST: RequestHandler = async (event) => {
 	);
 	// Contact details are saved automatically; do not announce it. Do not say you cannot save.
 	parts.push(
-		'In this channel, name, email, phone, and address are saved automatically in the background. Do NOT say things like "I\'ve updated your name", "I\'ve saved your email", or "Thank you, I have your details"—just proceed to the next step. Only mention that details were saved if the user explicitly asks. Do NOT say you are unable to update or save contact details; they are saved automatically. After generating a Done For You quote, the system will post the download link and send it by email.'
+		'In this channel, name, email, phone, and address are saved automatically in the background. Do NOT say things like "I\'ve updated your name", "I\'ve saved your email", or "Thank you, I have your details"—just proceed to the next step. Only mention that details were saved if the user explicitly asks. Do NOT say you are unable to update or save contact details; they are saved automatically. After generating a Done For You quote: the system automatically sends the PDF to the customer\'s email. Say that you have sent it to their email (e.g. "I\'ve sent it to your email."). Do NOT ask "Would you like me to send it to your email?"—it is sent automatically. Do NOT include the quote download URL in your reply—the system will add a single download link below your message.'
+	);
+	// When collecting info: be positive and thank the user; never apologize.
+	parts.push(
+		'When asking for or receiving name, email, roof size, or other details: always be positive and thank the user when they share information (e.g. "Thanks, got it!" or "Perfect, thank you."). Do NOT apologize—never say "I\'m sorry", "I apologise", "sorry about that", or "I\'m sorry for the inconvenience" when collecting details. There is nothing to apologise for; just thank them and move on.'
 	);
 	// Never ask for or reconfirm info we already have. Be human: one missing piece at a time, then generate.
 	parts.push(
@@ -642,12 +646,8 @@ export const POST: RequestHandler = async (event) => {
 
 	// Build what we'll store in our DB (full context including quote for next turn)
 	let storedReply = reply;
-	// Ensure user sees the quote download link in chat when we generated a Done For You quote
+	// Post only the text reply (no quote URL here—we send it as a separate article message like DIY)
 	let contentToPost = reply;
-	if (quoteDownloadUrl) {
-		contentToPost = reply.trimEnd() + '\n\n**Download your quote:** ' + quoteDownloadUrl;
-		storedReply = contentToPost;
-	}
 
 	const postUrl = `${baseUrl}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`;
 	const postHeaders = {
@@ -656,7 +656,7 @@ export const POST: RequestHandler = async (event) => {
 		api_access_token: botToken
 	};
 
-	// 1) Send the conversational reply (text), including quote link if we have one
+	// 1) Send the conversational reply (text only)
 	const postRes = await fetch(postUrl, {
 		method: 'POST',
 		headers: postHeaders,
@@ -668,10 +668,37 @@ export const POST: RequestHandler = async (event) => {
 		return json({ error: 'Failed to send reply to Chatwoot' }, { status: 502 });
 	}
 
-	// 2) If we have a DIY quote, send a structured article message (checkout link only; items already in the text reply above)
+	// 2) If we generated a Done For You quote, send a single article message with "Download your quote" link (like DIY checkout)
+	if (quoteDownloadUrl) {
+		const quoteArticleRes = await fetch(postUrl, {
+			method: 'POST',
+			headers: postHeaders,
+			body: JSON.stringify({
+				content: 'Your quote',
+				message_type: 'outgoing',
+				content_type: 'article',
+				content_attributes: {
+					items: [
+						{
+							title: 'Download your quote',
+							description: 'Click to download your PDF quote.',
+							link: quoteDownloadUrl
+						}
+					]
+				}
+			})
+		});
+		if (!quoteArticleRes.ok) {
+			const errText = await quoteArticleRes.text();
+			console.error('[webhooks/chatwoot] Chatwoot quote article error:', quoteArticleRes.status, errText);
+		}
+		storedReply = reply.trimEnd() + '\n\n[Download your quote](' + quoteDownloadUrl + ')';
+	}
+
+	// 3) If we have a DIY quote, send a structured article message (checkout link only; items already in the text reply above)
 	if (diyCheckoutUrl) {
 		const articleDescription = 'Click the link below to proceed to checkout.';
-		const articleRes = await fetch(postUrl, {
+		const diyArticleRes = await fetch(postUrl, {
 			method: 'POST',
 			headers: postHeaders,
 			body: JSON.stringify({
@@ -689,15 +716,15 @@ export const POST: RequestHandler = async (event) => {
 				}
 			})
 		});
-		if (!articleRes.ok) {
-			const errText = await articleRes.text();
-			console.error('[webhooks/chatwoot] Chatwoot article message error:', articleRes.status, errText);
+		if (!diyArticleRes.ok) {
+			const errText = await diyArticleRes.text();
+			console.error('[webhooks/chatwoot] Chatwoot article message error:', diyArticleRes.status, errText);
 		}
 		// Keep stored context so next turn knows we sent the quote and link
 		storedReply = reply.trimEnd() + (diyLineItemsSummary ? '\n\n**Items:** ' + diyLineItemsSummary : '') + '\n\n**Proceed to checkout:** ' + diyCheckoutUrl;
 	}
 
-	// 3) If we generated a Done For You quote, send the quote link by email when we have the contact's email
+	// 4) If we generated a Done For You quote, send the quote link by email when we have the contact's email (automatic; bot already said "I've sent it to your email")
 	if (quoteDownloadUrl && internalContact?.email?.trim()) {
 		try {
 			const emailResult = await sendQuoteEmail(admin, ownerId, {
@@ -705,7 +732,7 @@ export const POST: RequestHandler = async (event) => {
 				quoteDownloadUrl,
 				customerName: internalContact.name ?? null,
 				customSubject: 'Your Done For You quote',
-				customBody: 'Your quote is ready. Download it using the link below.\n\nThe link will expire in 1 hour.'
+				customBody: 'Your quote is ready. Download it using the link below.'
 			});
 			if (!emailResult.sent && env.CHATWOOT_DEBUG !== '1' && env.CHATWOOT_DEBUG !== 'true') {
 				// Only log if not in debug to avoid noise (e.g. no Resend configured)

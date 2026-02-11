@@ -121,7 +121,7 @@ export async function sendQuoteEmail(
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
 <body style="font-family: system-ui, -apple-system, sans-serif; line-height: 1.5; color: #1f2937; max-width: 560px; margin: 0 auto; padding: 24px;">
   ${bodyWrapper}
-  ${!hasLink ? `<p><a href="${escapeHtml(quoteDownloadUrl)}" style="color: #b45309; font-weight: 600;">Download your quote</a></p><p style="color: #6b7280; font-size: 14px;">This link will expire in 1 hour.</p>` : ''}
+  ${!hasLink ? `<p><a href="${escapeHtml(quoteDownloadUrl)}" style="color: #b45309; font-weight: 600;">Download your quote</a></p>` : ''}
   <p style="color: #6b7280; font-size: 14px;">— ${escapeHtml(fromName)}</p>
   ${footerHtml}
 </body>

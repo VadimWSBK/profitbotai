@@ -16,8 +16,8 @@ export const GET: RequestHandler = async (event) => {
 	if (!path) {
 		return new Response('Missing path', { status: 400 });
 	}
-	// Prevent path traversal; allow only paths like "uuid/quote_*.pdf"
-	if (path.includes('..') || !/^[a-f0-9-]+\/quote_[^/]+\.pdf$/i.test(path)) {
+	// Prevent path traversal; allow "uuid/quote_*.pdf" (widget) or "chatwoot-accountId-convId/quote_*.pdf" (Chatwoot)
+	if (path.includes('..') || !/^(?:[a-f0-9-]+|chatwoot-\d+-\d+)\/quote_[^/]+\.pdf$/i.test(path)) {
 		return new Response('Invalid path', { status: 400 });
 	}
 
