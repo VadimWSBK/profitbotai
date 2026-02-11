@@ -207,19 +207,42 @@ export function flattenProductVariants(products: ProductPricing[]): ProductPrici
 	return out;
 }
 
-/** Format product pricing as text for agent rules / system prompt. Lists each variant with size and color. */
+/** Format product pricing as compact text for agent system prompt. Prevents token bloat from repeating color lists per variant. */
 export function formatProductPricingForAgent(products: ProductPricing[]): string {
 	if (!products.length) return 'No product pricing configured.';
-	const lines: string[] = [];
+	const parts: string[] = [];
 	for (const p of products) {
-		const colorList = p.colors?.length ? ` [Colors: ${p.colors.join(', ')}]` : '';
+		// Group variants by size to avoid repeating product name and color list per variant
+		const bySize = new Map<number, { white?: number; colours: number[]; currency: string; coverageSqm: number }>();
 		for (const v of p.variants) {
-			const totalCoverage = v.coverageSqm * v.sizeLitres;
-			const colorLabel = v.color ? ` ${v.color}` : '';
-			lines.push(
-				`${p.name} ${v.sizeLitres}L${colorLabel}: ${totalCoverage} m² (${v.coverageSqm} sqm/L) – $${v.price.toFixed(2)} ${v.currency}${colorList}`
-			);
+			if (!bySize.has(v.sizeLitres)) {
+				bySize.set(v.sizeLitres, { colours: [], currency: v.currency, coverageSqm: v.coverageSqm });
+			}
+			const entry = bySize.get(v.sizeLitres)!;
+			if (!v.color || v.color.toLowerCase() === 'white') {
+				entry.white = v.price;
+			} else {
+				entry.colours.push(v.price);
+			}
 		}
+		const sizeLines: string[] = [];
+		for (const [sizeLitres, { white, colours, currency, coverageSqm }] of Array.from(bySize.entries()).sort(
+			(a, b) => b[0] - a[0]
+		)) {
+			const totalCoverage = coverageSqm * sizeLitres;
+			const priceParts: string[] = [];
+			if (white != null) priceParts.push(`White $${white.toFixed(2)}`);
+			const uniqueColourPrices = [...new Set(colours)];
+			if (uniqueColourPrices.length) priceParts.push(`colours $${uniqueColourPrices[0].toFixed(2)}`);
+			if (priceParts.length === 0 && p.variants.some((v) => v.sizeLitres === sizeLitres)) {
+				const v = p.variants.find((x) => x.sizeLitres === sizeLitres)!;
+				priceParts.push(`$${v.price.toFixed(2)}`);
+			}
+			sizeLines.push(`${sizeLitres}L: ${totalCoverage} m² (${coverageSqm} sqm/L) – ${priceParts.join(', ')} ${currency}`);
+		}
+		let out = `${p.name}. ${sizeLines.join('. ')}`;
+		if (p.colors?.length) out += ` Colours: ${p.colors.join(', ')}.`;
+		parts.push(out);
 	}
-	return lines.join('. ');
+	return parts.join(' ');
 }

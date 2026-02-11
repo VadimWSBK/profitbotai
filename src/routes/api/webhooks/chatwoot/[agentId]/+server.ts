@@ -533,8 +533,8 @@ export const POST: RequestHandler = async (event) => {
 			parts.push(
 				'We already have the contact\'s name and email saved. Do NOT ask for name or email again. Do NOT say "I need your name" or "please provide your email" or "confirm your name". If roof size is still needed for the quote, ask only for roof size once, then call generate_quote.'
 			);
-			// When we also have roof size, require calling generate_quote immediately
-			if (internalContact.roof_size_sqm != null) {
+			// When we also have roof size: for Done For You, call generate_quote; for DIY, call shopify_create_diy_checkout_link (added above when wantsDiyOrQuote)
+			if (internalContact.roof_size_sqm != null && !wantsDiyOrQuote) {
 				parts.push(
 					'MANDATORY: Call generate_quote now. Do not ask the user to confirm or provide anything. The details above are already in the system.'
 				);
@@ -563,7 +563,15 @@ export const POST: RequestHandler = async (event) => {
 		// ignore
 	}
 
-	let modelMessages = history.map((t) => ({ role: t.role as 'user' | 'assistant', content: t.content }));
+	// Truncate long assistant messages (e.g. DIY quotes with full checkout URLs) to reduce tokens while keeping context
+	const MAX_ASSISTANT_CONTENT_CHARS = 600;
+	let modelMessages = history.map((t) => {
+		let content = t.content;
+		if (t.role === 'assistant' && content.length > MAX_ASSISTANT_CONTENT_CHARS) {
+			content = content.slice(0, MAX_ASSISTANT_CONTENT_CHARS) + ' [Full response with link/details was sent.]';
+		}
+		return { role: t.role as 'user' | 'assistant', content };
+	});
 	// generateText requires at least one message (AI SDK InvalidPromptError). If Chatwoot API returned
 	// empty/unexpected format or the current message wasn't included, ensure we send the incoming message.
 	if (modelMessages.length === 0) {
