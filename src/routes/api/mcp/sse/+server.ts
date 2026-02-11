@@ -353,10 +353,30 @@ async function handleMcpRequest(event: import('./$types').RequestEvent): Promise
 	if (widgetId) extraHeaders['X-Widget-Id'] = widgetId;
 	if (conversationId) extraHeaders['X-Conversation-Id'] = conversationId;
 
+	// Vercel serverless: reject GET immediately. SSE requires long-lived connections
+	// which timeout (300s). ElevenLabs supports Streamable HTTP (POST-only) - use that.
+	if (event.request.method === 'GET') {
+		return new Response(
+			JSON.stringify({
+				error: 'Use POST for MCP requests. This server uses Streamable HTTP (JSON) for serverless compatibility.',
+				jsonrpc: '2.0',
+			}),
+			{
+				status: 405,
+				headers: {
+					'Content-Type': 'application/json',
+					'Access-Control-Allow-Origin': '*',
+					Allow: 'POST, OPTIONS',
+				},
+			}
+		);
+	}
+
 	const baseUrl = getBaseUrl(event.request);
 	const server = createProfitBotMcpServer(baseUrl, apiKey, extraHeaders);
 	const transport = new WebStandardStreamableHTTPServerTransport({
 		sessionIdGenerator: undefined, // Stateless - works with serverless
+		enableJsonResponse: true, // JSON responses, no SSE - avoids long-lived connections on Vercel
 	});
 
 	await server.connect(transport);

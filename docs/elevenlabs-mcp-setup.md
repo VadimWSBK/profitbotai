@@ -38,7 +38,7 @@ When a customer calls and asks for pricing, the ElevenLabs agent uses ProfitBot 
 |-------|-------|
 | **Name** | ProfitBot Pricing |
 | **Description** | Quote generation, DIY pricing, and checkout links for callers |
-| **Server type** | SSE (or Streamable HTTP) |
+| **Server type** | **Streamable HTTP** (recommended — works on Vercel; avoid SSE which times out on serverless) |
 | **Server URL** | `https://app.profitbot.ai/api/mcp/sse` |
 | **Secret Token** | Your MCP API key (`pb_mcp_...`) |
 
@@ -166,6 +166,13 @@ When a customer wants to buy:
 
 - Refresh the ElevenLabs MCP integration.
 - Confirm the ProfitBot app is deployed and reachable at `https://app.profitbot.ai/api/mcp/sse`.
+
+### "Failed to connect to MCP server" or "Vercel Runtime Timeout"
+
+The endpoint uses **Streamable HTTP (POST-only)**, not SSE, because Vercel serverless times out long-lived connections.
+
+- In ElevenLabs MCP config, set **Server type** to **Streamable HTTP** if available (not SSE).
+- If only SSE is shown, the endpoint will reject GET and respond to POST. Some clients auto-detect; if connection still fails, contact ElevenLabs support about Streamable HTTP / POST-only MCP.
 
 ---
 
