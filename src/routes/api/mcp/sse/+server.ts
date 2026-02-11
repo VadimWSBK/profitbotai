@@ -353,23 +353,26 @@ async function handleMcpRequest(event: import('./$types').RequestEvent): Promise
 	if (widgetId) extraHeaders['X-Widget-Id'] = widgetId;
 	if (conversationId) extraHeaders['X-Conversation-Id'] = conversationId;
 
-	// Vercel serverless: reject GET immediately. SSE requires long-lived connections
-	// which timeout (300s). ElevenLabs supports Streamable HTTP (POST-only) - use that.
+	// Vercel serverless: GET must return 200 quickly. Streamable HTTP clients send GET to establish
+	// connection—405 causes "Failed to connect". Return a minimal SSE that closes immediately so
+	// we don't hold the connection (which would timeout at 300s). Client then uses POST for MCP.
 	if (event.request.method === 'GET') {
-		return new Response(
-			JSON.stringify({
-				error: 'Use POST for MCP requests. This server uses Streamable HTTP (JSON) for serverless compatibility.',
-				jsonrpc: '2.0',
-			}),
-			{
-				status: 405,
-				headers: {
-					'Content-Type': 'application/json',
-					'Access-Control-Allow-Origin': '*',
-					Allow: 'POST, OPTIONS',
-				},
-			}
-		);
+		const stream = new ReadableStream({
+			start(controller) {
+				// Single priming event, then close—satisfies GET without holding connection
+				controller.enqueue(new TextEncoder().encode('data: {}\n\n'));
+				controller.close();
+			},
+		});
+		return new Response(stream, {
+			status: 200,
+			headers: {
+				'Content-Type': 'text/event-stream',
+				'Cache-Control': 'no-cache',
+				Connection: 'close',
+				'Access-Control-Allow-Origin': '*',
+			},
+		});
 	}
 
 	const baseUrl = getBaseUrl(event.request);
