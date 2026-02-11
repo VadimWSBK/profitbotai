@@ -174,7 +174,7 @@ export const components = String.raw`
           preview = { lineItemsUI: parsed.lineItemsUI, summary: preview.summary || parsed.summary, checkoutUrl: preview.checkoutUrl || parsed.checkoutUrl };
       }
       if (preview) {
-        var intro = stripCheckoutBlock(msg.content, preview.checkoutUrl).trim();
+        var intro = stripCheckoutBlock(msg.content, preview.checkoutUrl, true).trim();
         if (intro) content.innerHTML = '<div style="margin-bottom:0.5em">' + formatMessage(intro) + '</div>';
         content.innerHTML += renderCheckoutPreview(preview);
       } else {

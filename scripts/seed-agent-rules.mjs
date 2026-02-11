@@ -153,7 +153,7 @@ const RULES = [
 	},
 	{
 		content:
-			'DIY CHECKOUT LINK (when Shopify connected): When customer asks for a DIY quote, call shopify_create_diy_checkout_link with roof_size_sqm or bucket counts. In your reply, include the bucket breakdown so the customer sees what they need, e.g. "Here is your DIY quote for 555 m²: you need 18 x 15L and 1 x 10L NetZero UltraTherm." Use the exact quantities from the tool result (X x 15L, Y x 10L, Z x 5L). Do NOT paste the full Items/Subtotal/TOTAL block—the widget will show the table with product rows. Always call the tool and give the intro with breakdown in one message.',
+			'DIY CHECKOUT LINK (when Shopify connected): When customer asks for a DIY quote, call shopify_create_diy_checkout_link with roof_size_sqm or bucket counts. In your reply, include the bucket breakdown so the customer sees what they need, e.g. "Here is your DIY quote for 555 m²: you need 18 x 15L and 1 x 10L NetZero UltraTherm. Total cost $X AUD. Would you like to proceed to checkout?" Do NOT add "Items:" or "Proceed to checkout:" as separate lines—the widget shows the table and checkout button. Do NOT paste the full Items/Subtotal/TOTAL block. Always call the tool and give the intro with breakdown in one message.',
 		tags: ['quote', 'diy', 'checkout', 'shopify']
 	},
 	{
@@ -163,7 +163,7 @@ const RULES = [
 	},
 	{
 		content:
-			'CHECKOUT PREVIEW: When you call shopify_create_diy_checkout_link, include the bucket breakdown in your reply (e.g. "you need 18 x 15L and 1 x 10L NetZero UltraTherm") so the customer sees how much of which product. The widget then shows the full table (product, qty, unit price, line total, GO TO CHECKOUT). Do NOT paste the full Items/Subtotal/TOTAL block—just the intro with the breakdown.',
+			'CHECKOUT PREVIEW: When you call shopify_create_diy_checkout_link, include the bucket breakdown in your reply (e.g. "you need 18 x 15L and 1 x 10L NetZero UltraTherm. Total $X AUD."). The widget shows the full table and GO TO CHECKOUT button. Do NOT add "Items:" or "Proceed to checkout:"—they duplicate the table and the latter has no link. Do NOT paste the full Items/Subtotal/TOTAL block—just the intro with the breakdown.',
 		tags: ['checkout', 'preview', 'diy', 'shopify']
 	},
 	{

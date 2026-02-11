@@ -51,18 +51,37 @@
 		direction?: 'outbound' | 'inbound';
 		checkoutPreview?: CheckoutPreview;
 	};
-	function stripCheckoutBlock(content: string | null | undefined): string {
+	function stripCheckoutBlock(content: string | null | undefined, checkoutUrl?: string, hasStructuredPreview = false): string {
 		if (!content || typeof content !== 'string') return '';
-		const start = content.search(/\*\*[🧾\s]*Your [Cc]heckout [Pp]review\*\*/i);
-		if (start < 0) return content;
-		const before = content.slice(0, start).replace(/\n+$/, '');
-		const afterStart = content.slice(start);
-		const linkMatch = afterStart.match(/\[GO TO CHECKOUT\]\s*\([^)]+\)/i) ?? afterStart.match(/\[Buy now[^\]]*\]\s*\([^)]+\)/i);
-		if (linkMatch) {
-			const rest = afterStart.slice(linkMatch.index! + linkMatch[0].length).replace(/^\s*\n?/, '');
-			return (before + (rest ? '\n\n' + rest : '')).trim();
+		let cleaned = content;
+		if (checkoutUrl) {
+			const escapedUrl = checkoutUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+			cleaned = cleaned.replace(new RegExp(escapedUrl, 'gi'), '').trim();
 		}
-		return before.trim() || content;
+		const start = cleaned.search(/\*\*[🧾\s]*Your [Cc]heckout [Pp]review\*\*/i);
+		let result: string;
+		if (start < 0) {
+			result = cleaned;
+			const urlPattern = /(https?:\/\/[^\s<>"']*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"']*)/gi;
+			result = result.replace(urlPattern, '').trim();
+		} else {
+			const before = cleaned.slice(0, start).replace(/\n+$/, '');
+			const afterStart = cleaned.slice(start);
+			const linkMatch = afterStart.match(/\[GO TO CHECKOUT\]\s*\([^)]+\)/i) ?? afterStart.match(/\[Buy now[^\]]*\]\s*\([^)]+\)/i);
+			if (linkMatch) {
+				const rest = afterStart.slice(linkMatch.index! + linkMatch[0].length).replace(/^\s*\n?/, '');
+				const urlPattern = /(https?:\/\/[^\s<>"']*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"']*)/gi;
+				result = (before + (rest ? '\n\n' + rest.replace(urlPattern, '').trim() : '')).trim();
+			} else {
+				result = before.trim() || cleaned;
+			}
+		}
+		// When we have checkoutPreview, strip redundant Items: and Proceed to checkout lines
+		if (checkoutUrl || hasStructuredPreview) {
+			result = result.replace(/\n\nItems:\s*[^\n]+/gi, '\n').replace(/\n+$/, '');
+			result = result.replace(/\n\nProceed to checkout:?\s*$/im, '').replace(/\n+$/, '');
+		}
+		return result.trim() || content;
 	}
 
 	/** Parse short DIY quote from content when API did not attach checkoutPreview (same as widget). */
@@ -1298,8 +1317,8 @@
 										{#if msg.role === 'assistant'}
 											{@const preview = getEffectivePreview(msg)}
 											{#if preview}
-											{#if msg.content && typeof msg.content === 'string' && stripCheckoutBlock(msg.content).trim()}
-												<div class="chat-message-intro">{@html formatAssistantMessage(stripCheckoutBlock(msg.content), msg.channel === 'email')}</div>
+											{#if msg.content && typeof msg.content === 'string' && stripCheckoutBlock(msg.content, preview.checkoutUrl, true).trim()}
+												<div class="chat-message-intro">{@html formatAssistantMessage(stripCheckoutBlock(msg.content, preview.checkoutUrl, true), msg.channel === 'email')}</div>
 											{/if}
 											{@const btnBg = preview.styleOverrides?.checkoutButtonColor ?? '#C8892D'}
 											{@const badgeBg = preview.styleOverrides?.qtyBadgeBackgroundColor ?? '#195A2A'}

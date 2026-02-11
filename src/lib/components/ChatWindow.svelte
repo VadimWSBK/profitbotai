@@ -50,7 +50,7 @@
 			createdAt: m.createdAt
 		};
 	}
-	function stripCheckoutBlock(content: string, checkoutUrl?: string): string {
+	function stripCheckoutBlock(content: string, checkoutUrl?: string, hasStructuredPreview = false): string {
 		if (!content) return content;
 		
 		// Remove the checkout URL if provided (to avoid showing it as a raw link)
@@ -64,28 +64,37 @@
 		
 		let start = cleaned.search(/\*\*[^*]*Your [Cc]heckout [Pp]review\*\*/i);
 		if (start < 0) start = cleaned.search(/\n\s*Your\s+[Cc]heckout\s+[Pp]review/i);
+		let result: string;
 		if (start < 0) {
-			// Also check for raw checkout URLs (Shopify cart URLs or invoice URLs)
+			// No "Your Checkout Preview" block – still strip redundant DIY content when we have checkoutPreview
+			result = cleaned;
+			// Remove raw checkout URLs (Shopify cart URLs or invoice URLs)
 			const checkoutUrlPattern = /(https?:\/\/[^\s<>"']*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"']*)/gi;
-			cleaned = cleaned.replace(checkoutUrlPattern, '').trim();
-			return cleaned;
+			result = result.replace(checkoutUrlPattern, '').trim();
+		} else {
+			let before = cleaned.slice(0, start).replace(/\n+$/, '').trim();
+			before = before.replace(/\n\s*Here is your (?:DIY )?checkout preview:?\s*$/i, '').trim();
+			before = before.replace(/\n\s*Your total (?:estimated|calculated) cost for the product would be \$[\d,]+\.?\d*\s*AUD\.?\s*$/i, '').trim();
+			const afterStart = cleaned.slice(start);
+			// Match markdown links like [GO TO CHECKOUT](url) or [Buy now](url)
+			const linkMatch = afterStart.match(/\[GO TO CHECKOUT\]\s*\([^)]+\)/i) ?? afterStart.match(/\[Buy now[^\]]*\]\s*\([^)]+\)/i);
+			if (linkMatch) {
+				const rest = afterStart.slice(linkMatch.index! + linkMatch[0].length).replace(/^\s*\n?/, '');
+				const checkoutUrlPattern = /(https?:\/\/[^\s<>"']*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"']*)/gi;
+				const cleanedRest = rest.replace(checkoutUrlPattern, '').trim();
+				result = (before + (cleanedRest ? '\n\n' + cleanedRest : '')).trim();
+			} else {
+				const checkoutUrlPattern = /(https?:\/\/[^\s<>"']*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"']*)/gi;
+				result = before.replace(checkoutUrlPattern, '').trim() || cleaned;
+			}
 		}
-		let before = cleaned.slice(0, start).replace(/\n+$/, '').trim();
-		before = before.replace(/\n\s*Here is your (?:DIY )?checkout preview:?\s*$/i, '').trim();
-		before = before.replace(/\n\s*Your total (?:estimated|calculated) cost for the product would be \$[\d,]+\.?\d*\s*AUD\.?\s*$/i, '').trim();
-		const afterStart = cleaned.slice(start);
-		// Match markdown links like [GO TO CHECKOUT](url) or [Buy now](url)
-		const linkMatch = afterStart.match(/\[GO TO CHECKOUT\]\s*\([^)]+\)/i) ?? afterStart.match(/\[Buy now[^\]]*\]\s*\([^)]+\)/i);
-		if (linkMatch) {
-			const rest = afterStart.slice(linkMatch.index! + linkMatch[0].length).replace(/^\s*\n?/, '');
-			// Also remove any raw URLs that might be in the rest
-			const checkoutUrlPattern = /(https?:\/\/[^\s<>"']*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"']*)/gi;
-			const cleanedRest = rest.replace(checkoutUrlPattern, '').trim();
-			return (before + (cleanedRest ? '\n\n' + cleanedRest : '')).trim();
+		// When we have checkoutPreview, strip redundant Items: and Proceed to checkout lines
+		// that the LLM sometimes adds – the widget shows the table and button, so these duplicate and the latter has no link
+		if (checkoutUrl || hasStructuredPreview) {
+			result = result.replace(/\n\nItems:\s*[^\n]+/gi, '\n').replace(/\n+$/, '');
+			result = result.replace(/\n\nProceed to checkout:?\s*$/im, '').replace(/\n+$/, '');
 		}
-		// Remove any raw checkout URLs from the before part too
-		const checkoutUrlPattern = /(https?:\/\/[^\s<>"']*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"']*)/gi;
-		return before.replace(checkoutUrlPattern, '').trim() || cleaned;
+		return result.trim() || content;
 	}
 
 	/** Parse short DIY quote line ("11x NetZero UltraTherm Roof Coating 15L") when no full preview. */
@@ -935,8 +944,8 @@
 							>
 									<div class="flex-1 min-w-0 overflow-x-auto overflow-y-visible max-w-full wrap-break-word">
 									{#if preview}
-										{#if stripCheckoutBlock(msg.content, preview.checkoutUrl).trim()}
-											<div class="chat-message-intro">{@html formatMessage(stripCheckoutBlock(msg.content, preview.checkoutUrl))}</div>
+										{#if stripCheckoutBlock(msg.content, preview.checkoutUrl, true).trim()}
+											<div class="chat-message-intro">{@html formatMessage(stripCheckoutBlock(msg.content, preview.checkoutUrl, true))}</div>
 										{/if}
 										{@const btnBg = preview.styleOverrides?.checkoutButtonColor ?? '#C8892D'}
 										{@const badgeBg = preview.styleOverrides?.qtyBadgeBackgroundColor ?? '#195A2A'}

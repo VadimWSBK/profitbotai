@@ -540,7 +540,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 					...base,
 					checkoutUrl,
 					message:
-						'Breakdown and checkout link ready. In your reply, include the line items summary. Do NOT paste the raw checkout URL—the chat will show the checkout button.'
+						'Breakdown and checkout link ready. In your reply, give a short intro with the product breakdown (e.g. "For a 342 m² roof you need 11 × 15L and 1 × 10L NetZero UltraTherm. Total $X AUD."). Do NOT add "Items:" or "Proceed to checkout:"—the widget shows the table and checkout button automatically.'
 				};
 			}
 			return base;
@@ -703,7 +703,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 				total: summary.total,
 				lineItems: lineItemsUI.map((li) => `${li.quantity}× ${li.title} (${li.unitPrice} each)`),
 				previewMarkdown,
-				message: `Checkout link created. In your reply, write a short intro that includes the product breakdown, e.g. "Here is your DIY quote for [X] m²: ${lineItemsText}." Use the exact quantities from the lineItems. Do NOT paste the raw checkout URL or the full Items/Subtotal/TOTAL block—the widget will show the table and button. Use "calculated" not "estimated".`
+				message: `Checkout link created. In your reply, write a short intro that includes the product breakdown, e.g. "Here is your DIY quote for [X] m²: ${lineItemsText}. The total cost is $[total] AUD." Use the exact quantities from the lineItems. Do NOT add "Items:" or "Proceed to checkout:" as separate lines—the widget shows the table and button automatically. Do NOT paste the raw checkout URL. Use "calculated" not "estimated".`
 			};
 		}
 	});
