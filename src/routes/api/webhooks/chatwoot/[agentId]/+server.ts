@@ -81,7 +81,28 @@ async function getChatwootHistoryFromDb(
 		}
 		out = out.slice(start);
 	}
-	return out.map((r) => ({ role: r.role as 'user' | 'assistant', content: r.content ?? '' }));
+	return out.map((r) => ({
+		role: r.role as 'user' | 'assistant',
+		content: stripHtml(r.content ?? '')
+	}));
+}
+
+/** Strip simple HTML from Chatwoot message content so we store and use plain text (extraction and LLM work correctly). */
+function stripHtml(html: string): string {
+	const t = html.trim();
+	if (!t) return '';
+	// Remove common tags (e.g. <p>, </p>, <br>, <div>) and decode basic entities
+	return t
+		.replace(/<br\s*\/?>/gi, '\n')
+		.replace(/<\/p>\s*<p>/gi, '\n')
+		.replace(/<[^>]+>/g, '')
+		.replace(/&nbsp;/g, ' ')
+		.replace(/&amp;/g, '&')
+		.replace(/&lt;/g, '<')
+		.replace(/&gt;/g, '>')
+		.replace(/&quot;/g, '"')
+		.replace(/&#39;|&apos;/g, "'")
+		.trim();
 }
 
 /** Extract name, email, phone, address from a message (e.g. "Vadim", "weisbekvadim@gmail.com", or "Vadim, weisbekvadim@gmail.com"). */
@@ -209,7 +230,7 @@ function mergeContactExtractions(
 	};
 }
 
-/** Upsert our internal contact for this Chatwoot conversation so the LLM can see what we already have. Returns contact for context. */
+/** Upsert our internal contact for this Chatwoot conversation. Each conversation gets one contact row: created on first incoming message, updated (name/email/phone/address/roof) as we extract more from later messages. Returns contact for LLM context. */
 async function upsertChatwootInternalContact(
 	admin: SupabaseClient,
 	accountId: number,
@@ -303,7 +324,7 @@ export const POST: RequestHandler = async (event) => {
 		body?.message_type ?? (body as Record<string, unknown>).message_type
 		?? messageObj?.message_type;
 	const contentRaw = body?.content ?? messageObj?.content;
-	const content = typeof contentRaw === 'string' ? contentRaw.trim() : '';
+	const content = typeof contentRaw === 'string' ? stripHtml(contentRaw.trim()) : '';
 	const conversationId = body?.conversation?.id ?? (body?.conversation as { id?: number } | undefined)?.id ?? (messageObj?.conversation as { id?: number } | undefined)?.id;
 	const accountId = body?.account?.id ?? (body?.account as { id?: number } | undefined)?.id;
 
@@ -493,11 +514,17 @@ export const POST: RequestHandler = async (event) => {
 		if (internalContact.address) lines.push(`Address: ${internalContact.address}`);
 		if (internalContact.roof_size_sqm != null) lines.push(`Roof size: ${internalContact.roof_size_sqm} m²`);
 		parts.push(lines.join(' '));
-		// When we have everything for a Done For You quote, tell the model to generate now
-		if (internalContact.name && internalContact.email && internalContact.roof_size_sqm != null) {
+		// When we have name and email, never ask for them again (even if roof size is missing)
+		if (internalContact.name && internalContact.email) {
 			parts.push(
-				'We have name, email, and roof size. For a Done For You quote request: call generate_quote now. Do not ask the user to confirm or provide anything again.'
+				'We already have the contact\'s name and email saved. Do NOT ask for name or email again. Do NOT say "I need your name" or "please provide your email" or "confirm your name". If roof size is still needed for the quote, ask only for roof size once, then call generate_quote.'
 			);
+			// When we also have roof size, require calling generate_quote immediately
+			if (internalContact.roof_size_sqm != null) {
+				parts.push(
+					'MANDATORY: Call generate_quote now. Do not ask the user to confirm or provide anything. The details above are already in the system.'
+				);
+			}
 		}
 	}
 	// When generate_quote fails (e.g. missing email), ask for the missing piece—never say "technical issue" or "I'm unable to generate"
@@ -545,7 +572,10 @@ export const POST: RequestHandler = async (event) => {
 			historyTurns: history.length,
 			systemPromptChars: systemPrompt.length,
 			extractedRoofSize: extractedRoofSize ?? null,
-			lastUserMessage: lastUser?.content?.slice(0, 150) ?? null
+			lastUserMessage: lastUser?.content?.slice(0, 150) ?? null,
+			contactHasName: Boolean(internalContact?.name),
+			contactHasEmail: Boolean(internalContact?.email),
+			contactHasRoof: internalContact?.roof_size_sqm != null
 		}));
 	}
 
