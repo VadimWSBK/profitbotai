@@ -462,14 +462,14 @@ export const POST: RequestHandler = async (event) => {
 		'Proceed with what the user already stated (DIY quote, Done For You, etc.)—do not reintroduce or re-ask options.'
 	);
 	staticParts.push(
-		'Contact/quote: name, email, phone, address saved automatically. Do NOT announce "I\'ve saved your email" or similar. PDF quote is emailed automatically—say "I\'ve sent it to your email." Do NOT include quote URL. Never say "technical issue"; if generate_quote errors, ask for the missing piece (e.g. email).'
+		'Contact/quote: name, email, phone, address saved automatically. Do NOT announce "I\'ve saved your email" or similar. PDF quote is emailed automatically—say "I\'ve sent it to your email." Do NOT use send_email for Done For You quotes—we email it automatically. Do NOT include quote URL. Never say "technical issue"; if generate_quote errors, ask for the missing piece (e.g. email).'
 	);
 	staticParts.push(
 		'Be positive when collecting details; thank the user. Do NOT apologize. Never ask for info already in "Current contact info we have". If we have name+email+roof, call generate_quote immediately. Ask only the one missing piece at a time.'
 	);
 	staticParts.push('Finish with a full sentence. For email requests: use send_email tool, include link in body, confirm in chat.');
 	staticParts.push(
-		'DIY: when roof size is known, call calculate_bucket_breakdown only—it returns breakdown and checkout link. Say "Click the link below to proceed to checkout." Do NOT paste the raw URL—the chat shows the button.'
+		'DIY: when roof size is known, call calculate_bucket_breakdown only—it returns breakdown and checkout link. Do NOT paste the raw URL—the chat shows a Proceed to checkout button.'
 	);
 
 	// ---- DYNAMIC (per request: RAG, pricing, DIY situational, contact) ----
@@ -625,10 +625,12 @@ export const POST: RequestHandler = async (event) => {
 		}));
 	}
 
-	let reply: string;
+	let reply = '';
 	let diyCheckoutUrl: string | null = null;
 	let diyLineItemsSummary: string | null = null;
 	let quoteDownloadUrl: string | null = null;
+	/** True when the LLM already sent the quote via send_email tool—skip our automatic email to avoid duplicates. */
+	let quoteEmailAlreadySentByTool = false;
 
 	const tools = createAgentTools(admin, agentAllowedTools ?? undefined);
 	const useExplicitCache = llmProvider?.toLowerCase() === 'google' && (apiKey?.trim?.() ?? '').length > 0;
@@ -640,6 +642,10 @@ export const POST: RequestHandler = async (event) => {
 	): unknown => {
 		const t = toolResults.find((r) => r.toolName === name);
 		return t?.output;
+	};
+	const sendEmailSucceeded = (toolResults: Array<{ toolName: string; output: unknown }>) => {
+		const out = toolResults.find((r) => r.toolName === 'send_email')?.output;
+		return out && typeof out === 'object' && out !== null && !('error' in out && (out as { error?: unknown }).error);
 	};
 
 	try {
@@ -703,6 +709,9 @@ export const POST: RequestHandler = async (event) => {
 						quoteDownloadUrl = r.downloadUrl.trim();
 					}
 				}
+				if (quoteDownloadUrl && sendEmailSucceeded(toolResults)) {
+					quoteEmailAlreadySentByTool = true;
+				}
 			} else {
 				// Cache creation failed, fallback to generateText
 				const model = getAISdkModel(llmProvider, llmModel, apiKey);
@@ -749,6 +758,10 @@ export const POST: RequestHandler = async (event) => {
 					if (typeof r.downloadUrl === 'string' && r.downloadUrl.trim()) {
 						quoteDownloadUrl = r.downloadUrl.trim();
 					}
+				}
+				const sendEmailOut = searchToolResults('send_email');
+				if (quoteDownloadUrl && sendEmailOut && typeof sendEmailOut === 'object' && sendEmailOut !== null && !('error' in sendEmailOut && (sendEmailOut as { error?: unknown }).error)) {
+					quoteEmailAlreadySentByTool = true;
 				}
 			}
 		} else {
@@ -797,6 +810,10 @@ export const POST: RequestHandler = async (event) => {
 					quoteDownloadUrl = r.downloadUrl.trim();
 				}
 			}
+			const sendEmailOut = searchToolResults('send_email');
+			if (quoteDownloadUrl && sendEmailOut && typeof sendEmailOut === 'object' && sendEmailOut !== null && !('error' in sendEmailOut && (sendEmailOut as { error?: unknown }).error)) {
+				quoteEmailAlreadySentByTool = true;
+			}
 		}
 	} catch (e) {
 		console.error('[webhooks/chatwoot] LLM error:', e);
@@ -807,14 +824,18 @@ export const POST: RequestHandler = async (event) => {
 	let storedReply = reply;
 	// Post only the text reply (no quote URL here—we send it as a separate article message like DIY)
 	let contentToPost = reply;
-	// When we have a DIY checkout link, strip raw URL from the message—the article shows the link. Add "Click the link below" once.
+	// When we have a DIY checkout link, strip raw URL from the message—the article card is the only link.
 	if (diyCheckoutUrl) {
-		const urlPattern = /https?:\/\/[^\s<>"']*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"']*/gi;
-		contentToPost = contentToPost.replace(urlPattern, '').replace(/\n{3,}/g, '\n\n').trim();
-		const clickPhrase = 'Click the link below to proceed to checkout.';
-		if (!contentToPost.toLowerCase().includes('click the link below')) {
-			contentToPost = contentToPost + (contentToPost.endsWith('.') ? '' : '.') + '\n\n' + clickPhrase;
-		}
+		// Strip raw checkout URLs (Shopify cart, checkout, invoice)
+		const urlPattern = /https?:\/\/[^\s<>"')\]]*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"')\]]*/gi;
+		contentToPost = contentToPost.replace(urlPattern, '');
+		// Strip markdown links to checkout: [text](url)
+		contentToPost = contentToPost.replace(/\[([^\]]*)\]\((https?:\/\/[^)]*(?:cart|checkout|myshopify)[^)]*)\)/gi, '');
+		contentToPost = contentToPost.replace(/\n{3,}/g, '\n\n').trim();
+		// Remove redundant "link below" phrases—the card says "Proceed to checkout"
+		contentToPost = contentToPost
+			.replace(/\n*\s*(?:You can proceed to checkout using the link below|Click the link below to proceed to checkout)\.?\s*$/i, '')
+			.trim();
 	}
 
 	const postUrl = `${baseUrl}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`;
@@ -863,13 +884,13 @@ export const POST: RequestHandler = async (event) => {
 		storedReply = reply.trimEnd() + '\n\n[Download your quote](' + quoteDownloadUrl + ')';
 	}
 
-	// 3) If we have a DIY quote, send a structured article message (checkout link only; items already in the text reply above)
+	// 3) If we have a DIY quote, send a single article card (Proceed to checkout—no extra text)
 	if (diyCheckoutUrl) {
 		const diyArticleRes = await fetch(postUrl, {
 			method: 'POST',
 			headers: postHeaders,
 			body: JSON.stringify({
-				content: 'Your DIY quote',
+				content: '',
 				message_type: 'outgoing',
 				content_type: 'article',
 				content_attributes: {
@@ -893,7 +914,8 @@ export const POST: RequestHandler = async (event) => {
 	}
 
 	// 4) If we generated a Done For You quote, send the quote link by email when we have the contact's email (automatic; bot already said "I've sent it to your email")
-	if (quoteDownloadUrl && internalContact?.email?.trim()) {
+	// Skip if the LLM already sent it via send_email tool to avoid duplicate emails.
+	if (quoteDownloadUrl && internalContact?.email?.trim() && !quoteEmailAlreadySentByTool) {
 		try {
 			const emailResult = await sendQuoteEmail(admin, ownerId, {
 				toEmail: internalContact.email.trim(),
