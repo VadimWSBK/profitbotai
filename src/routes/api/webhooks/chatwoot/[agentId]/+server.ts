@@ -29,6 +29,7 @@ import { getRelevantRulesForAgent } from '$lib/agent-rules.server';
 import { getProductPricingForOwner, formatProductPricingForAgent } from '$lib/product-pricing.server';
 import { getShopifyConfigForUser } from '$lib/shopify.server';
 import { getDiyKitBuilderConfig } from '$lib/diy-kit-builder.server';
+import { sendQuoteEmail } from '$lib/send-quote-email.server';
 import { env } from '$env/dynamic/private';
 import { emailsToJsonb, mergeEmailIntoList, getPrimaryEmail } from '$lib/contact-email-jsonb';
 import { phonesToJsonb, mergePhoneIntoList, getPrimaryPhone } from '$lib/contact-phone-jsonb';
@@ -436,11 +437,11 @@ export const POST: RequestHandler = async (event) => {
 		if (extractedRoofSize != null && extractedRoofSize >= 1) {
 			const roofSqm = Math.round(extractedRoofSize * 10) / 10;
 			parts.push(
-				`The customer is asking for a DIY quote and we have their roof size (${roofSqm} m²). You MUST call the shopify_create_diy_checkout_link tool with roof_size_sqm: ${roofSqm}. After calling it, reply with a short intro that INCLUDES the bucket breakdown (e.g. "Here is your DIY quote for ${roofSqm} m²: you need X x 15L and Y x 10L NetZero UltraTherm."). Use the exact quantities from the tool result. Do NOT paste the full Items/Subtotal/TOTAL block—summarise the product breakdown only. Do NOT use generate_quote or create a PDF for DIY.${kitProductsLine || ' When describing what the quote includes, mention ONLY the products that appear in the tool result line items—do not add sealant, sealer, bonus kit, or other components unless they are in the breakdown.'}`
+				`The customer is asking for a DIY quote and we have their roof size (${roofSqm} m²). You MUST call the shopify_create_diy_checkout_link tool with roof_size_sqm: ${roofSqm}. After calling it, reply in a friendly, warm tone: thank them for their interest in NetZero UltraTherm (or the product name from the kit), then give the DIY quote with the exact bucket breakdown from the tool result (e.g. "For your ${roofSqm} m² area, you need X x 15L and Y x 10L NetZero UltraTherm."). End by inviting them to checkout: e.g. "If you wish to proceed with checkout, simply click the link below." Do NOT paste the full Items/Subtotal/TOTAL block. Do NOT use generate_quote or create a PDF for DIY.${kitProductsLine || ' When describing what the quote includes, mention ONLY the products that appear in the tool result line items—do not add sealant, sealer, bonus kit, or other components unless they are in the breakdown.'}`
 			);
 		} else {
 			parts.push(
-				`When the customer asks for a DIY quote or to buy product themselves: if they provide a roof size (e.g. "400 sqm"), call shopify_create_diy_checkout_link with that roof_size_sqm. If they have not given roof size yet, ask for it once, then call the tool with the value they provide. Reply with a short intro that includes the bucket breakdown from the tool result. Do NOT use generate_quote for DIY requests.${kitProductsLine || ' When describing the quote, mention ONLY the products in the tool result—do not add sealant, sealer, bonus kit, or other components unless they appear in the breakdown.'}`
+				`When the customer asks for a DIY quote or to buy product themselves: if they provide a roof size (e.g. "400 sqm"), call shopify_create_diy_checkout_link with that roof_size_sqm. If they have not given roof size yet, ask for it once, then call the tool with the value they provide. Reply in a friendly tone: thank them for their interest (e.g. in NetZero UltraTherm coating), then give the quote with the bucket breakdown from the tool result, and invite them to click the link below to proceed to checkout. Do NOT use generate_quote for DIY requests.${kitProductsLine || ' When describing the quote, mention ONLY the products in the tool result—do not add sealant, sealer, bonus kit, or other components unless they appear in the breakdown.'}`
 			);
 		}
 	}
@@ -448,9 +449,9 @@ export const POST: RequestHandler = async (event) => {
 	parts.push(
 		"Respond directly to the user's latest message. If they have already stated what they want (e.g. a DIY quote, a done-for-you quote, or specific info), proceed with that—do not reintroduce yourself or re-ask the same options."
 	);
-	// So the bot doesn't try to call contact tools and then say it can't update
+	// Contact details are saved automatically; do not announce it. Do not say you cannot save.
 	parts.push(
-		'In this channel, contact details the user provides (name, email, phone, address) are saved automatically to their Chatwoot profile. Confirm you have received their details and proceed—do not say you are unable to update contact details.'
+		'In this channel, name, email, phone, and address are saved automatically in the background. Do NOT say things like "I\'ve updated your name", "I\'ve saved your email", or "Thank you, I have your details"—just proceed to the next step (e.g. ask for the next detail or generate the quote). Only mention that details were saved if the user explicitly asks. Do NOT say you are unable to update or save contact details; they are saved automatically. After generating a Done For You quote, you must share the download link in your reply so the user can click it; the system will also send the link by email when possible.'
 	);
 	// So the LLM knows what we already have and can respond accordingly (e.g. skip asking for name/email if we have them)
 	if (internalContact && (internalContact.name ?? internalContact.email ?? internalContact.phone ?? internalContact.address ?? internalContact.roof_size_sqm != null)) {
@@ -510,6 +511,7 @@ export const POST: RequestHandler = async (event) => {
 	let reply: string;
 	let diyCheckoutUrl: string | null = null;
 	let diyLineItemsSummary: string | null = null;
+	let quoteDownloadUrl: string | null = null;
 	try {
 		const model = getAISdkModel(llmProvider, llmModel, apiKey);
 		const tools = createAgentTools(admin, agentAllowedTools ?? undefined);
@@ -523,36 +525,44 @@ export const POST: RequestHandler = async (event) => {
 			experimental_context: agentContext
 		});
 		reply = result.text ?? '';
-		// If DIY tool was used, get checkout URL and line items so we append them to the reply (Chatwoot has no widget UI)
-		const pickDiy = (tr: Array<{ toolName?: string; output?: unknown; result?: unknown }> | undefined) => {
-			if (!Array.isArray(tr)) return;
-			const diy = tr.find((r) => r.toolName === 'shopify_create_diy_checkout_link');
-			if (!diy || typeof diy !== 'object') return;
-			const out = (diy as { output?: unknown }).output ?? (diy as { result?: unknown }).result;
-			if (!out || typeof out !== 'object') return;
-			const r = out as { lineItemsUI?: { quantity?: number; title?: string }[]; checkoutUrl?: string };
-			if (typeof r.checkoutUrl === 'string' && r.checkoutUrl.trim()) {
-				const parts: string[] = [];
-				if (Array.isArray(r.lineItemsUI) && r.lineItemsUI.length > 0) {
-					parts.push(r.lineItemsUI.map((li) => `${li.quantity ?? 0} x ${li.title ?? ''}`).filter(Boolean).join(', '));
-				}
-				return { checkoutUrl: r.checkoutUrl.trim(), lineSummary: parts.length > 0 ? parts.join(' ') : null };
-			}
-		};
 		const raw = result as {
 			steps?: Array<{ toolResults?: Array<{ toolName?: string; output?: unknown; result?: unknown }> }>;
 			toolResults?: Array<{ toolName?: string; output?: unknown; result?: unknown }>;
 		};
-		let diyResult = pickDiy(raw.toolResults);
-		if (!diyResult && Array.isArray(raw.steps)) {
-			for (let i = raw.steps.length - 1; i >= 0; i--) {
-				diyResult = pickDiy(raw.steps[i].toolResults);
-				if (diyResult) break;
+		const getToolOutput = (tr: Array<{ toolName?: string; output?: unknown; result?: unknown }> | undefined, name: string) => {
+			if (!Array.isArray(tr)) return;
+			const t = tr.find((r) => r.toolName === name);
+			if (!t || typeof t !== 'object') return;
+			return (t as { output?: unknown }).output ?? (t as { result?: unknown }).result;
+		};
+		const searchToolResults = (name: string) => {
+			let out = getToolOutput(raw.toolResults, name);
+			if (out) return out;
+			if (Array.isArray(raw.steps)) {
+				for (let i = raw.steps.length - 1; i >= 0; i--) {
+					out = getToolOutput(raw.steps[i].toolResults, name);
+					if (out) return out;
+				}
+			}
+		};
+		// DIY: get checkout URL and line items so we append them to the reply (Chatwoot has no widget UI)
+		const diyOut = searchToolResults('shopify_create_diy_checkout_link');
+		if (diyOut && typeof diyOut === 'object') {
+			const r = diyOut as { lineItemsUI?: { quantity?: number; title?: string }[]; checkoutUrl?: string };
+			if (typeof r.checkoutUrl === 'string' && r.checkoutUrl.trim()) {
+				diyCheckoutUrl = r.checkoutUrl.trim();
+				if (Array.isArray(r.lineItemsUI) && r.lineItemsUI.length > 0) {
+					diyLineItemsSummary = r.lineItemsUI.map((li) => `${li.quantity ?? 0} x ${li.title ?? ''}`).filter(Boolean).join(', ');
+				}
 			}
 		}
-		if (diyResult) {
-			diyCheckoutUrl = diyResult.checkoutUrl;
-			diyLineItemsSummary = diyResult.lineSummary;
+		// Done For You quote: get download URL so we post it in chat and send by email
+		const quoteOut = searchToolResults('generate_quote');
+		if (quoteOut && typeof quoteOut === 'object') {
+			const r = quoteOut as { downloadUrl?: string };
+			if (typeof r.downloadUrl === 'string' && r.downloadUrl.trim()) {
+				quoteDownloadUrl = r.downloadUrl.trim();
+			}
 		}
 	} catch (e) {
 		console.error('[webhooks/chatwoot] LLM error:', e);
@@ -561,6 +571,12 @@ export const POST: RequestHandler = async (event) => {
 
 	// Build what we'll store in our DB (full context including quote for next turn)
 	let storedReply = reply;
+	// Ensure user sees the quote download link in chat when we generated a Done For You quote
+	let contentToPost = reply;
+	if (quoteDownloadUrl) {
+		contentToPost = reply.trimEnd() + '\n\n**Download your quote:** ' + quoteDownloadUrl;
+		storedReply = contentToPost;
+	}
 
 	const postUrl = `${baseUrl}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`;
 	const postHeaders = {
@@ -569,11 +585,11 @@ export const POST: RequestHandler = async (event) => {
 		api_access_token: botToken
 	};
 
-	// 1) Send the conversational reply (text)
+	// 1) Send the conversational reply (text), including quote link if we have one
 	const postRes = await fetch(postUrl, {
 		method: 'POST',
 		headers: postHeaders,
-		body: JSON.stringify({ content: reply, message_type: 'outgoing' })
+		body: JSON.stringify({ content: contentToPost, message_type: 'outgoing' })
 	});
 	if (!postRes.ok) {
 		const errText = await postRes.text();
@@ -608,6 +624,26 @@ export const POST: RequestHandler = async (event) => {
 		}
 		// Keep stored context so next turn knows we sent the quote and link
 		storedReply = reply.trimEnd() + (diyLineItemsSummary ? '\n\n**Items:** ' + diyLineItemsSummary : '') + '\n\n**Proceed to checkout:** ' + diyCheckoutUrl;
+	}
+
+	// 3) If we generated a Done For You quote, send the quote link by email when we have the contact's email
+	if (quoteDownloadUrl && internalContact?.email?.trim()) {
+		try {
+			const emailResult = await sendQuoteEmail(admin, ownerId, {
+				toEmail: internalContact.email.trim(),
+				quoteDownloadUrl,
+				customerName: internalContact.name ?? null,
+				customSubject: 'Your Done For You quote',
+				customBody: 'Your quote is ready. Download it using the link below.\n\nThe link will expire in 1 hour.'
+			});
+			if (!emailResult.sent && env.CHATWOOT_DEBUG !== '1' && env.CHATWOOT_DEBUG !== 'true') {
+				// Only log if not in debug to avoid noise (e.g. no Resend configured)
+			} else if (!emailResult.sent) {
+				console.warn('[webhooks/chatwoot] Quote email not sent:', emailResult.error);
+			}
+		} catch (e) {
+			console.error('[webhooks/chatwoot] sendQuoteEmail:', e);
+		}
 	}
 
 	// Store our reply in our DB so next message has context from here
