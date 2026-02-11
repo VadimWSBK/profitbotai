@@ -277,7 +277,7 @@ function createProfitBotMcpServer(baseUrl: string, apiKey: string, extraHeaders:
 			description: `Call any ProfitBot MCP action. Actions: ${PROFITBOT_MCP_ACTIONS.join(', ')}`,
 			inputSchema: {
 				action: z.string().describe('Action name'),
-				params: z.record(z.unknown()).optional().describe('Action parameters'),
+				params: z.record(z.string(), z.unknown()).optional().describe('Action parameters'),
 			},
 		},
 		async (args) => {
@@ -353,23 +353,19 @@ async function handleMcpRequest(event: import('./$types').RequestEvent): Promise
 	if (widgetId) extraHeaders['X-Widget-Id'] = widgetId;
 	if (conversationId) extraHeaders['X-Conversation-Id'] = conversationId;
 
-	// Vercel serverless: GET must return 200 quickly. Streamable HTTP clients send GET to establish
-	// connection—405 causes "Failed to connect". Return a minimal SSE that closes immediately so
-	// we don't hold the connection (which would timeout at 300s). Client then uses POST for MCP.
+	// Vercel serverless: GET must return 200 quickly and COMPLETE. Streamable HTTP clients send GET
+	// to establish connection. Use a fixed body (not ReadableStream) so the response is fully sent
+	// and the function exits immediately—streaming keeps the function alive until the client closes
+	// the connection, causing 300s timeouts.
 	if (event.request.method === 'GET') {
-		const stream = new ReadableStream({
-			start(controller) {
-				// Single priming event, then close—satisfies GET without holding connection
-				controller.enqueue(new TextEncoder().encode('data: {}\n\n'));
-				controller.close();
-			},
-		});
-		return new Response(stream, {
+		const body = 'data: {}\n\n';
+		return new Response(body, {
 			status: 200,
 			headers: {
 				'Content-Type': 'text/event-stream',
 				'Cache-Control': 'no-cache',
 				Connection: 'close',
+				'Content-Length': String(body.length),
 				'Access-Control-Allow-Origin': '*',
 			},
 		});
