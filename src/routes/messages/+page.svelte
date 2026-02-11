@@ -11,7 +11,8 @@
 	type Widget = { id: string; name: string; tags?: string[]; createdAt?: string };
 	type Conversation = {
 		id: string;
-		widgetId: string;
+		source?: 'widget' | 'chatwoot';
+		widgetId: string | null;
 		widgetName: string;
 		sessionId: string;
 		isAiActive: boolean;
@@ -197,7 +198,8 @@
 
 	type ConversationDetail = {
 		id: string;
-		widgetId: string;
+		source?: 'widget' | 'chatwoot';
+		widgetId: string | null;
 		widgetName: string;
 		sessionId: string;
 		isAiActive: boolean;
@@ -416,7 +418,8 @@
 
 	function startRealtimeSubscription(conversationId: string) {
 		stopRealtimeSubscription();
-		
+		if (conversationId.startsWith('chatwoot-')) return;
+
 		const supabaseUrl = (data as any).supabaseUrl;
 		const supabaseAnonKey = (data as any).supabaseAnonKey;
 		
@@ -1191,26 +1194,28 @@
 								</div>
 							</div>
 							<div class="flex items-center gap-2">
-								{#if conversationDetail?.isAiActive}
-									<button
-										type="button"
-										class="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
-										disabled={sending}
-										onclick={() => setAiActive(false)}
-									>
-										STOP AI
-									</button>
-								{:else}
-									<button
-										type="button"
-										class="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
-										disabled={sending}
-										onclick={() => setAiActive(true)}
-									>
-										Start AI
-									</button>
+								{#if conversationDetail?.source !== 'chatwoot'}
+									{#if conversationDetail?.isAiActive}
+										<button
+											type="button"
+											class="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+											disabled={sending}
+											onclick={() => setAiActive(false)}
+										>
+											STOP AI
+										</button>
+									{:else}
+										<button
+											type="button"
+											class="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+											disabled={sending}
+											onclick={() => setAiActive(true)}
+										>
+											Start AI
+										</button>
+									{/if}
 								{/if}
-								{#if currentConv?.contactEmail}
+								{#if currentConv?.contactEmail && conversationDetail?.source !== 'chatwoot'}
 									<button
 										type="button"
 										class="rounded-lg px-4 py-2 text-sm font-medium border disabled:opacity-50 {conversationDetail?.isAiEmailActive !== false
@@ -1380,8 +1385,8 @@
 						{/if}
 					</div>
 
-					<!-- Human reply (when takeover) - Chat/All -->
-					{#if conversationDetail && !conversationDetail.isAiActive && channelFilter !== 'email'}
+					<!-- Human reply: for Chatwoot always; for widget when takeover (!isAiActive) - Chat/All -->
+					{#if conversationDetail && channelFilter !== 'email' && (conversationDetail.source === 'chatwoot' || !conversationDetail.isAiActive)}
 						<form
 							class="shrink-0 flex gap-2 p-4 border-t border-gray-200 bg-gray-50"
 							onsubmit={(e) => {

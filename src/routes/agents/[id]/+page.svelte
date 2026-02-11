@@ -542,17 +542,48 @@
 
 				<div class="border border-gray-200 rounded-lg p-4 mb-6 bg-gray-50/50">
 					<h4 class="text-sm font-semibold text-gray-900 mb-3">Bot instructions (role, tone, rules)</h4>
-					<p class="text-xs text-gray-500 mb-4">Sent with every message so the AI Agent can use them.</p>
+					<p class="text-xs text-gray-500 mb-4">Sent with every message. Keep Role and Tone short; move CRM, sales behavior, product details into Rules—they're retrieved by relevance, reducing tokens per request.</p>
 					<div class="space-y-4">
 						<label class="block">
-							<span class="text-sm font-medium text-gray-700 mb-1">Role</span>
-							<textarea bind:value={botRole} placeholder="e.g. You are a helpful sales assistant for NetZero Coating." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm min-h-[120px] font-mono" rows="4"></textarea>
-							<p class="mt-1 text-xs text-gray-500">Multi-line supported. Define who the bot is in as much detail as needed.</p>
+							<div class="flex items-center justify-between gap-2 mb-1">
+								<span class="text-sm font-medium text-gray-700">Role</span>
+								<span class="text-xs {botRole.length > 800 ? 'text-amber-600 font-medium' : 'text-gray-500'}">
+									{botRole.length} chars (~{Math.ceil(botRole.length / 4)} tokens)
+									{#if botRole.length > 800}
+										— trim for lower cost
+									{/if}
+								</span>
+							</div>
+							<textarea bind:value={botRole} placeholder="e.g. You are a helpful sales assistant for NetZero Coating. Help with DIY quotes and Done For You installation." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm min-h-[120px] font-mono {botRole.length > 800 ? 'border-amber-400' : ''}" rows="4"></textarea>
+							{#if botRole.length > 800}
+								<p class="mt-1 text-xs text-amber-700">Role is long. Move CRM rules, sales behavior, product principles to Rules below—add as separate rules with tags like crm, sales, product.</p>
+							{:else}
+								<p class="mt-1 text-xs text-gray-500">2–4 sentences. Who the bot is. Put detailed policies in Rules.</p>
+							{/if}
+							<button
+								type="button"
+								onclick={() => (botRole = 'You are a knowledgeable sales and support assistant. Help with DIY product quotes and Done For You installation. Follow the rules below.')}
+								class="mt-1 text-xs text-amber-600 hover:text-amber-700 font-medium"
+							>
+								Use compact template
+							</button>
 						</label>
 						<label class="block">
-							<span class="text-sm font-medium text-gray-700 mb-1">Tone</span>
-							<textarea bind:value={botTone} placeholder="e.g. Professional and friendly, concise. Or paste a longer style guide." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm min-h-[120px] font-mono" rows="4"></textarea>
-							<p class="mt-1 text-xs text-gray-500">Multi-line supported. Describe how the bot should sound.</p>
+							<div class="flex items-center justify-between gap-2 mb-1">
+								<span class="text-sm font-medium text-gray-700">Tone</span>
+								<span class="text-xs {botTone.length > 300 ? 'text-amber-600 font-medium' : 'text-gray-500'}">
+									{botTone.length} chars (~{Math.ceil(botTone.length / 4)} tokens)
+									{#if botTone.length > 300}
+										— keep brief
+									{/if}
+								</span>
+							</div>
+							<textarea bind:value={botTone} placeholder="e.g. Professional, friendly, concise. Australian English." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm min-h-[80px] font-mono {botTone.length > 300 ? 'border-amber-400' : ''}" rows="2"></textarea>
+							{#if botTone.length > 300}
+								<p class="mt-1 text-xs text-amber-700">Tone is long. Use 1–2 lines; move style details to Rules if needed.</p>
+							{:else}
+								<p class="mt-1 text-xs text-gray-500">1–2 lines. How the bot should sound.</p>
+							{/if}
 						</label>
 						<div class="border-t border-gray-200 pt-4 mt-4">
 							<h4 class="text-sm font-semibold text-gray-900 mb-2">Instructions / rules (RAG)</h4>
@@ -615,9 +646,12 @@
 							{/if}
 						</div>
 						<label class="block mt-4">
-							<span class="text-sm font-medium text-gray-700 mb-1">Additional instructions (optional)</span>
+							<div class="flex items-center justify-between gap-2 mb-1">
+								<span class="text-sm font-medium text-gray-700">Additional instructions (optional)</span>
+								<span class="text-xs text-gray-500">{botInstructions.length} chars (~{Math.ceil(botInstructions.length / 4)} tokens)</span>
+							</div>
 							<textarea bind:value={botInstructions} placeholder="e.g. Keep replies under 3 sentences. Always ask for roof size." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm min-h-[80px] font-mono" rows="3"></textarea>
-							<p class="mt-1 text-xs text-gray-500">Sent with every message. Use for short, always-applicable rules.</p>
+							<p class="mt-1 text-xs text-gray-500">Short, always-applicable rules. Put detailed policies in Rules above.</p>
 						</label>
 					</div>
 				</div>

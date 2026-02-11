@@ -7,8 +7,74 @@ import { getPrimaryEmail } from '$lib/contact-email-jsonb';
 import { getProductImageUrlsBySize } from '$lib/product-pricing.server';
 import { getShopifyConfigForUser, getDiyProductImages } from '$lib/shopify.server';
 import { getDefaultKitBuilderConfig } from '$lib/diy-kit-builder.server';
+import { parseChatwootConversationId } from '../+server';
 
 const MESSAGES_PAGE_SIZE = 20;
+
+async function getChatwootConversation(
+	event: Parameters<RequestHandler>[0],
+	supabase: Awaited<ReturnType<typeof getSupabaseClient>>,
+	{ accountId, conversationId }: { accountId: number; conversationId: number },
+	opts: { limit: number; before: string | null; since: string | null }
+) {
+	const { limit, before, since } = opts;
+	const { data: contactRow } = await supabase
+		.from('contacts')
+		.select('id, name, email, agent_id, agents(id, name)')
+		.eq('chatwoot_account_id', accountId)
+		.eq('chatwoot_conversation_id', conversationId)
+		.maybeSingle();
+	if (!contactRow) return json({ error: 'Conversation not found' }, { status: 404 });
+	const agentName = (contactRow as { agents?: { name: string } | { name: string }[] }).agents
+		? Array.isArray((contactRow as { agents: { name: string }[] }).agents)
+			? (contactRow as { agents: { name: string }[] }).agents[0]?.name ?? 'Chatwoot'
+			: (contactRow as { agents: { name: string } }).agents?.name ?? 'Chatwoot'
+		: 'Chatwoot';
+	const contact = {
+		id: (contactRow as { id: string }).id,
+		name: (contactRow as { name: string | null }).name ?? null,
+		email: getPrimaryEmail((contactRow as { email: unknown }).email) ?? null
+	};
+	let msgQuery = supabase
+		.from('chatwoot_conversation_messages')
+		.select('id, role, content, created_at')
+		.eq('account_id', accountId)
+		.eq('conversation_id', conversationId)
+		.order('created_at', { ascending: !!since });
+	if (since) msgQuery = msgQuery.gt('created_at', since);
+	else if (before) msgQuery = msgQuery.lt('created_at', before);
+	const { data: rows, error: msgError } = await msgQuery.limit(since ? 100 : limit + 1);
+	if (msgError) return json({ error: msgError.message }, { status: 500 });
+	const raw = (rows ?? []) as Array<{ id: string; role: string; content: string; created_at: string }>;
+	const hasMore = !since && raw.length > limit;
+	const chatMessages = since ? raw : raw.slice(0, limit).reverse();
+	const messages = chatMessages.map((m) => ({
+		id: m.id,
+		role: m.role,
+		content: m.content,
+		readAt: null as string | null,
+		createdAt: m.created_at,
+		channel: 'chat' as const
+	}));
+	return json({
+		conversation: {
+			id: `chatwoot-${accountId}-${conversationId}`,
+			source: 'chatwoot' as const,
+			widgetId: null,
+			widgetName: agentName,
+			sessionId: `chatwoot-${accountId}-${conversationId}`,
+			isAiActive: true,
+			isAiEmailActive: true,
+			createdAt: messages[0]?.createdAt ?? new Date().toISOString(),
+			updatedAt: messages[messages.length - 1]?.createdAt ?? new Date().toISOString(),
+			contactId: contact.id,
+			contactName: contact.name,
+			contactEmail: contact.email
+		},
+		messages,
+		hasMore
+	});
+}
 
 function sizeFromTitle(title: string): number | null {
 	const m = (typeof title === 'string' ? title : '').match(/\b(15|10|5)\s*L\b/i);
@@ -17,6 +83,7 @@ function sizeFromTitle(title: string): number | null {
 
 /**
  * GET /api/conversations/[id] – get one conversation with messages. Marks user messages as read.
+ * Handles both widget (UUID id) and Chatwoot (chatwoot-{accountId}-{conversationId}) conversations.
  * Query: limit (default 20), before (ISO date – load older messages), since (ISO date – new messages for polling).
  * Returns: conversation, messages (asc order), hasMore (true if more older messages exist).
  */
@@ -32,6 +99,12 @@ export const GET: RequestHandler = async (event) => {
 	const since = event.url.searchParams.get('since')?.trim() || null;
 
 	const supabase = getSupabaseClient(event);
+	const chatwoot = parseChatwootConversationId(id);
+
+	if (chatwoot) {
+		return getChatwootConversation(event, supabase, chatwoot, { limit, before, since });
+	}
+
 	const { data: conv, error: convError } = await supabase
 		.from('widget_conversations')
 		.select('id, widget_id, session_id, is_ai_active, is_ai_email_active, created_at, updated_at, widgets(id, name, n8n_webhook_url, created_by)')

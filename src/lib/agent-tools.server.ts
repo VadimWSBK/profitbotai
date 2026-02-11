@@ -540,7 +540,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 					...base,
 					checkoutUrl,
 					message:
-						'Breakdown and checkout link ready. In your reply, include the line items summary and the checkout link so the customer can proceed directly.'
+						'Breakdown and checkout link ready. In your reply, include the line items summary. Do NOT paste the raw checkout URL—say "Click the link below to proceed to checkout." The chat will show the checkout button.'
 				};
 			}
 			return base;
@@ -703,7 +703,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 				total: summary.total,
 				lineItems: lineItemsUI.map((li) => `${li.quantity}× ${li.title} (${li.unitPrice} each)`),
 				previewMarkdown,
-				message: `Checkout link created. In your reply, write a short intro that includes the product breakdown so the customer sees what they're getting, e.g. "Here is your DIY quote for [X] m²: ${lineItemsText}." Use the exact quantities from the lineItems. Do NOT paste the full Items/Subtotal/TOTAL block—the widget will show the table. Use "calculated" not "estimated".\n\n${previewMarkdown}`
+				message: `Checkout link created. In your reply, write a short intro that includes the product breakdown, e.g. "Here is your DIY quote for [X] m²: ${lineItemsText}." Use the exact quantities from the lineItems. Do NOT paste the raw checkout URL or the full Items/Subtotal/TOTAL block—say "Click the link below to proceed to checkout." The widget will show the table and button. Use "calculated" not "estimated".`
 			};
 		}
 	});

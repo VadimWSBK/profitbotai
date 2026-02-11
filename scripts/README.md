@@ -68,3 +68,15 @@ npx tsx scripts/update-shopify-products.ts
 - Variants with dark colors will be permanently deleted
 - Make sure to test with `--dry-run` first!
 - Keep a backup of your product data before running
+
+---
+
+# Suggest Rules from Role
+
+Extract suggested RAG rules from an agent's long Role text. Use when migrating from a single large Role to Rules (Train tab) to reduce token usage.
+
+```bash
+node --env-file=.env scripts/suggest-rules-from-role.mjs <agentId>
+```
+
+Outputs rule content and suggested tags for copy-paste into Agent → Train → Rules. Also prints a compact Role replacement.

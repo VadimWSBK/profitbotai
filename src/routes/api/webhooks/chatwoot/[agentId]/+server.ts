@@ -469,7 +469,7 @@ export const POST: RequestHandler = async (event) => {
 	);
 	staticParts.push('Finish with a full sentence. For email requests: use send_email tool, include link in body, confirm in chat.');
 	staticParts.push(
-		'DIY: when roof size is known, call calculate_bucket_breakdown only—it returns breakdown and checkout link. Include the link in your first reply.'
+		'DIY: when roof size is known, call calculate_bucket_breakdown only—it returns breakdown and checkout link. Say "Click the link below to proceed to checkout." Do NOT paste the raw URL—the chat shows the button.'
 	);
 
 	// ---- DYNAMIC (per request: RAG, pricing, DIY situational, contact) ----
@@ -807,6 +807,15 @@ export const POST: RequestHandler = async (event) => {
 	let storedReply = reply;
 	// Post only the text reply (no quote URL here—we send it as a separate article message like DIY)
 	let contentToPost = reply;
+	// When we have a DIY checkout link, strip raw URL from the message—the article shows the link. Add "Click the link below" once.
+	if (diyCheckoutUrl) {
+		const urlPattern = /https?:\/\/[^\s<>"']*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"']*/gi;
+		contentToPost = contentToPost.replace(urlPattern, '').replace(/\n{3,}/g, '\n\n').trim();
+		const clickPhrase = 'Click the link below to proceed to checkout.';
+		if (!contentToPost.toLowerCase().includes('click the link below')) {
+			contentToPost = contentToPost + (contentToPost.endsWith('.') ? '' : '.') + '\n\n' + clickPhrase;
+		}
+	}
 
 	const postUrl = `${baseUrl}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`;
 	const postHeaders = {
@@ -856,7 +865,6 @@ export const POST: RequestHandler = async (event) => {
 
 	// 3) If we have a DIY quote, send a structured article message (checkout link only; items already in the text reply above)
 	if (diyCheckoutUrl) {
-		const articleDescription = 'Click the link below to proceed to checkout.';
 		const diyArticleRes = await fetch(postUrl, {
 			method: 'POST',
 			headers: postHeaders,
@@ -868,7 +876,7 @@ export const POST: RequestHandler = async (event) => {
 					items: [
 						{
 							title: 'Proceed to checkout',
-							description: articleDescription,
+							description: '',
 							link: diyCheckoutUrl
 						}
 					]
@@ -879,8 +887,9 @@ export const POST: RequestHandler = async (event) => {
 			const errText = await diyArticleRes.text();
 			console.error('[webhooks/chatwoot] Chatwoot article message error:', diyArticleRes.status, errText);
 		}
-		// Keep stored context so next turn knows we sent the quote and link
-		storedReply = reply.trimEnd() + (diyLineItemsSummary ? '\n\n**Items:** ' + diyLineItemsSummary : '') + '\n\n**Proceed to checkout:** ' + diyCheckoutUrl;
+		// Keep stored context so next turn knows we sent the quote and link (no raw URL—article has it)
+		storedReply =
+			contentToPost + (diyLineItemsSummary ? '\n\n**Items:** ' + diyLineItemsSummary : '');
 	}
 
 	// 4) If we generated a Done For You quote, send the quote link by email when we have the contact's email (automatic; bot already said "I've sent it to your email")
