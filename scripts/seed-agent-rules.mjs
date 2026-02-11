@@ -128,7 +128,7 @@ const RULES = [
 	},
 	{
 		content:
-			'DIY QUOTE (one step when Shopify connected): When customer asks for a DIY quote and Shopify is connected, call shopify_create_diy_checkout_link with roof_size_sqm or bucket counts. Reply with a short intro that INCLUDES the bucket breakdown (e.g. "Here is your DIY quote for 222 m²: you need 14 x 15L and 1 x 10L NetZero UltraTherm.") so the customer sees how much of which product. Use exact quantities from the tool (X x 15L, Y x 10L, Z x 5L). Do NOT paste the full Items/Subtotal/TOTAL block—the widget will show the full table. If Shopify is not connected, list the breakdown as bullet lines: * N x 15L buckets: $X each = $Y (one line per product).',
+			'DIY QUOTE (one step when Shopify connected): When customer asks for a DIY quote and Shopify is connected, call shopify_create_diy_checkout_link with roof_size_sqm or bucket counts. Reply with a short intro listing products as BULLET POINTS (e.g. "• 14 × NetZero UltraTherm 15L" and "• 1 × NetZero UltraTherm 10L" on separate lines). Then the total. Include the full checkout preview block. If Shopify is not connected, list as bullet lines: * N x 15L buckets: $X each = $Y.',
 		tags: ['quote', 'diy', 'delivery']
 	},
 	{
@@ -138,7 +138,7 @@ const RULES = [
 	},
 	{
 		content:
-			'QUOTE FORMATTING RULES: When Shopify is connected and customer wants DIY, call the DIY tool and include both the short intro AND the full checkout preview block (Items, Discount if any, Shipping, Subtotal, Savings if discount, TOTAL, GST included, GO TO CHECKOUT). When Shopify is not connected, use bullet lines for line items (* N x size buckets: $unit each = $lineTotal) so the widget can parse and display a table. Never use ** for bolding in quote text.',
+			'QUOTE FORMATTING RULES: When Shopify is connected and customer wants DIY, list products as bullet points (• N × Product), then include the full checkout preview block. When Shopify is not connected, use bullet lines for line items (* N x size buckets: $unit each = $lineTotal). Never use ** for bolding in quote text.',
 		tags: ['quote', 'format', 'diy', 'presentation']
 	},
 	{
@@ -153,7 +153,7 @@ const RULES = [
 	},
 	{
 		content:
-			'DIY CHECKOUT LINK (when Shopify connected): When customer asks for a DIY quote, call shopify_create_diy_checkout_link or calculate_bucket_breakdown. In your reply, include: 1) A short intro with bucket breakdown and total. 2) The full checkout preview block from the tool (Items, Discount if any, Shipping, Subtotal, Savings if discount, TOTAL, GST included, GO TO CHECKOUT). Use this format for BOTH discounted and non-discounted quotes. Always call the tool and include the preview.',
+			'DIY CHECKOUT LINK (when Shopify connected): When customer asks for a DIY quote, call shopify_create_diy_checkout_link or calculate_bucket_breakdown. List products as BULLET POINTS (one per product, e.g. "• 11 × NetZero UltraTherm 15L"). Format: "Here is your DIY quote for [X] m²" (add "with a [Y]% discount" if discount), then bullets, then "The total cost is $[total] AUD." Then include the full checkout preview block. Always call the tool and include the preview.',
 		tags: ['quote', 'diy', 'checkout', 'shopify']
 	},
 	{
@@ -163,7 +163,7 @@ const RULES = [
 	},
 	{
 		content:
-			'CHECKOUT PREVIEW: For every DIY quote (with or without discount), include the full checkout preview block from the tool: Your Checkout Preview, Items N, Discount X% OFF (if discount), Shipping FREE, Subtotal, Savings (if discount), TOTAL, GST included, GO TO CHECKOUT. Copy it exactly from the tool response.',
+			'CHECKOUT PREVIEW: List products as bullet points (• N × Product Name). Then include the full checkout preview block: Your Checkout Preview, Items N, Discount (if any), Shipping FREE, Subtotal, Savings (if discount), TOTAL, GST included, GO TO CHECKOUT.',
 		tags: ['checkout', 'preview', 'diy', 'shopify']
 	},
 	{

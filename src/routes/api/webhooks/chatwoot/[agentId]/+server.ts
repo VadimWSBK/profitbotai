@@ -521,11 +521,11 @@ export const POST: RequestHandler = async (event) => {
 		if (extractedRoofSize != null && extractedRoofSize >= 1) {
 			const roofSqm = Math.round(extractedRoofSize * 10) / 10;
 			dynamicParts.push(
-				`DIY: roof ${roofSqm} m². Call calculate_bucket_breakdown(roof_size_sqm:${roofSqm})—it returns breakdown and checkout link in one call. Include the link in your reply. Never calculate buckets yourself. Do NOT use generate_quote.${kitProductsLine || ''}`
+				`DIY: roof ${roofSqm} m². Call calculate_bucket_breakdown(roof_size_sqm:${roofSqm})—it returns breakdown and checkout link. List products as bullet points (• N × Product). Never calculate buckets yourself. Do NOT use generate_quote.${kitProductsLine || ''}`
 			);
 		} else {
 			dynamicParts.push(
-				`DIY: call calculate_bucket_breakdown (ask roof size if missing). It returns breakdown and checkout link together. Use tool result. Never calculate yourself. Do NOT use generate_quote.${kitProductsLine || ''}`
+				`DIY: call calculate_bucket_breakdown (ask roof size if missing). It returns breakdown and checkout link. List products as bullet points (• N × Product). Never calculate yourself. Do NOT use generate_quote.${kitProductsLine || ''}`
 			);
 		}
 	}
@@ -824,13 +824,16 @@ export const POST: RequestHandler = async (event) => {
 	let storedReply = reply;
 	// Post only the text reply (no quote URL here—we send it as a separate article message like DIY)
 	let contentToPost = reply;
-	// When we have a DIY checkout link, strip raw URL from the message—the article card is the only link.
+	// When we have a DIY checkout link, strip the text [GO TO CHECKOUT](url) from the message—the card button is the only link.
 	if (diyCheckoutUrl) {
+		// Strip markdown links that look like checkout CTAs (any URL—card has the real button)
+		contentToPost = contentToPost.replace(
+			/\[\s*(?:GO\s+TO\s+CHECKOUT|Proceed\s+to\s+checkout|Buy\s+now[^\]]*)\s*\]\s*\([^)]+\)/gi,
+			''
+		);
 		// Strip raw checkout URLs (Shopify cart, checkout, invoice)
 		const urlPattern = /https?:\/\/[^\s<>"')\]]*(?:cart|checkout|invoice|myshopify\.com\/cart)[^\s<>"')\]]*/gi;
 		contentToPost = contentToPost.replace(urlPattern, '');
-		// Strip markdown links to checkout: [text](url)
-		contentToPost = contentToPost.replace(/\[([^\]]*)\]\((https?:\/\/[^)]*(?:cart|checkout|myshopify)[^)]*)\)/gi, '');
 		contentToPost = contentToPost.replace(/\n{3,}/g, '\n\n').trim();
 		// Remove redundant "link below" phrases—the card says "Proceed to checkout"
 		contentToPost = contentToPost

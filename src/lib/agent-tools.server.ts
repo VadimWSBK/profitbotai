@@ -584,7 +584,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 					...base,
 					checkoutUrl,
 					previewMarkdown,
-					message: `Breakdown and checkout link ready. In your reply: 1) Give a short intro with the product breakdown and total. 2) Include the full checkout preview block exactly as below (copy it). Use for BOTH discounted and non-discounted quotes:\n\n${previewMarkdown}`
+					message: `Breakdown and checkout link ready. In your reply: 1) Give a short intro with the product breakdown as BULLET POINTS (one per product, e.g. "• 11 × NetZero UltraTherm 15L"), then the total. Format: "Here is your DIY quote for [X] m²:" then bullets, then "The total cost is $[total] AUD." 2) Include the full checkout preview block exactly as below (copy it):\n\n${previewMarkdown}`
 				};
 			}
 			return { ...base, previewMarkdown, message: `Breakdown ready (no checkout link). Include this preview in your reply:\n\n${previewMarkdown}` };
@@ -704,7 +704,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 				'[GO TO CHECKOUT](' + checkoutUrl + ')'
 			];
 			const previewMarkdown = previewParts.filter(Boolean).join('\n');
-			const lineItemsText = lineItemsUI.map((li) => `${li.quantity}× ${li.title}`).join(', ');
+			const lineItemsBullets = lineItemsUI.map((li) => `• ${li.quantity} × ${li.title}`).join('\n');
 
 			const styleOverridesDb =
 				styleOverrides && (styleOverrides.checkoutButtonColor || styleOverrides.qtyBadgeBackgroundColor)
@@ -747,7 +747,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 				total: summary.total,
 				lineItems: lineItemsUI.map((li) => `${li.quantity}× ${li.title} (${li.unitPrice} each)`),
 				previewMarkdown,
-				message: `Checkout link created. In your reply: 1) Give a short intro with the product breakdown and total (e.g. "Here is your DIY quote for [X] m²: ${lineItemsText}. The total cost is $[total] AUD."). 2) Include the full checkout preview block exactly as below—use for BOTH discounted and non-discounted quotes. Copy it exactly:\n\n${previewMarkdown}`
+				message: `Checkout link created. In your reply: 1) Give a short intro with the product breakdown as BULLET POINTS (one per product), then the total. Format: "Here is your DIY quote for [X] m²" (add "with a [Y]% discount" if discount applies), then bullets:\n\n${lineItemsBullets}\n\nThen: "The total cost is $[total] AUD." 2) Include the full checkout preview block exactly as below. Copy it exactly:\n\n${previewMarkdown}`
 			};
 		}
 	});
