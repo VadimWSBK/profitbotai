@@ -304,13 +304,30 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 			if (!subject?.trim()) return { error: 'Subject is required.' };
 			if (!body?.trim()) return { error: 'Body is required.' };
 
-			const { data: contactRow } = await admin
-				.from('contacts')
-				.select('id')
-				.eq('conversation_id', c.conversationId)
-				.eq('widget_id', c.widgetId)
-				.maybeSingle();
-			const contactId = contactRow?.id as string | undefined;
+			let contactId: string | undefined;
+			let conversationIdForEmail: string | undefined;
+			if (hasWidgetConversation(c)) {
+				const { data: contactRow } = await admin
+					.from('contacts')
+					.select('id')
+					.eq('conversation_id', c.conversationId)
+					.eq('widget_id', c.widgetId)
+					.maybeSingle();
+				contactId = contactRow?.id as string | undefined;
+				conversationIdForEmail = c.conversationId;
+			} else {
+				const minimal = c as AgentToolContextMinimal;
+				if (minimal.chatwootAccountId != null && minimal.chatwootConversationId != null) {
+					const { data: contactRow } = await admin
+						.from('contacts')
+						.select('id')
+						.eq('chatwoot_account_id', minimal.chatwootAccountId)
+						.eq('chatwoot_conversation_id', minimal.chatwootConversationId)
+						.maybeSingle();
+					contactId = contactRow?.id as string | undefined;
+					conversationIdForEmail = `chatwoot-${minimal.chatwootAccountId}-${minimal.chatwootConversationId}`;
+				}
+			}
 			if (!contactId) return { error: 'No contact record for this conversation.' };
 
 			if (quote_download_url?.trim()) {
@@ -321,7 +338,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 					customSubject: subject.trim(),
 					customBody: body.trim(),
 					contactId,
-					conversationId: c.conversationId,
+					conversationId: conversationIdForEmail,
 				});
 				if (quoteResult.sent) return { success: true, message: 'Email with quote link sent.' };
 				return { error: quoteResult.error ?? 'Failed to send email' };
@@ -332,7 +349,7 @@ function buildTools(admin: SupabaseClient): Record<string, Tool> {
 				subject: subject.trim(),
 				body: body.trim(),
 				contactId,
-				conversationId: c.conversationId,
+				conversationId: conversationIdForEmail,
 				customerName: c.contact?.name ?? null,
 			});
 			if (result.sent) return { success: true, message: 'Email sent.' };

@@ -545,17 +545,19 @@ export const POST: RequestHandler = async (event) => {
 	parts.push(
 		'If generate_quote returns an error (e.g. contact name/email/roof size required), ask for that one missing piece in a friendly way (e.g. "I just need your email address to send you the quote."). Do NOT say "technical issue", "I\'m unable to generate", or "experiencing a problem"—there is no technical issue, just ask for the missing detail.'
 	);
+	parts.push('Always complete your reply with a full sentence. Never end mid-sentence or mid-word.');
+	parts.push(
+		'When the user asks to receive something by email (e.g. the DIY quote, the checkout link, the PDF quote, or any info), use the send_email tool. Use their email from "Current contact info we have" if you have it, or ask once for their email. In the email body include the relevant link or content (e.g. DIY checkout link, quote download link) and a short friendly message. Then confirm in chat that you have sent it.'
+	);
 	const systemPrompt = parts.length > 0 ? parts.join('\n\n') : 'You are a helpful assistant.';
 
-	// Tools: use agent's allowed_tools and ensure DIY is available when Shopify is connected
-	let agentAllowedTools: string[] | null = Array.isArray(agentRow.allowed_tools) ? (agentRow.allowed_tools as string[]) : null;
+	// Tools: use agent's allowed_tools; ensure send_email and DIY checkout are available for Chatwoot
+	let agentAllowedTools: string[] = Array.isArray(agentRow.allowed_tools) ? (agentRow.allowed_tools as string[]) : [];
+	if (!agentAllowedTools.includes('send_email')) agentAllowedTools = [...agentAllowedTools, 'send_email'];
 	try {
 		const shopifyConnected = Boolean(await getShopifyConfigForUser(admin, ownerId));
-		if (shopifyConnected) {
-			const base = agentAllowedTools ?? [];
-			if (!base.includes('shopify_create_diy_checkout_link')) {
-				agentAllowedTools = [...base, 'shopify_create_diy_checkout_link'];
-			}
+		if (shopifyConnected && !agentAllowedTools.includes('shopify_create_diy_checkout_link')) {
+			agentAllowedTools = [...agentAllowedTools, 'shopify_create_diy_checkout_link'];
 		}
 	} catch {
 		// ignore
@@ -606,7 +608,7 @@ export const POST: RequestHandler = async (event) => {
 			messages: modelMessages,
 			tools,
 			stopWhen: stepCountIs(5),
-			maxOutputTokens: 1024,
+			maxOutputTokens: 2048,
 			experimental_context: agentContext
 		});
 		reply = result.text ?? '';
