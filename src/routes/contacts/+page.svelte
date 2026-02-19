@@ -443,11 +443,15 @@
 	<title>Contacts</title>
 </svelte:head>
 
-	<div class="flex flex-col flex-1 min-h-0 gap-4 sm:gap-4">
-	<!-- Title + Sync only in top bar -->
-	<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 shrink-0">
-		<h1 class="text-xl font-semibold text-gray-800">Contacts</h1>
-		<div class="flex items-center gap-2">
+	<div class="flex flex-col flex-1 min-h-0 gap-0">
+	<!-- Header -->
+	<div class="shrink-0 border-b border-gray-200 bg-white px-6 py-4">
+		<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+			<div>
+				<h1 class="text-2xl font-semibold text-gray-900">Contacts</h1>
+				<p class="text-sm text-gray-500 mt-1">{rangeLabel}</p>
+			</div>
+			<div class="flex items-center gap-2 flex-wrap">
 			<button
 				type="button"
 				disabled={mergeSuggestionsLoading}
@@ -472,7 +476,7 @@
 					type="button"
 					disabled={syncLoading}
 					onclick={syncFromShopify}
-					class="inline-flex items-center gap-2 rounded-lg border border-amber-600 bg-white px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-1 disabled:opacity-60 disabled:pointer-events-none"
+					class="inline-flex items-center gap-2 rounded-lg border border-amber-600 bg-white px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-1 disabled:opacity-60 disabled:pointer-events-none transition-colors"
 				>
 					{#if syncLoading}
 						<svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
@@ -487,81 +491,81 @@
 						Sync from Shopify
 					{/if}
 				</button>
-				{#if syncError}
-					<p class="text-sm text-red-600">{syncError}</p>
-				{/if}
 			{/if}
+			</div>
 		</div>
+		{#if syncError}
+			<div class="text-sm text-red-600 mb-3">{syncError}</div>
+		{/if}
 	</div>
 
 	<!-- List + detail: fill remaining viewport height; on mobile show one at a time; on lg show both -->
-	<div class="flex flex-1 min-h-0 flex-col lg:flex-row gap-0 lg:gap-4 rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
+	<div class="flex flex-1 min-h-0 flex-col lg:flex-row gap-0 overflow-hidden">
 		<!-- Contact list panel: search + filter above list; max 10 shown (latest first) -->
 		<aside
-			class="w-full lg:w-80 flex flex-col border-r-0 lg:border-r border-gray-200 overflow-hidden bg-gray-50/50 min-h-0 {selectedContact ? 'hidden lg:flex lg:shrink-0' : 'flex-1 lg:flex-initial lg:shrink-0'}"
+			class="w-full lg:w-80 flex flex-col border-r-0 lg:border-r border-gray-200 overflow-hidden bg-white min-h-0 {selectedContact ? 'hidden lg:flex lg:shrink-0' : 'flex-1 lg:flex-initial lg:shrink-0'}"
 		>
 			<!-- Search bar: just above the contact list -->
-			<div class="p-3 border-b border-gray-200 shrink-0" role="search" aria-label="Search contacts">
+			<div class="p-4 border-b border-gray-200 shrink-0 space-y-3" role="search" aria-label="Search contacts">
 				<label for="contact-search" class="sr-only">Search contacts</label>
 				<div class="relative">
-					<span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
-						<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-						</svg>
-					</span>
+					<svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+					</svg>
 					<input
 						id="contact-search"
 						type="search"
-						class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm text-gray-800 placeholder-gray-400 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+						class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-10 pr-3 text-sm text-gray-800 placeholder-gray-400 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
 						placeholder="Search name or email…"
 						bind:value={searchQ}
 					/>
 				</div>
-			</div>
-			<!-- Filters: widget, Has Shopify order, Tag -->
-			<div class="px-3 pb-2 space-y-2 shrink-0">
-				<label for="widget-filter" class="text-xs font-medium text-gray-500 block mb-1">Filter</label>
-				<select
-					id="widget-filter"
-					class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
-					bind:value={selectedWidgetId}
-				>
-					<option value={null}>All widgets</option>
-					{#each widgets as w}
-						<option value={w.id}>{w.name}</option>
-					{/each}
-				</select>
-				<div class="flex items-center gap-2">
-					<input
-						type="checkbox"
-						id="filter-shopify"
-						class="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
-						bind:checked={hasShopifyOrderFilter}
-					/>
-					<label for="filter-shopify" class="text-sm text-gray-700">Has Shopify order</label>
-				</div>
-				{#if availableTags.length > 0}
-					<div>
-						<label for="tag-filter" class="text-xs font-medium text-gray-500 block mb-1">Tag</label>
-						<select
-							id="tag-filter"
-							class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
-							bind:value={selectedTag}
-						>
-							<option value={null}>All tags</option>
-							{#each availableTags as tag}
-								<option value={tag}>{tag}</option>
-							{/each}
-						</select>
+
+				<!-- Filters: widget, Has Shopify order, Tag -->
+				<div class="space-y-2">
+					<label for="widget-filter" class="text-xs font-semibold text-gray-600 uppercase tracking-wide block">Filter by</label>
+					<select
+						id="widget-filter"
+						class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+						bind:value={selectedWidgetId}
+					>
+						<option value={null}>All widgets</option>
+						{#each widgets as w}
+							<option value={w.id}>{w.name}</option>
+						{/each}
+					</select>
+					<div class="flex items-center gap-2">
+						<input
+							type="checkbox"
+							id="filter-shopify"
+							class="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+							bind:checked={hasShopifyOrderFilter}
+						/>
+						<label for="filter-shopify" class="text-sm text-gray-700 cursor-pointer">Has Shopify order</label>
 					</div>
-				{/if}
+					{#if availableTags.length > 0}
+						<div>
+							<label for="tag-filter" class="text-xs font-semibold text-gray-600 uppercase tracking-wide block mb-1">Tag</label>
+							<select
+								id="tag-filter"
+								class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+								bind:value={selectedTag}
+							>
+								<option value={null}>All tags</option>
+								{#each availableTags as tag}
+									<option value={tag}>{tag}</option>
+								{/each}
+							</select>
+						</div>
+					{/if}
+				</div>
 			</div>
 			<!-- Selection controls + Total count + pagination -->
-			<div class="px-3 py-2 border-b border-gray-200 shrink-0 space-y-2">
+			<div class="px-4 py-3 border-b border-gray-200 shrink-0 space-y-3">
 				{#if selectedContactIds.size > 0}
 					<div class="flex items-center justify-between gap-2">
-						<span class="text-sm font-medium text-gray-700">
-							{selectedContactIds.size} contact{selectedContactIds.size === 1 ? '' : 's'} selected
+						<span class="text-sm font-semibold text-gray-700">
+							{selectedContactIds.size} selected
 						</span>
 						<div class="flex items-center gap-2">
 							<button
@@ -577,7 +581,7 @@
 									</svg>
 									Merging…
 								{:else}
-									Merge contacts
+									Merge
 								{/if}
 							</button>
 							<button
@@ -592,35 +596,38 @@
 					{#if mergeError}
 						<p class="text-sm text-red-600">{mergeError}</p>
 					{/if}
-				{/if}
-				<div class="flex items-center justify-between gap-2 flex-wrap">
-					<span class="text-sm font-medium text-gray-700">{rangeLabel}</span>
-					<div class="flex items-center gap-1">
-					<button
-						type="button"
-						disabled={!hasPrevPage || loading}
-						onclick={goToPrevPage}
-						class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:pointer-events-none transition-colors"
-						aria-label="Previous page"
-					>
-						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-						</svg>
-					</button>
-					<span class="text-xs text-gray-500 min-w-16 text-center">Page {currentPage} of {totalPages}</span>
-					<button
-						type="button"
-						disabled={!hasNextPage || loading}
-						onclick={goToNextPage}
-						class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:pointer-events-none transition-colors"
-						aria-label="Next page"
-					>
-						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-						</svg>
-					</button>
+				{:else}
+					<div class="flex items-center justify-between">
+						<span class="text-xs font-semibold text-gray-600 uppercase tracking-wide">Pagination</span>
+						<div class="flex items-center gap-1">
+							<button
+								type="button"
+								disabled={!hasPrevPage || loading}
+								onclick={goToPrevPage}
+								class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:pointer-events-none transition-colors"
+								aria-label="Previous page"
+								title="Previous page"
+							>
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+								</svg>
+							</button>
+							<span class="text-xs text-gray-600 font-medium min-w-16 text-center">{currentPage}/{totalPages}</span>
+							<button
+								type="button"
+								disabled={!hasNextPage || loading}
+								onclick={goToNextPage}
+								class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:pointer-events-none transition-colors"
+								aria-label="Next page"
+								title="Next page"
+							>
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+								</svg>
+							</button>
+						</div>
 					</div>
-				</div>
+				{/if}
 			</div>
 			<div class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
 				{#if loading}

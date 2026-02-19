@@ -30,11 +30,13 @@
 	let contacts = $state<Contact[]>([]);
 	let selectedWidgetId = $state<string | null>(null);
 	let loading = $state(true);
+	let loadingStages = $state(true);
 	let manageStagesOpen = $state(false);
 	let newStageName = $state('');
 	let editingStageId = $state<string | null>(null);
 	let editingStageName = $state('');
 	let movingLeadId = $state<string | null>(null);
+	let searchQuery = $state('');
 
 	const widgetFilterLabel = $derived(
 		selectedWidgetId ? widgets.find((w) => w.id === selectedWidgetId)?.name ?? 'All widgets' : 'All widgets'
@@ -45,22 +47,37 @@
 		contacts.filter((c) => !leads.some((l) => l.contactId === c.id))
 	);
 
-	// Leads per stage (filtered by widget if set)
+	// Leads per stage (filtered by widget and search if set)
 	const leadsByStage = $derived.by(() => {
 		const map: Record<string, Lead[]> = {};
 		for (const s of stages) map[s.id] = [];
 		for (const lead of leads) {
 			if (selectedWidgetId && lead.contact?.widgetId !== selectedWidgetId) continue;
+			if (searchQuery && lead.contact) {
+				const query = searchQuery.toLowerCase();
+				const name = lead.contact.name?.toLowerCase() || '';
+				const email = lead.contact.email?.toLowerCase() || '';
+				if (!name.includes(query) && !email.includes(query)) continue;
+			}
 			if (map[lead.stageId]) map[lead.stageId].push(lead);
 		}
 		for (const id of Object.keys(map)) map[id].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 		return map;
 	});
 
-	// Unassigned filtered by widget
-	const unassignedFiltered = $derived(
-		selectedWidgetId ? unassignedContacts.filter((c) => c.widgetId === selectedWidgetId) : unassignedContacts
-	);
+	// Unassigned filtered by widget and search
+	const unassignedFiltered = $derived.by(() => {
+		let filtered = selectedWidgetId ? unassignedContacts.filter((c) => c.widgetId === selectedWidgetId) : unassignedContacts;
+		if (searchQuery) {
+			const query = searchQuery.toLowerCase();
+			filtered = filtered.filter((c) => {
+				const name = c.name?.toLowerCase() || '';
+				const email = c.email?.toLowerCase() || '';
+				return name.includes(query) || email.includes(query);
+			});
+		}
+		return filtered;
+	});
 
 	function displayLabel(c: Contact): string {
 		if (c.name?.trim()) return c.name.trim();
@@ -117,8 +134,11 @@
 
 	async function loadAll() {
 		loading = true;
+		loadingStages = true;
 		try {
-			await Promise.all([fetchStages(), fetchLeads(), fetchContacts()]);
+			await fetchStages();
+			loadingStages = false;
+			await Promise.all([fetchLeads(), fetchContacts()]);
 		} finally {
 			loading = false;
 		}
@@ -290,11 +310,41 @@
 </svelte:head>
 
 <div class="flex flex-col min-h-0 gap-4">
-	<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shrink-0">
-		<h1 class="text-xl font-semibold text-gray-800">Leadflow</h1>
-		<div class="flex items-center gap-3">
+	<div class="flex flex-col gap-3 shrink-0">
+		<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+			<div>
+				<h1 class="text-2xl font-semibold text-gray-900">Leadflow</h1>
+				<p class="text-sm text-gray-500 mt-1">{unassignedFiltered.length + Object.values(leadsByStage).reduce((sum, arr) => sum + arr.length, 0)} total leads</p>
+			</div>
 			<div class="flex items-center gap-2">
-				<label for="leadflow-widget" class="text-sm text-gray-600 shrink-0">Widget</label>
+				<button
+					type="button"
+					onclick={() => (manageStagesOpen = true)}
+					class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors flex items-center gap-2"
+				>
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+					</svg>
+					Manage stages
+				</button>
+			</div>
+		</div>
+
+		<div class="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+			<div class="flex-1 relative">
+				<svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+				</svg>
+				<input
+					type="text"
+					placeholder="Search leads by name or email..."
+					bind:value={searchQuery}
+					class="w-full rounded-lg border border-gray-300 bg-white pl-10 pr-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+				/>
+			</div>
+			<div class="flex items-center gap-2">
+				<label for="leadflow-widget" class="text-sm text-gray-600 shrink-0">Widget:</label>
 				<select
 					id="leadflow-widget"
 					class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
@@ -306,40 +356,83 @@
 					{/each}
 				</select>
 			</div>
-			<button
-				type="button"
-				onclick={() => (manageStagesOpen = true)}
-				class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors flex items-center gap-2"
-			>
-				<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-				</svg>
-				Manage stages
-			</button>
 		</div>
 	</div>
 
 	{#if loading}
-		<div class="flex-1 flex items-center justify-center py-12">
-			<div class="animate-pulse text-gray-500 text-sm">Loading pipeline…</div>
+		<div class="flex-1 min-h-0 overflow-x-auto overflow-y-auto pb-4">
+			<div class="flex gap-4 min-w-max h-full items-start">
+				<!-- Skeleton unassigned column -->
+				<div class="w-72 shrink-0 flex flex-col rounded-xl border border-gray-200 bg-gray-50/80 overflow-hidden shadow-sm">
+					<div class="p-3 border-b border-gray-200 bg-gray-100 shrink-0">
+						<div class="h-5 bg-gray-300 rounded w-24 animate-pulse"></div>
+					</div>
+					<div class="flex-1 p-2 space-y-2">
+						{#each [1, 2, 3] as i}
+							<div class="rounded-lg border border-gray-200 bg-white p-3 space-y-2">
+								<div class="flex items-start gap-2">
+									<div class="shrink-0 w-8 h-8 rounded-full bg-gray-300 animate-pulse"></div>
+									<div class="flex-1 space-y-1 min-w-0">
+										<div class="h-4 bg-gray-300 rounded w-32 animate-pulse"></div>
+										<div class="h-3 bg-gray-200 rounded w-24 animate-pulse"></div>
+										<div class="h-3 bg-gray-200 rounded w-28 animate-pulse"></div>
+									</div>
+								</div>
+								<div class="h-8 bg-gray-200 rounded animate-pulse"></div>
+							</div>
+						{/each}
+					</div>
+				</div>
+
+				<!-- Skeleton stage columns -->
+				{#each [1, 2, 3] as col}
+					<div class="w-72 shrink-0 flex flex-col rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
+						<div class="p-3 border-b border-gray-200 bg-amber-50 shrink-0">
+							<div class="h-5 bg-gray-300 rounded w-24 animate-pulse"></div>
+						</div>
+						<div class="flex-1 p-2 space-y-2">
+							{#each [1, 2, 3] as i}
+								<div class="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-2">
+									<div class="flex items-start gap-2">
+										<div class="shrink-0 w-8 h-8 rounded-full bg-gray-300 animate-pulse"></div>
+										<div class="flex-1 space-y-1 min-w-0">
+											<div class="h-4 bg-gray-300 rounded w-32 animate-pulse"></div>
+											<div class="h-3 bg-gray-200 rounded w-24 animate-pulse"></div>
+											<div class="h-3 bg-gray-200 rounded w-28 animate-pulse"></div>
+										</div>
+									</div>
+									<div class="h-8 bg-gray-200 rounded animate-pulse"></div>
+								</div>
+							{/each}
+						</div>
+					</div>
+				{/each}
+			</div>
 		</div>
 	{:else}
 		<!-- Kanban: horizontal scroll -->
 		<div class="flex-1 min-h-0 overflow-x-auto overflow-y-auto pb-4">
 			<div class="flex gap-4 min-w-max h-full items-start">
 				<!-- Unassigned column -->
-				<div class="w-72 shrink-0 flex flex-col rounded-xl border border-gray-200 bg-gray-50/80 overflow-hidden shadow-sm">
-					<div class="p-3 border-b border-gray-200 bg-gray-100 shrink-0 flex items-center justify-between">
-						<span class="font-medium text-gray-700">Unassigned</span>
-						<span class="text-sm text-gray-500">{unassignedFiltered.length}</span>
+				<div class="w-72 shrink-0 flex flex-col rounded-xl border border-gray-200 bg-gray-50/80 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+					<div class="p-4 border-b border-gray-200 bg-gray-100 shrink-0 flex items-center justify-between">
+						<div class="flex items-center gap-2">
+							<svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 12c1.105 0 2-1.343 2-3s-.895-3-2-3-2 1.343-2 3 .895 3 2 3zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+							</svg>
+							<div>
+								<h3 class="font-semibold text-gray-800">Unassigned</h3>
+								<p class="text-xs text-gray-500">No pipeline</p>
+							</div>
+						</div>
+						<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-200 text-sm font-semibold text-gray-700">{unassignedFiltered.length}</span>
 					</div>
 					<div class="flex-1 min-h-[200px] overflow-y-auto p-2 space-y-2">
 						{#each unassignedFiltered as contact}
 							<div
 								role="group"
 								aria-label="Contact card"
-								class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm hover:shadow transition-shadow cursor-grab active:cursor-grabbing {draggedPayload?.kind === 'unassigned' && draggedPayload.contactId === contact.id ? 'opacity-50' : ''}"
+								class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm hover:shadow-md hover:border-amber-200 transition-all cursor-grab active:cursor-grabbing group {draggedPayload?.kind === 'unassigned' && draggedPayload.contactId === contact.id ? 'opacity-50' : ''}"
 								draggable="true"
 								ondragstart={(e) => onDragStart(e, { kind: 'unassigned', contactId: contact.id })}
 								ondragend={onDragEnd}
@@ -355,22 +448,38 @@
 										{displayLabel(contact).charAt(0).toUpperCase()}
 									</a>
 									<div class="min-w-0 flex-1">
-										<div class="font-medium text-gray-800 truncate">{displayLabel(contact)}</div>
+										<a href={contactUrl(contact.id)} class="font-medium text-gray-800 truncate hover:text-amber-600 transition-colors no-underline block" draggable="false" onclick={(e) => e.stopPropagation()}>
+											{displayLabel(contact)}
+										</a>
 										{#if contact.email}
 											<div class="text-xs text-gray-500 truncate">{contact.email}</div>
 										{/if}
 										{#if contact.widgetName}
-											<div class="text-xs text-gray-400 mt-0.5">{contact.widgetName}</div>
+											<div class="text-xs text-amber-600 mt-0.5 font-medium">{contact.widgetName}</div>
 										{/if}
-										<div class="text-xs text-gray-500 mt-0.5" title={contact.lastConversationAt ? formatDate(contact.lastConversationAt) : ''}>
-											Last contact: {timeSinceLastConversation(contact.lastConversationAt)}
+										<div class="text-xs text-gray-400 mt-1" title={contact.lastConversationAt ? formatDate(contact.lastConversationAt) : ''}>
+											{timeSinceLastConversation(contact.lastConversationAt)}
 										</div>
 									</div>
 								</div>
 								{#if stages.length > 0}
 									<div class="mt-2 pt-2 border-t border-gray-100">
+										<button
+											type="button"
+											onclick={(e) => {
+												const select = (e.target as HTMLElement).closest('div')?.querySelector('select') as HTMLSelectElement;
+												if (select) select.click();
+											}}
+											class="w-full rounded border border-gray-300 bg-white hover:bg-amber-50 px-2 py-1.5 text-xs text-gray-700 focus:border-amber-500 focus:outline-none transition-colors flex items-center justify-between opacity-0 group-hover:opacity-100"
+											disabled={movingLeadId === contact.id}
+										>
+											<span>Move to stage</span>
+											<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+												<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+											</svg>
+										</button>
 										<select
-											class="w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-700 focus:border-amber-500 focus:outline-none"
+											class="w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-700 focus:border-amber-500 focus:outline-none hidden"
 											onchange={(e) => {
 												const sid = (e.currentTarget as HTMLSelectElement).value;
 												if (sid) addContactToStage(contact.id, sid);
@@ -393,10 +502,15 @@
 
 				<!-- Stage columns -->
 				{#each stages as stage}
-					<div class="w-72 shrink-0 flex flex-col rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
-						<div class="p-3 border-b border-gray-200 bg-amber-50 shrink-0 flex items-center justify-between">
-							<span class="font-medium text-gray-800">{stage.name}</span>
-							<span class="text-sm text-gray-500">{(leadsByStage[stage.id] ?? []).length}</span>
+					<div class="w-72 shrink-0 flex flex-col rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+						<div class="p-4 border-b border-gray-200 bg-gradient-to-r from-amber-50 to-amber-100/50 shrink-0 flex items-center justify-between">
+							<div class="flex items-center gap-2 flex-1">
+								<svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+								</svg>
+								<h3 class="font-semibold text-gray-800">{stage.name}</h3>
+							</div>
+							<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-200 text-sm font-semibold text-amber-900">{(leadsByStage[stage.id] ?? []).length}</span>
 						</div>
 						<div
 							role="region"
@@ -412,7 +526,7 @@
 									<div
 										role="group"
 										aria-label="Lead card"
-										class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm hover:shadow transition-shadow cursor-grab active:cursor-grabbing {draggedPayload?.kind === 'lead' && draggedPayload.leadId === lead.id ? 'opacity-50' : ''}"
+										class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm hover:shadow-md hover:border-amber-200 transition-all cursor-grab active:cursor-grabbing group {draggedPayload?.kind === 'lead' && draggedPayload.leadId === lead.id ? 'opacity-50' : ''}"
 										draggable="true"
 										ondragstart={(e) => onDragStart(e, { kind: 'lead', leadId: lead.id, contactId: contact.id, sourceStageId: stage.id })}
 										ondragend={onDragEnd}
@@ -428,22 +542,38 @@
 												{displayLabel(contact).charAt(0).toUpperCase()}
 											</a>
 											<div class="min-w-0 flex-1">
-												<div class="font-medium text-gray-800 truncate">{displayLabel(contact)}</div>
+												<a href={contactUrl(contact.id)} class="font-medium text-gray-800 truncate hover:text-amber-600 transition-colors no-underline block" draggable="false" onclick={(e) => e.stopPropagation()}>
+													{displayLabel(contact)}
+												</a>
 												{#if contact.email}
 													<div class="text-xs text-gray-500 truncate">{contact.email}</div>
 												{/if}
 												{#if contact.widgetName}
-													<div class="text-xs text-gray-400 mt-0.5">{contact.widgetName}</div>
+													<div class="text-xs text-amber-600 mt-0.5 font-medium">{contact.widgetName}</div>
 												{/if}
-												<div class="text-xs text-gray-500 mt-0.5" title={contact.lastConversationAt ? formatDate(contact.lastConversationAt) : ''}>
-													Last contact: {timeSinceLastConversation(contact.lastConversationAt)}
+												<div class="text-xs text-gray-400 mt-1" title={contact.lastConversationAt ? formatDate(contact.lastConversationAt) : ''}>
+													{timeSinceLastConversation(contact.lastConversationAt)}
 												</div>
 											</div>
 										</div>
 										{#if stages.length > 1}
 											<div class="mt-2 pt-2 border-t border-gray-100">
+												<button
+													type="button"
+													onclick={(e) => {
+														const select = (e.target as HTMLElement).closest('div')?.querySelector('select') as HTMLSelectElement;
+														if (select) select.click();
+													}}
+													class="w-full rounded border border-gray-300 bg-white hover:bg-amber-50 px-2 py-1.5 text-xs text-gray-700 focus:border-amber-500 focus:outline-none transition-colors flex items-center justify-between opacity-0 group-hover:opacity-100"
+													disabled={movingLeadId === lead.id}
+												>
+													<span>Move to</span>
+													<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+													</svg>
+												</button>
 												<select
-													class="w-full rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:border-amber-500 focus:outline-none"
+													class="w-full rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:border-amber-500 focus:outline-none hidden"
 													onchange={(e) => {
 														const sid = (e.currentTarget as HTMLSelectElement).value;
 														if (sid && sid !== stage.id) moveLead(lead.id, sid);

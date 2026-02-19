@@ -277,6 +277,8 @@
 	const MESSAGES_PAGE_SIZE = 20;
 
 	let expandedGroups = $state<Set<string>>(new Set());
+	let searchQuery = $state('');
+	let contactInfoOpen = $state(false);
 
 	// Merge suggestions
 	const hasLlmKeys = $derived(Boolean((data as any)?.hasLlmKeys));
@@ -327,11 +329,22 @@
 		}
 
 		// Sort groups by latest updated, sort conversations within each group
-		const groups = Array.from(groupMap.values());
+		let groups = Array.from(groupMap.values());
 		groups.sort((a, b) => new Date(b.latestUpdatedAt).getTime() - new Date(a.latestUpdatedAt).getTime());
 		for (const g of groups) {
 			g.conversations.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 		}
+
+		// Filter by search query
+		if (searchQuery.trim()) {
+			const query = searchQuery.toLowerCase();
+			groups = groups.filter((g) => {
+				const label = displayGroupLabel(g).toLowerCase();
+				const email = (g.contactEmail ?? '').toLowerCase();
+				return label.includes(query) || email.includes(query);
+			});
+		}
+
 		return groups;
 	});
 
@@ -763,6 +776,16 @@
 		fetchConversations();
 	});
 
+	// Auto-select first conversation on load
+	$effect(() => {
+		if (conversations.length > 0 && !selectedConversation && !loading) {
+			const firstConv = contactGroups[0]?.conversations[0];
+			if (firstConv) {
+				selectConversation(firstConv);
+			}
+		}
+	});
+
 	// Deep-link: select conversation from URL ?conversation=id (e.g. from Contacts page)
 	$effect(() => {
 		const convId = $page.url.searchParams.get('conversation');
@@ -998,54 +1021,92 @@
 	<title>Messages</title>
 </svelte:head>
 
-<div class="flex flex-col h-full gap-4">
-	<div class="flex items-center justify-between gap-4 flex-wrap">
-		<h1 class="text-xl font-semibold text-gray-800">Messages</h1>
-		<div class="flex items-center gap-2">
-			<button
-				type="button"
-				disabled={mergeSuggestionsLoading}
-				onclick={findDuplicates}
-				class="inline-flex items-center gap-2 rounded-lg border border-amber-600 bg-white px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-1 disabled:opacity-60 disabled:pointer-events-none"
-			>
-				{#if mergeSuggestionsLoading}
-					<svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-						<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-						<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-					</svg>
-					Analyzing…
-				{:else}
-					<svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-					</svg>
-					Find Duplicates
-				{/if}
-			</button>
-			<label for="widget-filter" class="text-sm text-gray-600">Widget</label>
-			<select
-				id="widget-filter"
-				class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
-				bind:value={selectedWidgetId}
-			>
-				<option value={null}>All widgets</option>
-				{#each widgets as w}
-					<option value={w.id}>{w.name}</option>
-				{/each}
-			</select>
+<div class="flex flex-col h-full gap-0">
+	<!-- Header -->
+	<div class="shrink-0 border-b border-gray-200 bg-white px-6 py-4">
+		<div class="flex items-center justify-between gap-4 mb-4">
+			<div>
+				<h1 class="text-2xl font-semibold text-gray-900">Messages</h1>
+				<p class="text-sm text-gray-500 mt-1">{contactGroups.length} contact{contactGroups.length !== 1 ? 's' : ''} · {conversations.length} conversation{conversations.length !== 1 ? 's' : ''}</p>
+			</div>
+			<div class="flex items-center gap-2">
+				<button
+					type="button"
+					disabled={mergeSuggestionsLoading}
+					onclick={findDuplicates}
+					class="inline-flex items-center gap-2 rounded-lg border border-amber-600 bg-white px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-1 disabled:opacity-60 disabled:pointer-events-none transition-colors"
+				>
+					{#if mergeSuggestionsLoading}
+						<svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+							<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+							<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+						</svg>
+						Analyzing…
+					{:else}
+						<svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+						</svg>
+						Find Duplicates
+					{/if}
+				</button>
+				<label for="widget-filter" class="text-sm text-gray-600 shrink-0">Widget:</label>
+				<select
+					id="widget-filter"
+					class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+					bind:value={selectedWidgetId}
+				>
+					<option value={null}>All widgets</option>
+					{#each widgets as w}
+						<option value={w.id}>{w.name}</option>
+					{/each}
+				</select>
+			</div>
+		</div>
+
+		<!-- Search -->
+		<div class="relative">
+			<svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+			</svg>
+			<input
+				type="text"
+				placeholder="Search conversations by name or email..."
+				bind:value={searchQuery}
+				class="w-full rounded-lg border border-gray-300 bg-white pl-10 pr-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+			/>
 		</div>
 	</div>
 
-	<div class="flex flex-1 min-h-0 gap-4 rounded-xl border border-gray-200 bg-white overflow-hidden">
+	<div class="flex flex-1 min-h-0 gap-0 overflow-hidden">
 		<!-- Conversation list (grouped by contact) -->
-		<aside class="w-72 flex flex-col border-r border-gray-200 shrink-0 overflow-hidden">
-			<div class="p-3 border-b border-gray-100 text-sm text-gray-500">
-				{contactGroups.length} contact{contactGroups.length !== 1 ? 's' : ''} · {conversations.length} session{conversations.length !== 1 ? 's' : ''}
-			</div>
+		<aside class="w-80 flex flex-col border-r border-gray-200 shrink-0 overflow-hidden bg-white">
 			<div class="flex-1 overflow-y-auto">
 				{#if loading}
-					<div class="p-4 text-center text-gray-500 text-sm">Loading…</div>
+					<!-- Skeleton loading -->
+					<div class="space-y-2 p-2">
+						{#each [1, 2, 3, 4, 5] as i}
+							<div class="p-4 border-b border-gray-100 animate-pulse">
+								<div class="flex items-center gap-3 mb-3">
+									<div class="w-10 h-10 rounded-full bg-gray-300"></div>
+									<div class="flex-1 min-w-0">
+										<div class="h-4 bg-gray-300 rounded w-32 mb-2"></div>
+										<div class="h-3 bg-gray-200 rounded w-24"></div>
+									</div>
+								</div>
+								<div class="flex items-center gap-2">
+									<div class="h-3 bg-gray-200 rounded w-20 flex-1"></div>
+									<div class="w-5 h-5 rounded-full bg-gray-300"></div>
+								</div>
+							</div>
+						{/each}
+					</div>
 				{:else if conversations.length === 0}
-					<div class="p-4 text-center text-gray-500 text-sm">No conversations yet.</div>
+					<div class="p-8 text-center text-gray-500">
+						<svg class="h-12 w-12 text-gray-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+						</svg>
+						<p class="text-sm font-medium">No conversations yet.</p>
+					</div>
 				{:else}
 					{#each contactGroups as group}
 						{@const isSingle = group.conversations.length === 1}
@@ -1058,15 +1119,15 @@
 							<div
 								role="button"
 								tabindex="0"
-								class="w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 focus:bg-gray-50 focus:outline-none cursor-pointer {selectedConversation?.id === conv.id ? 'bg-amber-50 border-l-4 border-l-amber-500' : ''}"
+								class="w-full text-left px-4 py-4 border-b border-gray-100 hover:bg-gray-50 focus:bg-gray-50 focus:outline-none cursor-pointer transition-colors {selectedConversation?.id === conv.id ? 'bg-amber-50 border-l-4 border-l-amber-500' : ''}"
 								onclick={() => selectConversation(conv)}
 								onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && selectConversation(conv)}
 							>
-								<div class="flex items-center gap-2">
+								<div class="flex items-start gap-3 mb-2">
 									<a
 										href={groupContactUrl(group)}
 										onclick={(e) => e.stopPropagation()}
-										class="shrink-0 w-9 h-9 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-sm font-semibold hover:bg-amber-200 transition-colors no-underline"
+										class="shrink-0 w-10 h-10 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-sm font-semibold hover:bg-amber-200 transition-colors no-underline"
 										title="Open contact"
 									>
 										{groupInitial(group)}
@@ -1076,25 +1137,23 @@
 											<a
 												href={groupContactUrl(group)}
 												onclick={(e) => e.stopPropagation()}
-												class="font-medium text-gray-800 truncate hover:text-amber-600 transition-colors no-underline"
+												class="font-semibold text-gray-800 truncate hover:text-amber-600 transition-colors no-underline"
 												title="Open contact"
 											>
 												{displayGroupLabel(group)}
 											</a>
 											{#if conv.unreadCount > 0}
-												<span class="shrink-0 rounded-full bg-amber-500 text-white text-xs font-medium min-w-5 h-5 flex items-center justify-center px-1.5">
+												<span class="shrink-0 rounded-full bg-amber-500 text-white text-xs font-semibold min-w-5 h-5 flex items-center justify-center px-1.5">
 													{conv.unreadCount}
 												</span>
 											{/if}
 										</div>
-										<div class="text-xs text-gray-500 mt-0.5">
-											{conv.widgetName} · Session: {conv.sessionId.slice(0, 12)}…
-										</div>
-										<div class="flex items-center gap-2 mt-1">
-											<span class="text-xs {conv.isAiActive ? 'text-green-600' : 'text-amber-600'}">
-												{conv.isAiActive ? 'AI active' : 'Human takeover'}
+										<div class="text-xs text-gray-500 mt-1">{conv.widgetName}</div>
+										<div class="flex items-center gap-2 mt-2 text-xs">
+											<span class="inline-flex items-center px-2 py-0.5 rounded-full {conv.isAiActive ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}">
+												{conv.isAiActive ? 'AI active' : 'Human'}
 											</span>
-											<span class="text-xs text-gray-400">{formatDate(conv.updatedAt)}</span>
+											<span class="text-gray-400">{formatDate(conv.updatedAt)}</span>
 										</div>
 									</div>
 								</div>
@@ -1104,15 +1163,15 @@
 							<div
 								role="button"
 								tabindex="0"
-								class="w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 focus:bg-gray-50 focus:outline-none cursor-pointer {hasSelectedConv && !isExpanded ? 'bg-amber-50 border-l-4 border-l-amber-500' : ''}"
+								class="w-full text-left px-4 py-4 border-b border-gray-100 hover:bg-gray-50 focus:bg-gray-50 focus:outline-none cursor-pointer transition-colors {hasSelectedConv && !isExpanded ? 'bg-amber-50 border-l-4 border-l-amber-500' : ''}"
 								onclick={() => toggleGroup(group.key)}
 								onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && toggleGroup(group.key)}
 							>
-								<div class="flex items-center gap-2">
+								<div class="flex items-start gap-3 mb-2">
 									<a
 										href={groupContactUrl(group)}
 										onclick={(e) => e.stopPropagation()}
-										class="shrink-0 w-9 h-9 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-sm font-semibold hover:bg-amber-200 transition-colors no-underline"
+										class="shrink-0 w-10 h-10 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-sm font-semibold hover:bg-amber-200 transition-colors no-underline"
 										title="Open contact"
 									>
 										{groupInitial(group)}
@@ -1122,25 +1181,25 @@
 											<a
 												href={groupContactUrl(group)}
 												onclick={(e) => e.stopPropagation()}
-												class="font-medium text-gray-800 truncate hover:text-amber-600 transition-colors no-underline"
+												class="font-semibold text-gray-800 truncate hover:text-amber-600 transition-colors no-underline"
 												title="Open contact"
 											>
 												{displayGroupLabel(group)}
 											</a>
-											<div class="flex items-center gap-1.5 shrink-0">
+											<div class="flex items-center gap-2 shrink-0">
 												{#if group.totalUnread > 0}
-													<span class="rounded-full bg-amber-500 text-white text-xs font-medium min-w-5 h-5 flex items-center justify-center px-1.5">
+													<span class="rounded-full bg-amber-500 text-white text-xs font-semibold min-w-5 h-5 flex items-center justify-center px-1.5">
 														{group.totalUnread}
 													</span>
 												{/if}
-												<svg class="w-3.5 h-3.5 text-gray-400 transition-transform {isExpanded ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+												<svg class="w-4 h-4 text-gray-400 transition-transform {isExpanded ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 													<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
 												</svg>
 											</div>
 										</div>
-										<div class="flex items-center gap-2 mt-0.5">
-											<span class="text-xs text-gray-500">{group.conversations.length} sessions</span>
-											<span class="text-xs text-gray-400">{formatDate(group.latestUpdatedAt)}</span>
+										<div class="flex items-center gap-2 mt-2 text-xs text-gray-500">
+											<span>{group.conversations.length} session{group.conversations.length !== 1 ? 's' : ''}</span>
+											<span class="text-gray-400">{formatDate(group.latestUpdatedAt)}</span>
 										</div>
 									</div>
 								</div>
@@ -1180,13 +1239,19 @@
 			</div>
 		</aside>
 
-		<!-- Message thread -->
-		<div class="flex-1 flex flex-col min-w-0">
-			{#if !selectedConversation}
-				<div class="flex-1 flex items-center justify-center text-gray-500 p-6">
-					Select a conversation to view messages.
-				</div>
-			{:else}
+		<!-- Message thread and contact info -->
+		<div class="flex-1 flex gap-0 min-w-0">
+			<!-- Messages column -->
+			<div class="flex-1 flex flex-col min-w-0 border-r border-gray-200">
+				{#if !selectedConversation}
+					<div class="flex-1 flex flex-col items-center justify-center text-gray-500 p-6">
+						<svg class="h-12 w-12 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+						</svg>
+						<p class="text-sm font-medium">No conversation selected</p>
+						<p class="text-xs mt-1">Choose a conversation from the list to get started</p>
+					</div>
+				{:else}
 				<div class="flex flex-col h-full">
 					<!-- Header: contact name, session, STOP AI / Start AI, AI email -->
 					<div class="shrink-0 flex flex-col border-b border-gray-200 bg-gray-50">
@@ -1482,6 +1547,76 @@
 						</div>
 					{/if}
 				</div>
+			{/if}
+			</div>
+
+			<!-- Contact info sidebar (desktop only) -->
+			{#if selectedConversation}
+				<aside class="hidden lg:flex lg:w-72 flex-col border-l border-gray-200 bg-gray-50/50 overflow-y-auto">
+					<div class="p-4 border-b border-gray-200">
+						<div class="flex items-center gap-3 mb-3">
+							<a
+								href={contactUrl(currentConv)}
+								class="shrink-0 w-12 h-12 rounded-full bg-amber-500 text-white flex items-center justify-center text-lg font-semibold hover:bg-amber-600 transition-colors no-underline"
+								title="Open contact"
+							>
+								{contactInitial(currentConv)}
+							</a>
+							<div class="min-w-0 flex-1">
+								<a
+									href={contactUrl(currentConv)}
+									class="block font-semibold text-gray-800 truncate hover:text-amber-600 transition-colors no-underline"
+									title="Open contact"
+								>
+									{displayContactLabel(currentConv)}
+								</a>
+								{#if currentConv?.contactEmail}
+									<p class="text-xs text-gray-600 truncate">{currentConv.contactEmail}</p>
+								{/if}
+							</div>
+						</div>
+						<a href={contactUrl(currentConv)} class="w-full inline-block text-center rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-100 transition-colors no-underline">
+							View Full Profile
+						</a>
+					</div>
+
+					<div class="flex-1 space-y-4 p-4">
+						<!-- Conversation info -->
+						<div>
+							<h3 class="text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">Conversation</h3>
+							<div class="space-y-2 text-sm">
+								<div>
+									<p class="text-xs text-gray-500">Widget</p>
+									<p class="text-gray-700">{selectedConversation.widgetName}</p>
+								</div>
+								<div>
+									<p class="text-xs text-gray-500">Status</p>
+									<p class="text-gray-700">
+										<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium {conversationDetail?.isAiActive ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}">
+											{conversationDetail?.isAiActive ? 'AI Active' : 'Human Takeover'}
+										</span>
+									</p>
+								</div>
+								<div>
+									<p class="text-xs text-gray-500">Started</p>
+									<p class="text-gray-700">{formatDate(selectedConversation.createdAt)}</p>
+								</div>
+								<div>
+									<p class="text-xs text-gray-500">Updated</p>
+									<p class="text-gray-700">{formatDate(selectedConversation.updatedAt)}</p>
+								</div>
+							</div>
+						</div>
+
+						<!-- Session ID -->
+						<div>
+							<h3 class="text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">Session</h3>
+							<p class="text-xs font-mono text-gray-600 break-all bg-white rounded border border-gray-200 p-2">
+								{selectedConversation.sessionId}
+							</p>
+						</div>
+					</div>
+				</aside>
 			{/if}
 		</div>
 	</div>
