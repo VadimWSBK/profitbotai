@@ -106,6 +106,7 @@
 
 	function buildContactsUrl() {
 		const params = new URLSearchParams();
+		params.set('minimal', 'true');
 		params.set('limit', String(limit));
 		params.set('page', String(currentPage));
 		if (selectedWidgetId) params.set('widget_id', selectedWidgetId);

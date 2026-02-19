@@ -126,8 +126,10 @@
 	}
 
 	async function fetchContacts() {
-		const url = selectedWidgetId ? `/api/contacts?widget_id=${encodeURIComponent(selectedWidgetId)}` : '/api/contacts';
-		const res = await fetch(url);
+		const params = new URLSearchParams();
+		params.set('minimal', 'true');
+		if (selectedWidgetId) params.set('widget_id', selectedWidgetId);
+		const res = await fetch(`/api/contacts?${params.toString()}`);
 		const json = await res.json().catch(() => ({}));
 		contacts = Array.isArray(json.contacts) ? json.contacts : [];
 	}

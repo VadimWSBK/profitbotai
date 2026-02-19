@@ -4,17 +4,22 @@ import { getSupabaseClient } from '$lib/supabase.server';
 import { getPrimaryEmail } from '$lib/contact-email-jsonb';
 import { chatwootConversationId } from '$lib/chatwoot-conversation-id';
 
+const CONVERSATIONS_LIST_LIMIT = 100;
+
 /**
- * GET /api/conversations?widget_id= – list conversations for widgets the user owns,
+ * GET /api/conversations?widget_id=&limit= – list conversations for widgets the user owns,
  * plus Chatwoot conversations from contacts with chatwoot_account_id/chatwoot_conversation_id.
  * Returns id, widget_id, widget_name, session_id, is_ai_active, updated_at, unread_count.
  * Chatwoot convs use id like "chatwoot-{accountId}-{conversationId}" and source: "chatwoot".
+ * Default limit 100 for faster initial load.
  */
 export const GET: RequestHandler = async (event) => {
 	const user = event.locals.user;
 	if (!user) return json({ error: 'Unauthorized' }, { status: 401 });
 
 	const widgetId = event.url.searchParams.get('widget_id') ?? undefined;
+	const limitParam = event.url.searchParams.get('limit');
+	const limit = Math.min(500, Math.max(1, Number.parseInt(limitParam ?? String(CONVERSATIONS_LIST_LIMIT), 10) || CONVERSATIONS_LIST_LIMIT));
 
 	const supabase = getSupabaseClient(event);
 	let query = supabase
@@ -29,7 +34,8 @@ export const GET: RequestHandler = async (event) => {
 			updated_at,
 			widgets!inner(id, name)
 		`)
-		.order('updated_at', { ascending: false });
+		.order('updated_at', { ascending: false })
+		.limit(limit);
 
 	if (widgetId) query = query.eq('widget_id', widgetId);
 	const { data: rows, error } = await query;
@@ -45,45 +51,43 @@ export const GET: RequestHandler = async (event) => {
 			.filter((id): id is string => Boolean(id))
 	)];
 
-	// Resolve contact per conversation: prefer contact_id on conversation (supports merged contacts), else fallback to contact where conversation_id = id
+	// Resolve contact per conversation and unread counts in parallel
+	const [contactByIdResult, contactRowsByConv, unreadRows] = await Promise.all([
+		contactIdsFromConvs.length > 0
+			? supabase.from('contacts').select('id, name, email').in('id', contactIdsFromConvs)
+			: Promise.resolve({ data: [] as { id: string; name: string | null; email: unknown }[] }),
+		convIds.length > 0
+			? supabase.from('contacts').select('id, conversation_id, name, email').in('conversation_id', convIds)
+			: Promise.resolve({ data: [] }),
+		convIds.length > 0
+			? supabase
+					.from('widget_conversation_messages')
+					.select('conversation_id')
+					.in('conversation_id', convIds)
+					.eq('role', 'user')
+					.is('read_at', null)
+			: Promise.resolve({ data: [] })
+	]);
+
 	const contactById: Record<string, { id: string; name: string | null; email: string | null }> = {};
-	if (contactIdsFromConvs.length > 0) {
-		const { data: contactRows } = await supabase
-			.from('contacts')
-			.select('id, name, email')
-			.in('id', contactIdsFromConvs);
-		for (const c of contactRows ?? []) {
-			contactById[(c as { id: string }).id] = {
-				id: (c as { id: string }).id,
-				name: (c as { name: string | null }).name ?? null,
-				email: getPrimaryEmail((c as { email: unknown }).email) ?? null
-			};
-		}
-	}
-	const { data: contactRowsByConv } = await supabase
-		.from('contacts')
-		.select('id, conversation_id, name, email')
-		.in('conversation_id', convIds);
-	const contactByConvId: Record<string, { id: string; name: string | null; email: string | null }> = {};
-	for (const c of contactRowsByConv ?? []) {
-		const convId = (c as { conversation_id: string }).conversation_id;
-		contactByConvId[convId] = {
+	for (const c of contactByIdResult.data ?? []) {
+		contactById[(c as { id: string }).id] = {
 			id: (c as { id: string }).id,
 			name: (c as { name: string | null }).name ?? null,
 			email: getPrimaryEmail((c as { email: unknown }).email) ?? null
 		};
 	}
-
-	// Get unread count per conversation (user messages with read_at null)
-	const { data: unreadRows } = await supabase
-		.from('widget_conversation_messages')
-		.select('conversation_id')
-		.in('conversation_id', convIds)
-		.eq('role', 'user')
-		.is('read_at', null);
+	const contactByConvId: Record<string, { id: string; name: string | null; email: string | null }> = {};
+	for (const c of (contactRowsByConv.data ?? []) as { id: string; conversation_id: string; name: string | null; email: unknown }[]) {
+		contactByConvId[c.conversation_id] = {
+			id: c.id,
+			name: c.name ?? null,
+			email: getPrimaryEmail(c.email) ?? null
+		};
+	}
 	const unreadByConv: Record<string, number> = {};
-	for (const r of unreadRows ?? []) {
-		const cid = (r as { conversation_id: string }).conversation_id;
+	for (const r of (unreadRows as { data?: Array<{ conversation_id: string }> }).data ?? []) {
+		const cid = r.conversation_id;
 		unreadByConv[cid] = (unreadByConv[cid] ?? 0) + 1;
 	}
 

@@ -6,9 +6,10 @@ import { getPrimaryEmail } from '$lib/contact-email-jsonb';
 import { getPrimaryPhone } from '$lib/contact-phone-jsonb';
 
 /**
- * GET /api/contacts?widget_id=&q=&limit=&page=&has_shopify_order=&tag=
+ * GET /api/contacts?widget_id=&q=&limit=&page=&has_shopify_order=&tag=&minimal=
  * List contacts for widgets the user owns. Pagination: page (1-based), limit (default 10). Latest first.
  * Filters: widget_id, q (search name/email), has_shopify_order (true), tag (e.g. shopify).
+ * minimal=true: skip pdf_quotes resolution and heavy fields (faster for Leadflow); uses limit=100 by default.
  */
 export const GET: RequestHandler = async (event) => {
 	const user = event.locals.user;
@@ -16,8 +17,10 @@ export const GET: RequestHandler = async (event) => {
 
 	const widgetId = event.url.searchParams.get('widget_id') ?? undefined;
 	const q = (event.url.searchParams.get('q') ?? '').trim().toLowerCase();
+	const minimal = event.url.searchParams.get('minimal') === 'true';
 	const limitParam = event.url.searchParams.get('limit');
-	const limit = Math.min(50, Math.max(1, Number.parseInt(limitParam ?? '10', 10) || 10));
+	const defaultLimit = minimal ? 100 : 10;
+	const limit = Math.min(minimal ? 500 : 50, Math.max(1, Number.parseInt(limitParam ?? String(defaultLimit), 10) || defaultLimit));
 	const pageParam = event.url.searchParams.get('page');
 	const page = Math.max(1, Number.parseInt(pageParam ?? '1', 10) || 1);
 	const hasShopifyOrder = event.url.searchParams.get('has_shopify_order') === 'true';
@@ -26,7 +29,21 @@ export const GET: RequestHandler = async (event) => {
 	const offset = (page - 1) * limit;
 	const supabase = getSupabaseClient(event);
 
-	const selectFields = `
+	const selectFields = minimal
+		? `
+		id,
+		conversation_id,
+		widget_id,
+		name,
+		email,
+		phone,
+		address,
+		shopify_orders,
+		created_at,
+		updated_at,
+		widgets(name)
+	`
+		: `
 		id,
 		conversation_id,
 		widget_id,
@@ -84,10 +101,10 @@ export const GET: RequestHandler = async (event) => {
 				email: string | null;
 				phone: string | null;
 				address: string | null;
-				roof_size_sqm: number | null;
-				pdf_quotes: unknown;
-				shopify_orders: unknown;
-				tags: unknown;
+				roof_size_sqm?: number | null;
+				pdf_quotes?: unknown;
+				shopify_orders?: unknown;
+				tags?: unknown;
 				created_at: string;
 				updated_at: string;
 				widgets: { name: string } | { name: string }[] | null;
@@ -110,7 +127,7 @@ export const GET: RequestHandler = async (event) => {
 					phone: getPrimaryPhone(r.phone) ?? null,
 					address: r.address ?? null,
 					roofSizeSqm: r.roof_size_sqm == null ? null : Number(r.roof_size_sqm),
-					pdfQuotes: await resolvePdfQuotesToSignedUrls(r.pdf_quotes),
+					pdfQuotes: minimal ? [] : await resolvePdfQuotesToSignedUrls(r.pdf_quotes ?? []),
 					hasShopifyOrders: Array.isArray(r.shopify_orders) && r.shopify_orders.length > 0,
 					tags: tagsList,
 					createdAt: r.created_at,
