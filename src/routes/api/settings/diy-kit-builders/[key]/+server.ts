@@ -46,12 +46,16 @@ export const PUT: RequestHandler = async (event) => {
 					const r = (e as DiyKitBuilderProductEntry).role;
 					return typeof h === 'string' && typeof r === 'string' && ROOF_KIT_ROLES.includes(r as (typeof ROOF_KIT_ROLES)[number]);
 				})
-				.map((e) => ({
-					product_handle: e.product_handle,
-					role: e.role,
-					coverage_per_sqm: e.coverage_per_sqm ?? null,
-					display_name: typeof (e as DiyKitBuilderProductEntry).display_name === 'string' ? (e as DiyKitBuilderProductEntry).display_name.trim() || null : null
-				}))
+				.map((e) => {
+					const entry = e as DiyKitBuilderProductEntry;
+					return {
+						product_handle: entry.product_handle,
+						role: entry.role,
+						coverage_per_sqm: entry.coverage_per_sqm ?? null,
+						display_name:
+							typeof entry.display_name === 'string' ? entry.display_name.trim() || null : null
+					};
+				})
 		: [];
 	const admin = getSupabaseAdmin();
 	const { error } = await saveDiyKitBuilderConfig(admin, event.locals.user.id, key, {

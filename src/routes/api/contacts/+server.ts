@@ -77,9 +77,25 @@ export const GET: RequestHandler = async (event) => {
 		return json({ error: error.message, contacts: [], totalCount: 0, page: 1, limit: 10 }, { status: 500 });
 	}
 
-	const rawRows = rows ?? [];
+	type ContactRow = {
+		id: string;
+		conversation_id: string | null;
+		widget_id: string | null;
+		name: string | null;
+		email: string | null;
+		phone: string | null;
+		address: string | null;
+		roof_size_sqm?: number | null;
+		pdf_quotes?: unknown;
+		shopify_orders?: unknown;
+		tags?: unknown;
+		created_at: string;
+		updated_at: string;
+		widgets: { name: string } | { name: string }[] | null;
+	};
+	const rawRows: ContactRow[] = (rows ?? []) as unknown as ContactRow[];
 	const totalCount = count ?? 0;
-	const contactIds = rawRows.map((r: { id: string }) => r.id);
+	const contactIds = rawRows.map((r) => r.id);
 	let lastByContact: Record<string, string> = {};
 	if (contactIds.length > 0) {
 		const { data: lastContactRows } = await supabase.rpc('get_contact_last_contact_at', {
@@ -92,23 +108,7 @@ export const GET: RequestHandler = async (event) => {
 	}
 
 	const contacts = await Promise.all(
-		rawRows.map(
-			async (r: {
-				id: string;
-				conversation_id: string | null;
-				widget_id: string | null;
-				name: string | null;
-				email: string | null;
-				phone: string | null;
-				address: string | null;
-				roof_size_sqm?: number | null;
-				pdf_quotes?: unknown;
-				shopify_orders?: unknown;
-				tags?: unknown;
-				created_at: string;
-				updated_at: string;
-				widgets: { name: string } | { name: string }[] | null;
-			}) => {
+		rawRows.map(async (r) => {
 				const rawTags = r.tags;
 				const tagsList: string[] = Array.isArray(rawTags)
 					? (rawTags as unknown[]).filter((t): t is string => typeof t === 'string')
@@ -134,8 +134,7 @@ export const GET: RequestHandler = async (event) => {
 					updatedAt: r.updated_at,
 					lastConversationAt: lastByContact[r.id] ?? null
 				};
-			}
-		)
+		})
 	);
 
 	return json({ contacts, totalCount, page, limit });

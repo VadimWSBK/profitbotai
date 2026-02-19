@@ -1,6 +1,8 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSupabaseClient } from '$lib/supabase.server';
+import { getPrimaryEmail } from '$lib/contact-email-jsonb';
+import { getPrimaryPhone } from '$lib/contact-phone-jsonb';
 
 /**
  * GET /api/leadflow/leads?widget_id=
@@ -66,8 +68,8 @@ export const GET: RequestHandler = async (event) => {
 						widgetId: contact.widget_id,
 						widgetName,
 						name: contact.name ?? null,
-						email: contact.email ?? null,
-						phone: contact.phone ?? null,
+						email: getPrimaryEmail(contact.email) ?? null,
+						phone: getPrimaryPhone(contact.phone) ?? null,
 						address: contact.address ?? null,
 						createdAt: contact.created_at,
 						updatedAt: contact.updated_at,

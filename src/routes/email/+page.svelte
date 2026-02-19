@@ -679,7 +679,7 @@
 				<h2 class="text-lg font-semibold text-gray-900">
 					{editingId ? 'Edit email account' : 'Add email account'}
 				</h2>
-				<button type="button" onclick={() => (showModal = false)} class="text-gray-400 hover:text-gray-600 transition-colors">
+				<button type="button" onclick={() => (showModal = false)} class="text-gray-400 hover:text-gray-600 transition-colors" aria-label="Close modal">
 					<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
 				</button>
 			</div>

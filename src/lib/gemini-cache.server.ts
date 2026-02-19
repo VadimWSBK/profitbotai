@@ -5,10 +5,9 @@
  * Constraints: when using cachedContent, you cannot send systemInstruction or tools in the generate request—they must be in the cache.
  */
 
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, type FunctionDeclaration } from '@google/genai';
 import type { Tool } from 'ai';
 import { asSchema } from '@ai-sdk/provider-utils';
-import { z } from 'zod';
 
 /** TTL for cached content: 1 hour. Caches auto-expire; we recreate when needed. */
 const CACHE_TTL = '3600s';
@@ -19,13 +18,6 @@ const agentCacheNames = new Map<
 	{ name: string; expiresAt: number; staticHash: string }
 >();
 const CACHE_REUSE_MINUTES = 50; // Refresh before 1h TTL
-
-type FunctionDeclaration = {
-	name: string;
-	description: string;
-	parameters?: unknown;
-	parametersJsonSchema?: unknown;
-};
 
 /** Check if value looks like a Zod schema */
 function isZodSchema(v: unknown): boolean {
@@ -49,12 +41,15 @@ async function toolsToGeminiFunctionDeclarationsAsync(
 		let paramsSchema: unknown;
 		if (isZodSchema(inputSchema)) {
 			try {
-				paramsSchema = z.toJSONSchema(inputSchema, { target: 'openapi-3.0' });
+				const { z } = await import('zod');
+				paramsSchema = (z as { toJSONSchema: (s: unknown, opts?: unknown) => unknown }).toJSONSchema(inputSchema, {
+					target: 'openapi-3.0'
+				});
 			} catch {
 				paramsSchema = { type: 'object', properties: {} };
 			}
 		} else {
-			const schema = asSchema(inputSchema);
+			const schema = asSchema(inputSchema as import('@ai-sdk/provider-utils').FlexibleSchema<unknown>);
 			const jsonSchema = schema.jsonSchema;
 			const resolved = await Promise.resolve(jsonSchema);
 			paramsSchema = resolved ?? { type: 'object', properties: {} };
@@ -62,7 +57,7 @@ async function toolsToGeminiFunctionDeclarationsAsync(
 		decls.push({
 			name,
 			description: (t as { description?: string }).description ?? '',
-			parametersJsonSchema: paramsSchema ?? { type: 'object', properties: {} }
+			parametersJsonSchema: (paramsSchema ?? { type: 'object', properties: {} }) as Record<string, unknown>
 		});
 	}
 	return decls;

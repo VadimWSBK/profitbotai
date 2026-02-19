@@ -4,7 +4,7 @@
  * Implements multi-step tool loop: generateContent → execute functionCalls → append functionResponse → repeat.
  */
 
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, FunctionCallingConfigMode } from '@google/genai';
 import type { Content } from '@google/genai';
 import type { Tool } from 'ai';
 import type { AgentToolContextMinimal } from '$lib/agent-tools.server';
@@ -62,7 +62,7 @@ export async function generateWithCache({
 				cachedContent: cacheName,
 				maxOutputTokens,
 				toolConfig: {
-					functionCallingConfig: { mode: 'AUTO' as const }
+					functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO }
 				}
 			}
 		});

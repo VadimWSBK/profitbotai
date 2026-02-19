@@ -174,6 +174,14 @@
 		});
 	}
 
+	type PdfQuoteResolved = { url: string; created_at?: string; total?: string; name?: string } | null;
+
+	function resolvePdfQuote(quote: unknown): PdfQuoteResolved {
+		if (typeof quote === 'string') return { url: quote };
+		if (quote && typeof quote === 'object' && 'url' in quote) return quote as PdfQuoteResolved;
+		return null;
+	}
+
 	function formatDateTime(iso: string) {
 		const d = new Date(iso);
 		return d.toLocaleString(undefined, {
@@ -208,6 +216,22 @@
 		editingContact = false;
 		editError = null;
 		newTagInput = '';
+	}
+
+	function handleEditFormSubmit(form: HTMLFormElement) {
+		const fd = new FormData(form);
+		const str = (k: string) => (typeof fd.get(k) === 'string' ? fd.get(k) : '') as string;
+		saveContact({
+			name: str('name'),
+			email: str('email'),
+			phone: str('phone'),
+			streetAddress: str('streetAddress'),
+			city: str('city'),
+			state: str('state'),
+			postcode: str('postcode'),
+			country: str('country'),
+			note: str('note')
+		});
 	}
 
 	async function saveContact(payload: {
@@ -820,18 +844,7 @@
 									onsubmit={(e) => {
 										e.preventDefault();
 										const form = e.currentTarget;
-										const fd = new FormData(form);
-										saveContact({
-											name: (fd.get('name') as string) ?? '',
-											email: (fd.get('email') as string) ?? '',
-											phone: (fd.get('phone') as string) ?? '',
-											streetAddress: (fd.get('streetAddress') as string) ?? '',
-											city: (fd.get('city') as string) ?? '',
-											state: (fd.get('state') as string) ?? '',
-											postcode: (fd.get('postcode') as string) ?? '',
-											country: (fd.get('country') as string) ?? '',
-											note: (fd.get('note') as string) ?? ''
-										});
+										if (form instanceof HTMLFormElement) handleEditFormSubmit(form);
 									}}
 								>
 									<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1037,25 +1050,16 @@
 								<h3 class="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-3">PDF quotes</h3>
 								<ul class="rounded-lg border border-gray-200 bg-gray-50/50 p-4 space-y-3">
 									{#each contactDetail.pdfQuotes as quote}
-										{@const resolved = typeof quote === 'string' ? { url: quote } : quote && typeof quote === 'object' && 'url' in quote ? quote as { url: string; created_at?: string; total?: string } : null}
+										{@const resolved = resolvePdfQuote(quote)}
 										<li class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-											{#if typeof quote === 'string'}
-												<a
-													href={quote}
-													target="_blank"
-													rel="noopener noreferrer"
-													class="text-amber-600 hover:text-amber-700 text-sm font-medium break-all"
-												>
-													View PDF
-												</a>
-											{:else if resolved}
+											{#if resolved}
 												<a
 													href={resolved.url}
 													target="_blank"
 													rel="noopener noreferrer"
 													class="text-amber-600 hover:text-amber-700 text-sm font-medium break-all"
 												>
-													{(quote as { name?: string }).name ?? 'View PDF'}
+													{resolved.name ?? 'View PDF'}
 												</a>
 												{#if resolved.created_at || resolved.total}
 													<span class="text-gray-500 text-xs">

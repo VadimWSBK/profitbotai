@@ -89,6 +89,22 @@
 		return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 	}
 
+	function triggerSelectInParent(e: MouseEvent) {
+		const target = e.target as HTMLElement;
+		const select = target.closest('div')?.querySelector('select') as HTMLSelectElement | null;
+		if (select) select.click();
+	}
+
+	function handleStageSelectChange(contactId: string, e: Event) {
+		const sid = (e.currentTarget as HTMLSelectElement).value;
+		if (sid) addContactToStage(contactId, sid);
+	}
+
+	function handleLeadStageSelectChange(leadId: string, currentStageId: string, e: Event) {
+		const sid = (e.currentTarget as HTMLSelectElement).value;
+		if (sid && sid !== currentStageId) moveLead(leadId, sid);
+	}
+
 	/** First 3 days in hours, then days, weeks, months, years. */
 	function timeSinceLastConversation(iso: string | null | undefined): string {
 		if (!iso) return 'No contact yet';
@@ -468,10 +484,7 @@
 									<div class="mt-2 pt-2 border-t border-gray-100">
 										<button
 											type="button"
-											onclick={(e) => {
-												const select = (e.target as HTMLElement).closest('div')?.querySelector('select') as HTMLSelectElement;
-												if (select) select.click();
-											}}
+											onclick={triggerSelectInParent}
 											class="w-full rounded border border-gray-300 bg-white hover:bg-amber-50 px-2 py-1.5 text-xs text-gray-700 focus:border-amber-500 focus:outline-none transition-colors flex items-center justify-between opacity-0 group-hover:opacity-100"
 											disabled={movingLeadId === contact.id}
 										>
@@ -482,10 +495,7 @@
 										</button>
 										<select
 											class="w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-700 focus:border-amber-500 focus:outline-none hidden"
-											onchange={(e) => {
-												const sid = (e.currentTarget as HTMLSelectElement).value;
-												if (sid) addContactToStage(contact.id, sid);
-											}}
+											onchange={(e) => handleStageSelectChange(contact.id, e)}
 											disabled={movingLeadId === contact.id}
 										>
 											<option value="">Move to…</option>
@@ -562,10 +572,7 @@
 											<div class="mt-2 pt-2 border-t border-gray-100">
 												<button
 													type="button"
-													onclick={(e) => {
-														const select = (e.target as HTMLElement).closest('div')?.querySelector('select') as HTMLSelectElement;
-														if (select) select.click();
-													}}
+													onclick={triggerSelectInParent}
 													class="w-full rounded border border-gray-300 bg-white hover:bg-amber-50 px-2 py-1.5 text-xs text-gray-700 focus:border-amber-500 focus:outline-none transition-colors flex items-center justify-between opacity-0 group-hover:opacity-100"
 													disabled={movingLeadId === lead.id}
 												>
@@ -576,10 +583,7 @@
 												</button>
 												<select
 													class="w-full rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:border-amber-500 focus:outline-none hidden"
-													onchange={(e) => {
-														const sid = (e.currentTarget as HTMLSelectElement).value;
-														if (sid && sid !== stage.id) moveLead(lead.id, sid);
-													}}
+													onchange={(e) => handleLeadStageSelectChange(lead.id, stage.id, e)}
 													disabled={movingLeadId === lead.id}
 												>
 													<option value={stage.id}>—</option>

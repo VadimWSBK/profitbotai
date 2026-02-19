@@ -808,14 +808,15 @@ Instructions: Reply in 2–4 sentences. Be helpful and concise. Do not include a
 						{:else if triggerType === 'Inbound webhook'}
 							{@const webhookUrl = `${origin}/api/workflows/trigger/${workflowId}/${selectedNode.id}`}
 							<div class="space-y-2">
-								<label class="block text-xs font-medium text-gray-500">Webhook URL</label>
+								<label for="webhook-url-input" class="block text-xs font-medium text-gray-500">Webhook URL</label>
 								<div class="flex gap-2">
-									<input type="text" readonly value={webhookUrl} class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-xs text-gray-600 bg-gray-50 font-mono" />
+									<input id="webhook-url-input" type="text" readonly value={webhookUrl} class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-xs text-gray-600 bg-gray-50 font-mono" />
 									<button type="button" onclick={() => copyWebhookUrl(webhookUrl)} class="shrink-0 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700">Copy</button>
 								</div>
 								<p class="text-xs text-gray-500">POST to this URL to start the workflow. Optional: send <code class="bg-gray-100 px-1 rounded">X-Webhook-Secret</code> header or <code class="bg-gray-100 px-1 rounded">secret</code> in JSON body to validate.</p>
-								<label class="block text-xs font-medium text-gray-500">Secret (optional)</label>
+								<label for="webhook-secret-input" class="block text-xs font-medium text-gray-500">Secret (optional)</label>
 								<input
+									id="webhook-secret-input"
 									type="password"
 									placeholder="Leave empty to skip validation"
 									value={data.webhookSecret ?? ''}

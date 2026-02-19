@@ -25,10 +25,11 @@ async function getChatwootConversation(
 		.eq('chatwoot_conversation_id', conversationId)
 		.maybeSingle();
 	if (!contactRow) return json({ error: 'Conversation not found' }, { status: 404 });
-	const agentName = (contactRow as { agents?: { name: string } | { name: string }[] }).agents
-		? Array.isArray((contactRow as { agents: { name: string }[] }).agents)
-			? (contactRow as { agents: { name: string }[] }).agents[0]?.name ?? 'Chatwoot'
-			: (contactRow as { agents: { name: string } }).agents?.name ?? 'Chatwoot'
+	const agents = (contactRow as { agents?: { name?: string } | { name?: string }[] }).agents;
+	const agentName = agents
+		? Array.isArray(agents)
+			? agents[0]?.name ?? 'Chatwoot'
+			: agents?.name ?? 'Chatwoot'
 		: 'Chatwoot';
 	const contact = {
 		id: (contactRow as { id: string }).id,
